@@ -2,6 +2,7 @@
 import os
 import re
 import torch
+import pickle
 import numpy as np
 import pandas as pd
 import scipy.ndimage as ndi
@@ -17,7 +18,7 @@ from src.utils import seed_worker
 # ------------------------------
 # Master table
 # ------------------------------
-def build_master_table(input_path: str, preproce_method: str, targets: List[str], dataset: str, subjects: Optional[List[str]] = None) -> pd.DataFrame:
+def build_master_table(input_path: str, preproce_method: str, targets: List[str], dataset: str, data_type: str, subjects: Optional[List[str]] = None) -> pd.DataFrame:
     """
     Build the table required by the training code, given the custom folder layout.
     Normal mode: discover images + join demographics.
@@ -28,8 +29,11 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
     # Detect cached mode
     use_cache = (not preproce_method) or (str(preproce_method).strip() == "")
     if use_cache:
-        df = pd.read_csv(Path(input_path) / "demo.csv", index_col=0) # Must have 'ID' column from 0 to len(df)
-        print(f"[cache] Loaded demo.csv with {len(df)} rows (no filesystem scan).")
+        csv = Path(input_path) / "demo.csv"
+        if not csv.exists():
+            csv = Path(input_path) / f"demo_{dataset}_{data_type}.csv"
+        df = pd.read_csv(csv, index_col=0) # Must have 'ID' column from 0 to len(df)
+        print(f"[cache] Loaded {csv} with {len(df)} rows (no filesystem scan).")
     else:
         pets = find_pet_files(input_path=input_path, preproc_method=preproce_method, allow=subjects)
         if pets.empty:
@@ -187,28 +191,33 @@ def get_train_val_loaders(train_df, val_df, args):
     # Detect cached mode
     use_cache = (not args.data_suffix) or (str(args.data_suffix).strip() == "")
     if use_cache:
+        tfm = None
         p = Path(args.input_path) / "data.pt"
         if p.exists():
-            tfm = torch.load(p, map_location="cpu", weights_only=True) # torch tensor with shape [S, D, H, W]
+            data_file = torch.load(p, map_location="cpu", weights_only=True) # torch tensor with shape [S, D, H, W]
             print(f"Reconstructed loaders from data.pt with shape [S, D, H, W].")
         else:
-            tfm = args.input_path
-            print(f"Reconstructed loaders from data_idx.pt for each scan.")
+            data_file = Path(args.input_path) / 'data' / args.data_type
+            if any(Path(data_file).glob("*.pt")):
+                print(f"Reconstructed loaders from data_idx.pt for each scan.")
+            else:
+                tfm = get_transforms(tuple(args.image_shape))
+                print(f"Reconstructed imgs from tau_batch_x.pkl for batched images.")
     else:
         tfm = get_transforms(tuple(args.image_shape))
+        data_file = None
 
-
-    dl_tr = get_loader(train_df, tfm, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
-    dl_va = get_loader(val_df, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
+    dl_tr = get_loader(train_df, tfm, data_file, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
+    dl_va = get_loader(val_df, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
     
     return dl_tr, dl_va
 
 
-def get_loader(df, tfm, args, batch_size, augment=False, shuffle=False, train_test='train'):
+def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=False, train_test='train'):
     g = torch.Generator()
     g.manual_seed(args.seed)
 
-    dataset = PETDataset(df, tfm, args.targets, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats, augment=augment)
+    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats, augment=augment)
 
     if "dataset" in df.columns and train_test=='train': #### domain-balanced sampling
         print('------ Balanced sampling ------')
@@ -306,9 +315,10 @@ class PETDataset(Dataset):
       - table columns: ["ID", "pet_path", "visual_read", "CL", ...]
       - transforms: a MONAI Compose returning a (1, D, H, W) Tensor/MetaTensor (float-like)
     """
-    def __init__(self, table: pd.DataFrame, transforms, targets, input_cl=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
+    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None,input_cl=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
         self.table = table.reset_index(drop=True)
         self.transforms = transforms
+        self.data_file = data_file
         self.targets = [t.strip() for t in targets.split(",") if t.strip()]
         self.input_cl = input_cl
         self.extra_global_feats = ([f.strip() for f in extra_global_feats.split(",")]
@@ -322,20 +332,65 @@ class PETDataset(Dataset):
     def __getitem__(self, idx):
         row = self.table.iloc[idx]
 
-        if isinstance(self.transforms, Compose): # expect MAINAI Compose class
+        if self.data_file is None and isinstance(self.transforms, Compose): # expect MAINAI Compose class
             # MONAI pipeline -> Tensor/MetaTensor with shape [C=1, D, H, W]
             path = row["pet_path"]
             x = self.transforms(path)
-        elif torch.is_tensor(self.transforms): # torch tensor with shape  [S, D, H, W]
+        elif torch.is_tensor(self.data_file): # torch tensor with shape  [S, D, H, W]
             fid = str(int(row["ID"]))
-            x = self.transforms[fid]
+            x = self.data_file[fid]
             x = x.unsqueeze(0) # ➜ becomes [1, D, H, W]
-        elif isinstance(self.transforms, (str, bytes, os.PathLike)):
+        elif isinstance(self.data_file, (str, bytes, os.PathLike)):
             fid = str(int(row["ID"]))
-            path = Path(self.transforms) / "data" / "data_{}.pt".format(fid)
-            x = torch.load(path, map_location="cpu", weights_only=True)
-        else:
-            raise ValueError('PETDataset(), transforms data loading wrong. Should be either MONAI Compose(), or full torch tensor, or string Path')
+            if isinstance(self.transforms, Compose): 
+                # Load the preprocessed image from the corresponding pickle file (assuming it's stored in batches of 100)
+                with open(Path(self.data_file) / f"tau_batch_000.pkl", "rb") as f: data_0 = pickle.load(f)
+                batch_id = int(fid) // len(data_0)
+                idx = int(fid) % len(data_0)
+
+                pkl_path = Path(self.data_file) / f"tau_batch_{batch_id:03d}.pkl"
+                with open(pkl_path, "rb") as f: data = pickle.load(f)
+                sample = data[idx]
+
+                # for strange warped images, put all nan and <0 values to 0
+                sample["image"] = np.nan_to_num(sample["image"], nan=0.0, posinf=0.0, neginf=0.0)
+                sample["image"] = np.clip(sample["image"], 0, None)
+
+                # Apply the same transforms except loading (e.g., cropping, resizing, smoothing) to the loaded image
+                load_img = MetaTensor(torch.as_tensor(sample["image"]), meta=sample["meta"])
+                t_no_load = Compose(self.transforms.transforms[1:])  # remove LoadImage
+                x = t_no_load(load_img)
+                '''
+                print(fid, idx)
+                print(
+                    f"{sample['image'].__class__.__name__}: "
+                    f"shape={tuple(sample['image'].shape)}, "
+                    f"min={np.nanmin(sample['image']):.4f}, "
+                    f"max={np.nanmax(sample['image']):.4f}, "
+                    f"mean={np.nanmean(sample['image']):.4f}, "
+                    f"nan={np.isnan(sample['image']).sum()/sample['image'].size:.6f}"
+                )
+                x = load_img
+                for t in t_no_load.transforms:
+                    x = t(x)
+
+                    xt = x.as_tensor() if isinstance(x, MetaTensor) else x
+                    xt = xt.detach().cpu()
+                    if torch.isnan(xt).all().item():
+                        print(t.__class__.__name__, 'all nan')
+                    print(
+                        f"{t.__class__.__name__}: "
+                        f"shape={tuple(xt.shape)}, "
+                        f"min={xt[~torch.isnan(xt)].min().item():.4f}, "
+                        f"max={xt[~torch.isnan(xt)].max().item():.4f}, "
+                        f"mean={xt[~torch.isnan(xt)].mean().item():.4f}, "
+                        f"nan={torch.isnan(xt).sum()/xt.numel()}"
+                    )
+                '''
+            else:
+                path = row["pet_path"]
+                path = Path(self.data_file) / "data" / "data_{}.pt".format(fid)
+                x = torch.load(path, map_location="cpu", weights_only=True)
 
         if isinstance(x, MetaTensor): x = x.as_tensor()
         x = x.to(dtype=self.dtype)

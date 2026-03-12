@@ -189,6 +189,10 @@ def hold_out_set(df, labels, subject_col, test_size: float = 0.2, seed: int = 42
     df = df.copy()
 
     # ---- 1. build subject-level dataframe ----
+    if subject_col is not None:
+        print('keep only the first scan for one subject, based on column', subject_col)
+    else:
+        subject_col = 'ID'
     subj_df = df.drop_duplicates(subset=subject_col, keep='first') if subject_col is not None else df.copy()
     assert len(subj_df) == subj_df[subject_col].nunique()
     subj_labels = labels.loc[subj_df.index]

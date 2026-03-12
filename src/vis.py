@@ -44,7 +44,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     os.makedirs(vis_dir, exist_ok=True)
 
     vis_sum = {'class': None,'pos_vs_neg':None}
-    n = 0
+    vis_count = {'class': 0, 'pos_vs_neg': 0}
     for x, _, _, extra, pid in loader:
         x = x.to(device)
         extra = extra.to(device)
@@ -83,12 +83,15 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                     save_mip_png(img_np, shell_cam, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_pseudo_surface.png"))
 
                 vis_sum[vt] = heat if vis_sum[vt] is None else vis_sum[vt] + heat
-            n += 1
+                vis_count[vt] += 1
     
     print('saving average image to', vis_dir)
     for vt in vis_type:
+        if vis_sum[vt] is None:
+            print(f"Skipping {vt} visualization (no heatmaps generated)")
+            continue
         # group-level average
-        vis_avg = vis_sum[vt] / n
+        vis_avg = vis_sum[vt] / vis_count[vt]
         nib.save(nib.Nifti1Image(vis_avg.astype(np.float32), np.eye(4)),
                 os.path.join(vis_dir, f"group_average_{vis_name}.nii.gz"))
         save_mip_png(img_np, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"))

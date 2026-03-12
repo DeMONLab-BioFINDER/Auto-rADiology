@@ -13,7 +13,7 @@ from src.hypertune import create_study_from_args, run_optuna, objective, print_b
 
 def main(args):
     # 1) data
-    df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset)
+    df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
     df_clean, stratify_labels = get_stratify_labels(df, args.stratifycvby, args.seed)
 
     # held-out set (never touch during hyperparameter tunning
@@ -23,7 +23,7 @@ def main(args):
     save_train_test_subjects(df_train, df_test, args.output_path, 'Hold-out')
     if 'dataset' in df_train.columns: print('train:', df_train['dataset'].value_counts(), '\ntest:', df_test['dataset'].value_counts())
     _, stratify_labels_train = get_stratify_labels(df_train, args.stratifycvby, args.seed)
-    
+
     # 2) tuning or direct CV
     if args.tune: # default is tuninig    
         # --- Tuning ---

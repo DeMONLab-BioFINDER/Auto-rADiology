@@ -9,16 +9,17 @@ def parse_arguments():
     # Load essential settings from external file if available
     script_dir, proj_path = get_proj_path()
 
-    parser = argparse.ArgumentParser(description="Aβ-PET -> visual read (binary) / Centiloid (regression) with Optuna hyperparameter tuning.")
+    parser = argparse.ArgumentParser(description="PET -> visual read (binary) / Centiloid (regression) with Optuna hyperparameter tuning.")
 
     parser.add_argument("--model", type=str, default="CNN3D", help="Class name in models.py (e.g., CNN3D, UNet3D, ResNet50_3D, DenseNet121_3D...)")
-    parser.add_argument('--model_name_extra', type=str, default="IDEAS_Inten_Norm_brainmask", help='Extra name to be used as the result folder name. E.g. parameters or others tests names')
+    parser.add_argument('--model_name_extra', type=str, default="", help='Extra name to be used as the result folder name. E.g. parameters or others tests names')
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default=get_device(), help='e.g., "cpu", "cuda", "cuda:0"')
 
     # Input paths and data
-    parser.add_argument("--dataset", type=str, default="IDEAS_ADNI", help="Dataset name, ADNI, IDEAS, or ADNI_CL (suffix to load demographics .csv)")
-    parser.add_argument("--input_path", type=str, default='', help='images save in BIDS format. If not input, will set as <proj_path>/data') # Berkeley server ADNI data path: /home/jagust/xnat/squid/adni/
+    parser.add_argument("--dataset", type=str, default="Gothenburg", help="Dataset name, ADNI, IDEAS, or ADNI_CL (suffix to load demographics .csv)")
+    parser.add_argument("--data_type", type=str, default="tau_T1MNI", help="Type of data to process")
+    parser.add_argument("--input_path", type=str, default='', help='images save in BIDS format. If not input, will set as <proj_path>/data/<data_type>') # Berkeley server ADNI data path: /home/jagust/xnat/squid/adni/
     parser.add_argument("--data_suffix", type=str, default='', help='images finding pattern **/*<suffix>/*/*/*.nii* for find_pet_images function, specifically to IDEAS data. e.g._Inten_Norm or SCANS (folder name of Berkeley server ADNI data)')
     parser.add_argument("--targets", type=str, default="visual_read", help="Predict variables name, corresponds to column names in demographics.csv, seperate by ,")
     parser.add_argument("--image_shape", nargs=3, type=int, default=[128,128,128], help="Input image shape (x,y,z) after resampling, can be tuned by Optuna")
@@ -46,7 +47,7 @@ def parse_arguments():
 
     # CV
     parser.add_argument("--n_splits", type=int, default=5, help="Number of folds for StratifiedKFold.")
-    parser.add_argument("--stratifycvby", default="visual_read,dataset", help=",site,tracer, List of column names to stratify by (e.g., visual_read CL age gender).")
+    parser.add_argument("--stratifycvby", default="site,visual_read", help=",site,tracer, List of column names to stratify by (e.g., visual_read CL age gender).")
     parser.add_argument("--samesubject_col", type=str, default=None, help="Column name to identify same subjects to keep them in the same split (e.g., sameID).")
     
     # Hypertune - Optuna
@@ -123,7 +124,7 @@ def make_output_dir(args, proj_path, script_path):
         # Construct output path'
         tune = f'hypertune-optuna-{args.n_trials}trials' if args.tune else '2split80-20'
         extra_cl = f'extra-lastlayer-input-{args.input_cl}' if args.input_cl else ''
-        args.output_name = "_".join(s for s in [args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
+        args.output_name = "_".join(s for s in [args.data_type, args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
         # "_".join([args.model, args.targets, tune, f'stratify-{args.stratifycvby}', args.model_name_extra, extra_cl, args.output_date_time])
         args.output_path = os.path.join(proj_path, "results", args.output_name)
 

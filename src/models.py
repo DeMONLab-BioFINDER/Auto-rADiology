@@ -60,7 +60,7 @@ class CNN3D(nn.Module):
         x = self.features(x)       # [B, C, D, H, W]
         x = self.gap(x).flatten(1) # [B, C]
 
-        if extra is not None and torch.isfinite(extra).any():
+        if extra is not None and not torch.isnan(extra).all():
             if extra.ndim == 1: extra = extra.unsqueeze(0)
             x = torch.cat([x, extra], dim=1)
 
