@@ -312,7 +312,7 @@ def get_transforms(target_shape=(128, 128, 128), pct_lo: float = 1.0, pct_hi: fl
 class PETDataset(Dataset):
     """
     Expects:
-      - table columns: ["ID", "pet_path", "visual_read", "CL", ...]
+      - table columns: ["ID", "pet_path", "visual_read", <regression_target>, ...]
       - transforms: a MONAI Compose returning a (1, D, H, W) Tensor/MetaTensor (float-like)
     """
     def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None,input_cl=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
@@ -409,6 +409,8 @@ class PETDataset(Dataset):
             y_cls = torch.tensor([row["visual_read"]], dtype=torch.float32)
         if 'CL' in self.targets:
             y_reg = torch.tensor([row["CL"]], dtype=torch.float32)
+        if 'MetaTemporal' in self.targets:
+            y_reg = torch.tensor([row["MetaTemporal"]], dtype=torch.float32)
 
         # extra inputs
         extras = []
