@@ -59,11 +59,18 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
     dl_tr, dl_va = get_train_val_loaders(train_df, val_df, args)
     _, dl_eval = get_train_val_loaders(train_df, train_df, args)
 
-    # Determine classification/regression
+    # Determine output dimension from targets.
+    # classification -> 2 classes, single regression -> 1, multi-regression -> number of regression targets
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
-    n_classes = int(train_df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    regression_targets = [t for t in targets_list if t != "visual_read"]
+    if regression_targets:
+        out_dim = len(regression_targets)
+    elif 'visual_read' in targets_list:
+        out_dim = int(train_df["visual_read"].dropna().nunique())
+    else:
+        out_dim = 1
 
-    model = build_model_from_args(args, device=args.device, n_classes=n_classes)
+    model = build_model_from_args(args, device=args.device, n_classes=out_dim)
 
     # ---- Train ----
     if args.tune:
@@ -87,7 +94,7 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
                  'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
 
     # ---- Interpretation: grad-CAM or ... ----
-    run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name) # the best model on validation set, save .png and .nii
+    # run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name)
 
     return metrics_te, df_result_te
 
