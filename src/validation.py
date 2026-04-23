@@ -165,9 +165,15 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
         torch.nn.Module: The model with loaded weights.
     """
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
-    n_classes = int(df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    regression_targets = [t for t in targets_list if t != "visual_read"]
+    if regression_targets:
+        out_dim = len(regression_targets)
+    elif 'visual_read' in targets_list:
+        out_dim = int(df["visual_read"].dropna().nunique())
+    else:
+        out_dim = 1
 
-    model = build_model_from_args(args, device=args.device, n_classes=n_classes)
+    model = build_model_from_args(args, device=args.device, n_classes=out_dim)
 
     ckpt = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")
     print(f"Loading pretrained model: {ckpt}")

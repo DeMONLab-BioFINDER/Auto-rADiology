@@ -47,20 +47,40 @@ def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, 
 
 @torch.no_grad()
 def inference(model, loader, device):
-    probs, ycls, preds, any_cls, cents, yreg, any_reg, ids = evals(model, loader, device)
+    probs, ycls, preds, any_cls, y_preds_reg, y_true_reg, any_reg, ids, reg_target_names = evals(model, loader, device)
 
-    metrics = compute_metrics(ycls, preds, probs, any_cls, yreg, cents, any_reg)
+    metrics = compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_reg)
     # es_metric <- val_metric
-    print('ids shape:', ids)
+    # commented the print out because it was huge
+    # print('ids shape:', ids)
+    df_result = pd.DataFrame()
+    # For classification, we store ID, true label, predicted label, and predicted probability.
     if any_cls: 
         df_result = pd.DataFrame({'ID_ind': np.concatenate(ids, axis=0), 
                                   'y': np.concatenate(ycls, axis=0), 
                                   'pred':np.concatenate(preds, axis=0),
                                   'prob':np.concatenate(probs, axis=0)})
-    if any_reg:
-        df_result = pd.DataFrame({'ID_ind': np.concatenate(ids, axis=0), 
-                                  'y': np.concatenate(yreg, axis=0),
-                                  'pred':np.concatenate(cents, axis=0)})
+    elif any_reg:
+        y_true_reg_arr = np.concatenate(y_true_reg, axis=0)
+        y_preds_reg_arr = np.concatenate(y_preds_reg, axis=0)
+        if y_true_reg_arr.ndim == 1:
+            y_true_reg_arr = y_true_reg_arr.reshape(-1, 1)
+        if y_preds_reg_arr.ndim == 1:
+            y_preds_reg_arr = y_preds_reg_arr.reshape(-1, 1)
+
+        # If there's only one regression target, use simple columns 'y' and 'pred'.
+        if y_true_reg_arr.shape[1] == 1:
+            df_result = pd.DataFrame({'ID_ind': np.concatenate(ids, axis=0),
+                                      'y': y_true_reg_arr[:, 0],
+                                      'pred': y_preds_reg_arr[:, 0]})
+        # If there are multiple regression targets, name them according to reg_target_names if possible
+        else:
+            df_dict = {'ID_ind': np.concatenate(ids, axis=0)}
+            for i in range(y_true_reg_arr.shape[1]):
+                name = reg_target_names[i] if i < len(reg_target_names) else f"target{i}"
+                df_dict[f"{name}_y"] = y_true_reg_arr[:, i]
+                df_dict[f"{name}_pred"] = y_preds_reg_arr[:, i]
+            df_result = pd.DataFrame(df_dict)
 
     return metrics, df_result
 
@@ -70,14 +90,15 @@ def evals(model, loader, device):
     model.eval()
 
     probs, ycls, preds = [], [], []
-    cents, yreg = [], []
+    y_preds_reg, y_true_reg = [], []
     ids = []
     any_cls, any_reg = False, False
+    reg_target_names = getattr(loader.dataset, "regression_targets", [])
     for x, y_cls, y_reg, extra, id in tqdm(loader, desc="Val", leave=False):
         x = x.to(device)
         extra = extra.to(device)
         out = model(x, extra=extra)
-        logit, cent, _ = unpack_model_outputs(out, y_reg)
+        logit, reg_pred, _ = unpack_model_outputs(out, y_reg)
 
         if (not y_cls.isnan().all()) and (logit is not None):
             any_cls = True
@@ -101,18 +122,24 @@ def evals(model, loader, device):
                 probs.append(sm)                    # 2D
                 ycls.append(y_cls.cpu().numpy().ravel())
 
-        if (not y_reg.isnan().all()) and (cent is not None):
+        if (not y_reg.isnan().all()) and (reg_pred is not None):
             any_reg = True
             y_reg = y_reg.to(device)
-            cents.append(cent.cpu().numpy().ravel())
-            yreg.append(y_reg.cpu().numpy().ravel())
+            y_preds_reg_np = reg_pred.detach().cpu().numpy()
+            y_true_reg_np = y_reg.detach().cpu().numpy()
+            if y_preds_reg_np.ndim == 1:
+                y_preds_reg_np = y_preds_reg_np.reshape(-1, 1)
+            if y_true_reg_np.ndim == 1:
+                y_true_reg_np = y_true_reg_np.reshape(-1, 1)
+            y_preds_reg.append(y_preds_reg_np)
+            y_true_reg.append(y_true_reg_np)
 
         ids.append(id.to(device).cpu().numpy().ravel())
 
-    return probs, ycls, preds, any_cls, cents, yreg, any_reg, ids
+    return probs, ycls, preds, any_cls, y_preds_reg, y_true_reg, any_reg, ids, reg_target_names
 
 
-def compute_metrics(ycls, preds, probs, any_cls, yreg, cents, any_reg):
+def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_reg):
     
     metrics = {"auc": np.nan, "acc": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "eval_metric": 0.0} #"val_loss": 0.0, 
     if any_cls:
@@ -144,23 +171,28 @@ def compute_metrics(ycls, preds, probs, any_cls, yreg, cents, any_reg):
         metrics["acc"] = float(accuracy_score(ycls, preds))
         metrics['eval_metric'] = np.nansum([metrics["auc"], metrics["acc"]])
     if any_reg:
-        cents = np.concatenate(cents)
-        yreg  = np.concatenate(yreg)
+        y_preds_reg = np.concatenate(y_preds_reg, axis=0)
+        y_true_reg = np.concatenate(y_true_reg, axis=0)
+        if y_preds_reg.ndim == 1:
+            y_preds_reg = y_preds_reg.reshape(-1, 1)
+            y_true_reg = y_true_reg.reshape(-1, 1)
 
-        # ignore nans
-        mask_reg = np.isfinite(cents) # use cents to mask, as y has masked out nans in input
-        yreg = yreg[mask_reg]
-        cents = cents[mask_reg]
+        y_true_flat = y_true_reg.reshape(-1)
+        y_pred_flat = y_preds_reg.reshape(-1)
+        finite_mask = np.isfinite(y_true_flat) & np.isfinite(y_pred_flat)
+        y_true_flat = y_true_flat[finite_mask]
+        y_pred_flat = y_pred_flat[finite_mask]
 
-        metrics["mae"]  = float(mean_absolute_error(yreg, cents))
-        metrics["rmse"] = float(root_mean_squared_error(yreg, cents))
-        metrics["r2"]   = float(r2_score(yreg, cents))
+        if y_true_flat.size > 0:
+            metrics["mae"]  = float(mean_absolute_error(y_true_flat, y_pred_flat))
+            metrics["rmse"] = float(root_mean_squared_error(y_true_flat, y_pred_flat))
+            metrics["r2"]   = float(r2_score(y_true_flat, y_pred_flat)) if y_true_flat.size > 1 else np.nan
 
-        mae_ref = np.median(np.abs(yreg - np.median(yreg))) # Reference scale for MAE (robust to outliers), Median Absolute Deviation
-        if not np.isfinite(mae_ref) or mae_ref <= 1e-6: # Fallback if targets are constant or numerically unstable
-            mae_ref = max(np.std(yreg), 1e-6)
-        mae_good = 1.0 - np.clip(metrics["mae"] / mae_ref, 0.0, 1.0) if np.isfinite(metrics["mae"]) else np.nan # Convert MAE into a "goodness" score in [0, 1]
-        metrics['eval_metric'] = np.nansum([mae_good, metrics["r2"]])
+            mae_ref = np.median(np.abs(y_true_flat - np.median(y_true_flat))) # Reference scale for MAE (robust to outliers), Median Absolute Deviation
+            if not np.isfinite(mae_ref) or mae_ref <= 1e-6: # Fallback if targets are constant or numerically unstable
+                mae_ref = max(np.std(y_true_flat), 1e-6)
+            mae_good = 1.0 - np.clip(metrics["mae"] / mae_ref, 0.0, 1.0) if np.isfinite(metrics["mae"]) else np.nan # Convert MAE into a "goodness" score in [0, 1]
+            metrics['eval_metric'] = np.nansum([mae_good, metrics["r2"]])
 
     return metrics
 
@@ -199,7 +231,11 @@ def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Ten
         used_head = True
     # ---- regression loss ----
     if (not y_reg.isnan().all()) and (loss_w_reg > 0) and (cent is not None):
-        loss_reg = reg_criterion(cent, y_reg).squeeze(1)
+        loss_reg = reg_criterion(cent, y_reg)
+        # if multiple regression targets, average losses across targets
+        # this could be changed to a weighted average if some targets are more important, but for now we just do a simple mean
+        if loss_reg.ndim > 1:
+            loss_reg = loss_reg.mean(dim=1)
         total += loss_w_reg * (domain_weights * loss_reg).mean()
         used_head = True
 

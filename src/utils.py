@@ -276,10 +276,12 @@ def build_model_from_args(args, device=None, n_classes: int | None = None):
     allowed = set(inspect.signature(ModelCls.__init__).parameters) - {"self", "*args", "**kwargs"}
     params = {k: v for k, v in {**defaults, **extra}.items() if k in allowed}
 
-    # auto-wire class count if not provided
+    # auto-wire class count if provided by caller
     if n_classes is not None:
         if "num_classes" in allowed and "num_classes" not in params:
             params["num_classes"] = n_classes
+        elif "out_channels" in allowed and "out_channels" not in params:
+            params["out_channels"] = n_classes
 
     # Instantiate:  Build + move
     model = ModelCls(**params)
