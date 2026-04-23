@@ -31,7 +31,7 @@ def main(args):
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
     model.load_state_dict(state_dict, strict=False)
 
-    run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name, vis_norm=None) # the best model on validation set, save .png and .nii
+    # run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name, vis_norm=None)
 
     print('DONE!')
 
