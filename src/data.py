@@ -320,6 +320,7 @@ class PETDataset(Dataset):
         self.transforms = transforms
         self.data_file = data_file
         self.targets = [t.strip() for t in targets.split(",") if t.strip()]
+        self.regression_targets = [t for t in self.targets if t != "visual_read"]
         self.input_cl = input_cl
         self.extra_global_feats = ([f.strip() for f in extra_global_feats.split(",")]
                                    if extra_global_feats is not None else [])
@@ -404,13 +405,12 @@ class PETDataset(Dataset):
             if r[2] < 0.5: x = torch.flip(x, dims=[ndim-1])  # W
 
         # Targets
-        y_cls, y_reg = torch.tensor([float('nan')]), torch.tensor([float('nan')])
+        y_cls = torch.tensor([float('nan')], dtype=torch.float32)
+        y_reg = torch.tensor([float('nan')], dtype=torch.float32)
         if 'visual_read' in self.targets:
             y_cls = torch.tensor([row["visual_read"]], dtype=torch.float32)
-        if 'CL' in self.targets:
-            y_reg = torch.tensor([row["CL"]], dtype=torch.float32)
-        if 'MetaTemporal' in self.targets:
-            y_reg = torch.tensor([row["MetaTemporal"]], dtype=torch.float32)
+        if self.regression_targets:
+            y_reg = torch.tensor([row[t] for t in self.regression_targets], dtype=torch.float32)
 
         # extra inputs
         extras = []
