@@ -100,6 +100,29 @@ def is_continuous_numeric(s, min_unique_ratio=0.05):
     return unique_ratio >= min_unique_ratio
 
 
+def collapse_dx_to_other(df: pd.DataFrame, col: str = "dx", main_groups=None, other_label: str = "Other"):
+    """
+    Collapse diagnosis labels outside the main groups into a single catch-all class.
+
+    This is intended for stratification and should run before any split that uses dx.
+    """
+    if main_groups is None:
+        main_groups = ["CU", "MCI", "AlzCS dem"]
+
+    if col not in df.columns:
+        return df
+
+    dx = df[col].astype("string")
+    keep = {g.strip().lower() for g in main_groups}
+    mask_other = dx.notna() & ~dx.str.strip().str.lower().isin(keep)
+
+    if mask_other.any():
+        df = df.copy()
+        df.loc[mask_other, col] = other_label
+
+    return df
+
+
 def compute_smooth_sigma_vox(voxel_sizes_mm: tuple[float, float, float], fwhm_current_mm: float, fwhm_target_mm: float) -> tuple[float, float, float] | None:
     """
     Returns per-axis sigma in *voxels* for MONAI.GaussianSmooth to top-up smoothing

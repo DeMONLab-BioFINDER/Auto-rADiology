@@ -13,7 +13,8 @@ from src.train import train_one_epoch, inference
 from src.vis import run_visualization
 from src.utils import (append_metrics_csv, save_checkpoint, build_model_from_args,
                        load_best_checkpoint, plot_metrics_from_csv, save_train_test_subjects,
-                       random_assign_nan_labels, add_quantile_bins, is_continuous_numeric)
+                       random_assign_nan_labels, add_quantile_bins, is_continuous_numeric,
+                       collapse_dx_to_other)
 
 
 def kfold_cv(df_clean, stratify_labels, args):
@@ -180,6 +181,10 @@ def get_stratify_labels(df: pd.DataFrame, cols, seed):
             raise ValueError(f"Column '{c}' not found in dataframe for stratification.")
         
     #df_clean = df.dropna(subset=labels).copy()
+    if "dx" in labels:
+        df = collapse_dx_to_other(df, col="dx")
+        print("Collapsed rare dx labels into 'Other' before stratification.")
+
     # Assign Nan labels ramdomly to the train and test
     for l in labels:
         if is_continuous_numeric(df[l]):
