@@ -59,7 +59,7 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
 
     # Only scans with targets value
     targets_list = [t.strip() for t in targets.split(",") if t.strip()]
-    df = df[~df[targets_list].isna().values].reset_index(drop=True)
+    df = df.dropna(subset=targets_list).reset_index(drop=True)
     print(f'Found {df.shape[0]} scans with demographics for {targets}')
 
     return df
