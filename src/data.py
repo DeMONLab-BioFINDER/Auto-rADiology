@@ -32,7 +32,10 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
         csv = Path(input_path) / "demo.csv"
         if not csv.exists():
             csv = Path(input_path) / f"demo_{dataset}_{data_type}.csv"
-        df = pd.read_csv(csv, index_col=0) # Must have 'ID' column from 0 to len(df)
+        df = pd.read_csv(csv)
+        unnamed_cols = [c for c in df.columns if str(c).startswith("Unnamed")]
+        if unnamed_cols:
+            df = df.drop(columns=unnamed_cols)
         print(f"[cache] Loaded {csv} with {len(df)} rows (no filesystem scan).")
     else:
         pets = find_pet_files(input_path=input_path, preproc_method=preproce_method, allow=subjects)
@@ -59,10 +62,11 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
 
     # Only scans with targets value
     targets_list = [t.strip() for t in targets.split(",") if t.strip()]
-    # 4x duplication of samples
-    df = df[~df[targets_list].isna().values].reset_index(drop=True)
-    # no duplication of samples
-    # df = df.dropna(subset=targets_list).reset_index(drop=True)
+    # Keep only rows that have ALL target values
+    df = df.dropna(subset=targets_list).reset_index(drop=True)
+    # Duplicate each sample once per target
+    df = df.loc[df.index.repeat(len(targets_list))].reset_index(drop=True)
+    
     print(f'Found {df.shape[0]} scans with demographics for {targets}')
 
     return df
