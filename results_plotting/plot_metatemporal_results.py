@@ -3,6 +3,8 @@
 import argparse
 from itertools import combinations
 from pathlib import Path
+import re
+import textwrap
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -83,8 +85,21 @@ def get_category_palette(order):
     return palette
 
 
+def pretty_region_name(name: str) -> str:
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(name))
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def wrap_plot_title(title: str, width: int = 36) -> str:
+    return textwrap.fill(str(title), width=width, break_long_words=False, break_on_hyphens=False)
+
+
+def finalize_figure(fig, *, rect=(0.0, 0.0, 0.97, 0.97)):
+    fig.tight_layout(rect=rect)
+
+
 def style_axes(ax, title: str, xlabel: str, ylabel: str, *, xrotation: int = 0):
-    ax.set_title(title, fontsize=TITLE_SIZE, pad=10)
+    ax.set_title(wrap_plot_title(title), fontsize=TITLE_SIZE, pad=12, loc="center")
     ax.set_xlabel(xlabel, fontsize=LABEL_SIZE)
     ax.set_ylabel(ylabel, fontsize=LABEL_SIZE)
     ax.tick_params(axis="x", rotation=xrotation, labelsize=TICK_SIZE)
@@ -186,7 +201,7 @@ def make_group_mae_boxstrip_plots(df: pd.DataFrame, out_dir: Path, group_cols: l
         )
         ax.margins(x=0.03)
         ax.grid(axis="y", alpha=0.25)
-        fig.tight_layout()
+        finalize_figure(fig)
         fig.savefig(out_dir / f"mae_boxstrip_by_{col}.png", dpi=300)
         plt.close(fig)
 
@@ -245,6 +260,7 @@ def run_group_significance_tests(df: pd.DataFrame, out_dir: Path, group_cols: li
 def make_site_raw_value_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     if "site" not in df.columns:
         return
+    display_target = pretty_region_name(target_name)
     tmp = df[["site", "y", "pred"]].copy()
     tmp["site"] = tmp["site"].astype("string").fillna("NA")
     long_df = tmp.melt(id_vars="site", value_vars=["y", "pred"], var_name="value_type", value_name="value")
@@ -280,9 +296,9 @@ def make_site_raw_value_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     handles, labels = ax.get_legend_handles_labels()
     if handles:
         ax.legend(handles[:2], labels[:2], title="Value", loc="best", fontsize=LEGEND_SIZE, frameon=False)
-    style_axes(ax, "Reference and Predicted SUVR by Site", "site", f"{target_name} SUVR", xrotation=20)
+    style_axes(ax, "Reference and Predicted SUVR by Site", "site", f"{display_target} SUVR", xrotation=20)
     ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "site_raw_value_distribution.png", dpi=300)
     plt.close(fig)
 
@@ -290,6 +306,7 @@ def make_site_raw_value_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
 def make_site_error_correlation_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     if "site" not in df.columns:
         return
+    display_target = pretty_region_name(target_name)
 
     tmp = df[["site", "y", "pred"]].copy()
     tmp["site"] = tmp["site"].astype("string").fillna("NA")
@@ -336,12 +353,12 @@ def make_site_error_correlation_plot(df: pd.DataFrame, out_dir: Path, target_nam
 
     style_axes(
         ax,
-        f"Absolute Error vs True {target_name} SUVR by Site",
-        f"True {target_name} SUVR",
+        f"Absolute Error vs True\n{display_target} SUVR by Site",
+        f"True {display_target} SUVR",
         "Absolute error (SUVR)",
     )
     style_legend(ax, title="site", loc="upper right")
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "site_error_vs_true_correlation.png", dpi=300)
     plt.close(fig)
 
@@ -353,6 +370,7 @@ def make_training_distribution_plot(run_dir: Path, out_dir: Path, target_name: s
     train_path = run_dir / "Hold-out_training-set.csv"
     if not train_path.exists():
         return
+    display_target = pretty_region_name(target_name)
     dft = pd.read_csv(train_path)
     if "dx" in dft.columns:
         dft["dx_grouped"] = combine_dx_groups(dft["dx"])
@@ -362,7 +380,7 @@ def make_training_distribution_plot(run_dir: Path, out_dir: Path, target_name: s
 
     if target_name in dft.columns:
         sns.histplot(dft[target_name], bins=20, kde=True, ax=axes[0], color=SEABORN_COLORS[0])
-        style_axes(axes[0], f"Training {target_name} SUVR", f"{target_name} SUVR", "Count")
+        style_axes(axes[0], f"Training\n{display_target} SUVR", f"{display_target} SUVR", "Count")
     else:
         axes[0].set_visible(False)
 
@@ -401,7 +419,7 @@ def make_training_distribution_plot(run_dir: Path, out_dir: Path, target_name: s
         else:
             axes[i].set_visible(False)
 
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "training_distribution_overview.png", dpi=300)
     plt.close(fig)
 
@@ -537,7 +555,7 @@ def make_training_curve(df_curve: pd.DataFrame, out_dir: Path):
         ax_err.set_xlabel("Epoch", fontsize=LABEL_SIZE)
 
     fig.suptitle("Training-Set Regression Metrics Per Epoch", y=0.995, fontsize=TITLE_SIZE)
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "training_curves_regression.png", dpi=300)
     plt.close(fig)
 
@@ -569,7 +587,7 @@ def make_training_curve_cut_first4(df_curve: pd.DataFrame, out_dir: Path):
         )
     style_axes(ax, "MAE & RMSE (Epoch > 4)", "Epoch", "Error")
     style_legend(ax, loc="best")
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "training_mae_rmse_cut_first4.png", dpi=300)
     plt.close(fig)
 
@@ -585,7 +603,7 @@ def make_training_curve_cut_first4(df_curve: pd.DataFrame, out_dir: Path):
         )
         style_axes(ax, "R2 (Epoch > 4)", "Epoch", "R2")
         style_legend(ax, loc="best")
-        fig.tight_layout()
+        finalize_figure(fig)
         fig.savefig(out_dir / "training_r2_cut_first4.png", dpi=300)
         plt.close(fig)
 
@@ -649,12 +667,13 @@ def make_training_curve_cut_first4_panel(df_curve: pd.DataFrame, out_dir: Path):
         ax_err.set_xlabel("Epoch", fontsize=LABEL_SIZE)
 
     fig.suptitle("Training-Set Regression Metrics Per Epoch (Epoch > 4)", y=0.995, fontsize=TITLE_SIZE)
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "training_curves_regression_cut_first4.png", dpi=300)
     plt.close(fig)
 
 
 def make_scatter_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
+    display_target = pretty_region_name(target_name)
     y_true = df_preds["y"].to_numpy()
     y_pred = df_preds["pred"].to_numpy()
 
@@ -681,9 +700,9 @@ def make_scatter_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
     style_legend(ax, loc="upper left")
     style_axes(
         ax,
-        f"Reference vs Predicted {target_name} SUVR",
-        f"Reference {target_name} SUVR",
-        f"Predicted {target_name} SUVR",
+        f"Reference vs Predicted\n{display_target} SUVR",
+        f"Reference {display_target} SUVR",
+        f"Predicted {display_target} SUVR",
     )
     ax.text(
         0.96,
@@ -694,7 +713,7 @@ def make_scatter_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
         va="top",
         bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
     )
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "true_vs_predicted.png", dpi=300)
     plt.close(fig)
 
@@ -713,13 +732,14 @@ def make_residual_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
         color=SEABORN_COLORS[0],
     )
     ax.axhline(0, linestyle="--", color="black", linewidth=1.6)
+    display_target = pretty_region_name(target_name)
     style_axes(
         ax,
-        "Residuals vs Reference SUVR",
-        f"Reference {target_name} SUVR",
+        f"Residuals vs Reference\n{display_target} SUVR",
+        f"Reference {display_target} SUVR",
         "Residual (Predicted - Reference SUVR)",
     )
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "residuals_vs_true.png", dpi=300)
     plt.close(fig)
 
@@ -731,7 +751,7 @@ def make_residual_histogram(df_preds: pd.DataFrame, out_dir: Path):
     ax.hist(residuals, bins=20, alpha=0.9, color=SEABORN_COLORS[0], edgecolor="white")
     ax.axvline(0, linestyle="--", color="black", linewidth=1.6)
     style_axes(ax, "Residual Distribution", "Residual (Predicted - Reference SUVR)", "Count")
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "residual_histogram.png", dpi=300)
     plt.close(fig)
 
@@ -743,8 +763,9 @@ def make_true_value_histogram(df_preds: pd.DataFrame, out_dir: Path, target_name
     y_true = df_preds["y"].to_numpy()
     fig, ax = plt.subplots(figsize=(7.2, 5.8))
     ax.hist(y_true, bins=20, alpha=0.9, color=SEABORN_COLORS[0], edgecolor="white")
-    style_axes(ax, f"Distribution of Reference {target_name} SUVR", f"Reference {target_name} SUVR", "Count")
-    fig.tight_layout()
+    display_target = pretty_region_name(target_name)
+    style_axes(ax, f"Distribution of Reference\n{display_target} SUVR", f"Reference {display_target} SUVR", "Count")
+    finalize_figure(fig)
     fig.savefig(out_dir / "true_value_histogram.png", dpi=300)
     plt.close(fig)
 
@@ -823,7 +844,7 @@ def make_mae_by_bin_plot(summary: pd.DataFrame, out_dir: Path):
     ax2.tick_params(axis="y", labelsize=TICK_SIZE)
     ax2.grid(False)
 
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "mae_by_true_bin.png", dpi=300)
     plt.close(fig)
 
@@ -862,23 +883,19 @@ def make_residual_trend_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
         label="Smoothed average residual",
     )
     ax.axhline(0, linestyle="--", color="black", linewidth=1.2)
+    display_target = pretty_region_name(target_name)
     style_axes(
         ax,
-        f"Residuals Across True {target_name} SUVR Values",
+        f"Residuals Across True\n{display_target} SUVR Values",
         "",
         "Residual = Predicted SUVR - True SUVR",
     )
     style_legend(ax, loc="upper right")
 
     ax_hist.hist(df["y"], bins=20, color=SEABORN_COLORS[0], alpha=0.9, edgecolor="white")
-    style_axes(
-        ax_hist,
-        "",
-        f"True {target_name} SUVR",
-        "Number of test subjects",
-    )
+    style_axes(ax_hist, "", f"True {display_target} SUVR", "Number of test subjects")
     ax_hist.grid(False)
-    fig.tight_layout()
+    finalize_figure(fig)
     fig.savefig(out_dir / "residual_trend_vs_true.png", dpi=300)
     plt.close(fig)
 
@@ -1097,7 +1114,7 @@ def main():
                 cbar = fig.colorbar(scatter, ax=ax, label=col)
                 cbar.ax.tick_params(labelsize=TICK_SIZE)
                 cbar.set_label(col, fontsize=LABEL_SIZE)
-            fig.tight_layout()
+            finalize_figure(fig)
             fname = f"true_vs_predicted_by_{col}.png"
             fig.savefig(demo_fig_dir / fname, dpi=300)
             plt.close(fig)
