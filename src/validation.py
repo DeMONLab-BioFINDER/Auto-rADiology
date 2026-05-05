@@ -116,6 +116,8 @@ def load_validation_data(args):
     
     """
 
+    data_file = None
+
     if 'ADNI' in args.dataset: # Berkeley server, load NIfTI files
         print('Validate on ADNI test set...')
         test_set = os.path.join(args.proj_path, "data", f'{args.dataset}_found_scans_{args.data_suffix}_{args.targets}.csv')
@@ -141,6 +143,23 @@ def load_validation_data(args):
         print(test_set)
         df = pd.read_csv(test_set, index_col=0)
         tfm = args.input_path
+    elif 'AVID' in args.dataset: # Berzelius, load torch tensors
+        print('Validate on AVID dataset...')
+        test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}.csv')
+        print(test_set)
+        df = pd.read_csv(test_set, index_col=0)
+        tfm = get_transforms(tuple(args.image_shape))
+
+    if "ID" not in df.columns:
+        if df.index.name == "ID":
+            df = df.reset_index()
+        else:
+            raise ValueError(
+                "Validation CSV must include an 'ID' column or an index named 'ID' that matches the .pkl index."
+            )
+
+    if 'ADNI' not in args.dataset:
+        data_file = args.input_path
     
     # remove nan
     print(df)
@@ -148,9 +167,9 @@ def load_validation_data(args):
     df = df.dropna(subset=targets)
     print(f'Validation set size: {len(df)} images')
 
-    dl_va = get_loader(df, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
+    dl_va = get_loader(df, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
 
-    return tfm, dl_va, df
+    return tfm, dl_va, df, data_file
 
 
 def load_preatrained_model(args, df) -> torch.nn.Module:
