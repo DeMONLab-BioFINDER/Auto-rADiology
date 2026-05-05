@@ -31,7 +31,7 @@ def kfold_cv(df_clean, stratify_labels, args):
         val_df   = df_clean.iloc[va_idx].reset_index(drop=True)
         pbar.set_postfix(train=len(train_df), val=len(val_df))
 
-        m, r = run_fold(train_df, val_df, args, fold_name=fold_name)
+        m, r = run_fold(train_df, val_df, args=args, fold_name=fold_name)
         
         # Log results
         append_metrics_csv(metrics_path, {"fold": i, **m}, mode='row')
@@ -45,20 +45,32 @@ def kfold_cv(df_clean, stratify_labels, args):
 
 
 
-def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
+def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, optuna_report=None):
     """
-    Train and inferecen on test set return metrics dict.
+    Train and inference on an evaluation set return metrics dict.
+    
+    Args:
+        train_df: training data
+        val_df: validation data used for early stopping
+        eval_df: evaluation data for the final metrics. If None, uses val_df.
+        args: arguments namespace
+        fold_name: fold identifier string
+    
     Modes:
-      - Normal CV: train_only=False, args.tune=False -> do early_stop and scheduler on same training set; inference on test set (val_df) loading the best trained model
-      - Hyperparameter tuning inner fold: train_only=False, args.tune=True -> do early_stop and scheduler, stopping on the test set; inference on test set (val_df) loading the best trained model
-      - Hyperparameter tuning outer fold: train_only=True, args.tune=True -> no early_stop/scheduler; inference on test set (val_df) using the trained model
+      - Normal training: train_only=False, args.tune=False -> do early_stop on val_df; inference on eval_df loading the best trained model
+      - Hyperparameter tuning inner fold: train_only=False, args.tune=True -> do early_stop on val_df; inference on eval_df loading the best trained model
+      - Hyperparameter tuning outer fold: train_only=True, args.tune=True -> no early_stop; inference on eval_df using the trained model
     """
+    if eval_df is None:
+        eval_df = val_df  # For k-fold CV, evaluate on the validation split
+    
     train_only = (fold_name == "nestedcv-outer-test")
     output_fold_dir, path_list = _make_outfolder_fold(args.output_path, fold_name) # path_list: csv_path, csv_loss_path, ckpt_path
-    save_train_test_subjects(train_df, val_df, output_fold_dir, fold_name)
+    save_train_test_subjects(train_df, eval_df, output_fold_dir, fold_name)
+    val_df.to_csv(os.path.join(output_fold_dir, f'{fold_name}_validation-set.csv'))
 
     dl_tr, dl_va = get_train_val_loaders(train_df, val_df, args)
-    _, dl_eval = get_train_val_loaders(train_df, train_df, args)
+    _, dl_eval = get_train_val_loaders(eval_df, eval_df, args)
 
     # Determine output dimension from targets.
     # classification -> 2 classes, single regression -> 1, multi-regression -> number of regression targets
@@ -78,8 +90,8 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
         model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name,
                                         path_list=path_list, optuna_report=optuna_report)
     else:
-        print('Train (early stop and scheduler using training set, if not "train_only")')
-        model, best_epoch = train_model(model, dl_tr, dl_eval, args=args, fold_name=fold_name, path_list=path_list)
+        print('Train (early stop on validation set)')
+        model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name, path_list=path_list)
     
     plot_metrics_from_csv(path_list['train_eval_csv'], path_list['train_eval_png'])
 
@@ -88,14 +100,14 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
     if not train_only: model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
-    metrics_tr, df_result_tr = inference(model, dl_eval, args.device)
-    metrics_te, df_result_te = inference(model, dl_va, args.device)
+    metrics_tr, df_result_tr = inference(model, dl_tr, args.device)
+    metrics_te, df_result_te = inference(model, dl_eval, args.device)
     metrics_te["best_epoch"] = int(best_epoch)
     pickle.dump({'train':{'metric': metrics_tr, 'preds': df_result_tr},
                  'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
 
     # ---- Interpretation: grad-CAM or ... ----
-    # run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name)
+    # run_visualization(model, dl_eval, args.device, args.output_path, vis_name=args.visualization_name)
 
     return metrics_te, df_result_te
 
@@ -208,7 +220,7 @@ def cv_median_best_epoch(df_train, stratify_labels_train, args) -> int:
         fold_name = f"kfold-{i}"
         tr_df = df_train.iloc[tr_idx].reset_index(drop=True)
         va_df = df_train.iloc[va_idx].reset_index(drop=True)
-        m = run_fold(tr_df, va_df, args, fold_name=fold_name)
+        m = run_fold(tr_df, va_df, args=args, fold_name=fold_name)
         be = int(m.get("best_epoch", 0))
         if be > 0:
             best_epochs.append(be)

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from typing import Tuple
 from types import SimpleNamespace
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
 from src.models import *
 
@@ -243,6 +243,64 @@ def hold_out_set(df, labels, subject_col, test_size: float = 0.2, seed: int = 42
     return train_idx, test_idx
 
 
+def train_val_test_split(df, labels, subject_col, train_size=0.7, val_size=0.15, test_size=0.15, seed=42) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Three-way subject-level stratified split: train / validation / test.
+    
+    - Splits by subject (no leakage)
+    - Stratifies using subject-level labels
+    - Returns scan-level indices for train, val, and test
+    
+    Args:
+        train_size: fraction for training (default 0.7)
+        val_size: fraction for validation (default 0.15)
+        test_size: fraction for testing (default 0.15)
+    """
+    assert abs(train_size + val_size + test_size - 1.0) < 1e-6, "Sizes must sum to 1.0"
+    
+    df = df.copy()
+
+    # ---- 1. build subject-level dataframe ----
+    if subject_col is not None:
+        print(f'[split] keep only first scan per subject, based on column "{subject_col}"')
+    else:
+        subject_col = 'ID'
+    subj_df = df.drop_duplicates(subset=subject_col, keep='first') if subject_col is not None else df.copy()
+    assert len(subj_df) == subj_df[subject_col].nunique()
+    subj_labels = labels.loc[subj_df.index]
+    assert (subj_df.index == subj_labels.index).all()
+
+    # ---- 2. first split: train vs (val+test) ----
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=(val_size + test_size), random_state=seed)
+    train_s, temp_s = next(sss1.split(subj_df, subj_labels))
+    
+    # ---- 3. second split: val vs test (on the remaining fraction) ----
+    # We need to split temp_s 50/50 to get val_size and test_size equally from the remainder
+    temp_subj_df = subj_df.iloc[temp_s].reset_index(drop=True)
+    temp_subj_labels = subj_labels.iloc[temp_s].reset_index(drop=True)
+    
+    sss2 = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state=seed+1)
+    val_s_temp, test_s_temp = next(sss2.split(temp_subj_df, temp_subj_labels))
+    
+    # Map back to original indices
+    val_s = temp_s[val_s_temp]
+    test_s = temp_s[test_s_temp]
+
+    # ---- 4. map back to scan-level indices ----
+    train_ids = subj_df.iloc[train_s][subject_col]
+    val_ids   = subj_df.iloc[val_s][subject_col]
+    test_ids  = subj_df.iloc[test_s][subject_col]
+
+    train_idx = df[df[subject_col].isin(train_ids)].index.to_numpy()
+    val_idx   = df[df[subject_col].isin(val_ids)].index.to_numpy()
+    test_idx  = df[df[subject_col].isin(test_ids)].index.to_numpy()
+
+    print(f"[split] train/val/test (scans): {len(train_idx)} / {len(val_idx)} / {len(test_idx)} "
+          f"(subjects: {len(train_ids)} / {len(val_ids)} / {len(test_ids)})")
+
+    return train_idx, val_idx, test_idx
+
+
 def _resolve_model_class(name: str):
     """Return a model class by name from models.py; raise a helpful error if missing."""
     try:
@@ -254,8 +312,8 @@ def _resolve_model_class(name: str):
         ) from e
 
 def save_train_test_subjects(df_train, df_test, output_path, savename):
-    df_train.to_csv(os.path.join(output_path, f'{savename}_training-set.csv'))
-    df_test.to_csv(os.path.join(output_path, f'{savename}_testing-set.csv'))
+    df_train.to_csv(os.path.join(output_path, f'{savename}_training-set.csv'), index=False)
+    df_test.to_csv(os.path.join(output_path, f'{savename}_testing-set.csv'), index=False)
 
 
 def build_model_from_args(args, device=None, n_classes: int | None = None):
