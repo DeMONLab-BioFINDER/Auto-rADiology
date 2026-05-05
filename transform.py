@@ -29,7 +29,7 @@ def main(args):
 
     ids = df_shuf['ID']
     print(df_shuf)
-    df_shuf.to_csv(out_dir + '/demo_with_origID-path.csv')
+    df_shuf.to_csv(out_dir + '/demo_with_origID-path.csv', index=False)
     np.save(f'{out_dir}/original_ids_shuffled.npy', ids.to_numpy())
     df_shuf['ID'] = df_shuf.index
     print(df_shuf)
@@ -55,7 +55,7 @@ def main(args):
 
     df_shuf['pet_path'] = 0
     print(df_shuf)
-    df_shuf.to_csv(out_dir + '/demo.csv')
+    df_shuf.to_csv(out_dir + '/demo.csv', index=False)
 
     print("\nAll done!")
 

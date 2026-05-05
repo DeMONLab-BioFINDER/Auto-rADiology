@@ -16,7 +16,7 @@ mp.set_sharing_strategy("file_system")
 
 def main(args):
     # Load the full external validation Dataset
-    tfm, dl, df = load_validation_data(args)
+    tfm, dl, df, data_file = load_validation_data(args)
     # Load Pretrained Model
     model, targets_list = load_preatrained_model(args, df)
     
