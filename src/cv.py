@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from src.data import get_train_val_loaders
 from src.early_stopping import EarlyStopper
-from src.train import train_one_epoch, evaluate_model, inference
+from src.train import train_one_epoch, validate_one_epoch, inference
 from src.vis import run_visualization
 from src.utils import (append_metrics_csv, save_checkpoint, build_model_from_args,
                        load_best_checkpoint, plot_metrics_from_csv, save_train_test_subjects,
@@ -136,7 +136,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
         tr_loss_mean, tr_loss_all = train_one_epoch(model=model, loader=dl_tr, opt=optimizer, scaler=scaler,
                                                     device=args.device, loss_w_cls=args.loss_w_cls, loss_w_reg=args.loss_w_reg,
                                                     reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta)
-        va_loss_mean, metrics, _ = evaluate_model(
+        va_loss_mean, metrics, _ = validate_one_epoch(
             model=model,
             loader=dl_va,
             device=args.device,

@@ -47,58 +47,50 @@ def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, 
 
 @torch.no_grad()
 def inference(model, loader, device):
-    probs, ycls, preds, any_cls, y_preds_reg, y_true_reg, any_reg, ids, reg_target_names = evals(model, loader, device)
-
-    metrics = compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_reg)
-    # es_metric <- val_metric
-    # commented the print out because it was huge
-    # print('ids shape:', ids)
-    df_result = pd.DataFrame()
-    # For classification, we store ID, true label, predicted label, and predicted probability.
-    if any_cls: 
-        df_result = pd.DataFrame({'ID_ind': np.concatenate(ids, axis=0), 
-                                  'y': np.concatenate(ycls, axis=0), 
-                                  'pred':np.concatenate(preds, axis=0),
-                                  'prob':np.concatenate(probs, axis=0)})
-    elif any_reg:
-        y_true_reg_arr = np.concatenate(y_true_reg, axis=0)
-        y_preds_reg_arr = np.concatenate(y_preds_reg, axis=0)
-        if y_true_reg_arr.ndim == 1:
-            y_true_reg_arr = y_true_reg_arr.reshape(-1, 1)
-        if y_preds_reg_arr.ndim == 1:
-            y_preds_reg_arr = y_preds_reg_arr.reshape(-1, 1)
-
-        # If there's only one regression target, use simple columns 'y' and 'pred'.
-        if y_true_reg_arr.shape[1] == 1:
-            df_result = pd.DataFrame({'ID_ind': np.concatenate(ids, axis=0),
-                                      'y': y_true_reg_arr[:, 0],
-                                      'pred': y_preds_reg_arr[:, 0]})
-        # If there are multiple regression targets, name them according to reg_target_names if possible
-        else:
-            df_dict = {'ID_ind': np.concatenate(ids, axis=0)}
-            for i in range(y_true_reg_arr.shape[1]):
-                name = reg_target_names[i] if i < len(reg_target_names) else f"target{i}"
-                df_dict[f"{name}_y"] = y_true_reg_arr[:, i]
-                df_dict[f"{name}_pred"] = y_preds_reg_arr[:, i]
-            df_result = pd.DataFrame(df_dict)
+    _, metrics, df_result = validate_one_epoch(
+        model,
+        loader,
+        device,
+        desc="Eval",
+    )
 
     return metrics, df_result
 
 
 @torch.no_grad()
-def evals(model, loader, device):
+def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, reg_loss=None, smoothl1_beta=None, desc="Val"):
     model.eval()
 
     probs, ycls, preds = [], [], []
     y_preds_reg, y_true_reg = [], []
     ids = []
+    losses = []
     any_cls, any_reg = False, False
     reg_target_names = getattr(loader.dataset, "regression_targets", [])
-    for x, y_cls, y_reg, extra, id in tqdm(loader, desc="Val", leave=False):
+    for x, y_cls, y_reg, extra, id in tqdm(loader, desc=desc, leave=False):
         x = x.to(device)
         extra = extra.to(device)
         out = model(x, extra=extra)
         logit, reg_pred, _ = unpack_model_outputs(out, y_reg)
+
+        if None not in (loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta):
+            domain_weights = torch.ones(x.shape[0], dtype=torch.float32, device=x.device)
+            y_cls_loss = y_cls.to(device) if y_cls is not None else None
+            y_reg_loss = y_reg.to(device) if y_reg is not None else None
+            loss, _ = compute_total_loss(
+                model,
+                x,
+                y_cls_loss,
+                y_reg_loss,
+                extra=extra,
+                loss_w_cls=loss_w_cls,
+                loss_w_reg=loss_w_reg,
+                reg_loss=reg_loss,
+                smoothl1_beta=smoothl1_beta,
+                domain_weights=domain_weights,
+                out=out,
+            )
+            losses.append(float(loss.detach().item()))
 
         if (not y_cls.isnan().all()) and (logit is not None):
             any_cls = True
@@ -136,7 +128,40 @@ def evals(model, loader, device):
 
         ids.append(id.to(device).cpu().numpy().ravel())
 
-    return probs, ycls, preds, any_cls, y_preds_reg, y_true_reg, any_reg, ids, reg_target_names
+    metrics = compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_reg)
+    val_loss = float(np.mean(losses)) if losses else np.nan
+
+    df_result = pd.DataFrame()
+    if any_cls:
+        df_result = pd.DataFrame({
+            'ID_ind': np.concatenate(ids, axis=0),
+            'y': np.concatenate(ycls, axis=0),
+            'pred': np.concatenate(preds, axis=0),
+            'prob': np.concatenate(probs, axis=0),
+        })
+    elif any_reg:
+        y_true_reg_arr = np.concatenate(y_true_reg, axis=0)
+        y_preds_reg_arr = np.concatenate(y_preds_reg, axis=0)
+        if y_true_reg_arr.ndim == 1:
+            y_true_reg_arr = y_true_reg_arr.reshape(-1, 1)
+        if y_preds_reg_arr.ndim == 1:
+            y_preds_reg_arr = y_preds_reg_arr.reshape(-1, 1)
+
+        if y_true_reg_arr.shape[1] == 1:
+            df_result = pd.DataFrame({
+                'ID_ind': np.concatenate(ids, axis=0),
+                'y': y_true_reg_arr[:, 0],
+                'pred': y_preds_reg_arr[:, 0],
+            })
+        else:
+            df_dict = {'ID_ind': np.concatenate(ids, axis=0)}
+            for i in range(y_true_reg_arr.shape[1]):
+                name = reg_target_names[i] if i < len(reg_target_names) else f"target{i}"
+                df_dict[f"{name}_y"] = y_true_reg_arr[:, i]
+                df_dict[f"{name}_pred"] = y_preds_reg_arr[:, i]
+            df_result = pd.DataFrame(df_dict)
+
+    return val_loss, metrics, df_result
 
 
 def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_reg):
@@ -200,11 +225,15 @@ def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_re
 def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Tensor,
                        y_reg: torch.Tensor, extra: torch.Tensor,
                        loss_w_cls: float, loss_w_reg: float,
-                       reg_loss: str, smoothl1_beta: float, domain_weights: torch.Tensor): # "mse" or "smoothl1" # CL units
+                       reg_loss: str, smoothl1_beta: float, domain_weights: torch.Tensor,
+                       out: Any = None): # "mse" or "smoothl1" # CL units
     """
     Forward + weighted loss.
     Returns: (loss, (logit, cent))
     """
+    if out is None:
+        out = model(x, extra=extra)
+
     # ---- regression loss selector ----
     if reg_loss == "mse":
         reg_criterion = nn.MSELoss(reduction="none")
@@ -213,7 +242,6 @@ def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Ten
     else:
         raise ValueError(f"Unknown reg_loss: {reg_loss}")
 
-    out = model(x, extra=extra)
     logit, cent, _ = unpack_model_outputs(out, y_reg)
 
     total = 0.0
@@ -305,4 +333,3 @@ def unpack_model_outputs(out: Any, y_reg) -> Tuple[Optional[torch.Tensor], Optio
 
     # unknown shape
     return None, None, None
-
