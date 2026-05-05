@@ -70,7 +70,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     val_df.to_csv(os.path.join(path_list["preds_dir"], f'{fold_name}_validation-set.csv'))
 
     dl_tr, dl_va = get_train_val_loaders(train_df, val_df, args)
-    _, dl_eval = get_train_val_loaders(eval_df, eval_df, args)
+    _, dl_eval = get_train_val_loaders(eval_df, eval_df, args, repeat_train=False)
 
     # Determine output dimension from targets.
     # classification -> 2 classes, single regression -> 1, multi-regression -> number of regression targets
@@ -104,11 +104,9 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     if not train_only: model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
-    metrics_tr, df_result_tr = inference(model, dl_tr, args.device)
     metrics_te, df_result_te = inference(model, dl_eval, args.device)
     metrics_te["best_epoch"] = int(best_epoch)
-    pickle.dump({'train':{'metric': metrics_tr, 'preds': df_result_tr},
-                 'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
+    pickle.dump({'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
 
     # ---- Interpretation: grad-CAM or ... ----
     # run_visualization(model, dl_eval, args.device, args.output_path, vis_name=args.visualization_name)

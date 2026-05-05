@@ -42,6 +42,7 @@ def parse_arguments():
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to load (optional)")
     parser.add_argument("--amp", type=bool, default=True, help="Use automatic mixed precision if CUDA is available.")
+    parser.add_argument("--train_repeat", type=int, default=1, help="Repeat each training sample this many times for augmentation.")
     parser.add_argument("--es_patience", type=int, default=10, help="Early stopping patience.")
     parser.add_argument("--es_min_delta", type=float, default=1e-2, help="Early stopping minimum delta.")
 

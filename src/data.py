@@ -64,8 +64,6 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
     targets_list = [t.strip() for t in targets.split(",") if t.strip()]
     # Keep only rows that have ALL target values
     df = df.dropna(subset=targets_list).reset_index(drop=True)
-    # Duplicate each sample once per target
-    df = df.loc[df.index.repeat(len(targets_list))].reset_index(drop=True)
     
     print(f'Found {df.shape[0]} scans with demographics for {targets}')
 
@@ -194,7 +192,7 @@ def load_participants_labels(input_path: str, dataset: Optional[str] = None) -> 
 # ------------------------------
 # Transforms & Dataset
 # ------------------------------
-def get_train_val_loaders(train_df, val_df, args):
+def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
     # Detect cached mode
     use_cache = (not args.data_suffix) or (str(args.data_suffix).strip() == "")
     if use_cache:
@@ -213,6 +211,9 @@ def get_train_val_loaders(train_df, val_df, args):
     else:
         tfm = get_transforms(tuple(args.image_shape))
         data_file = None
+
+    if repeat_train and args.train_repeat > 1:
+        train_df = train_df.loc[train_df.index.repeat(args.train_repeat)].reset_index(drop=True)
 
     dl_tr = get_loader(train_df, tfm, data_file, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
     dl_va = get_loader(val_df, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
