@@ -59,11 +59,11 @@ def main(args):
               f"ACC={metrics_te.get('acc'):.3f} MAE={metrics_te.get('mae'):.2f} "
               f"RMSE={metrics_te.get('rmse'):.2f} R2={metrics_te.get('r2'):.3f}")
 
-    elif args.n_splits > 1: # option 2: k-fold CV without hyperparameter tuning
-        print(f'Running {args.n_splits}-fold cross-validation on training set…')
-        kfold_cv(df_train, stratify_labels_train, args)
-        metrics_te = None
-        df_result_te = None
+    # elif args.n_splits > 1: # option 2: k-fold CV without hyperparameter tuning
+    #     print(f'Running {args.n_splits}-fold cross-validation on training set…')
+    #     kfold_cv(df_train, stratify_labels_train, args)
+    #     metrics_te = None
+    #     df_result_te = None
 
     else: # option 3: direct train/val/test (single split)
         print('Direct training with validation and test split…')
