@@ -78,6 +78,8 @@ def load_best_checkpoint(model: torch.nn.Module, ckpt_path: str, device: torch.d
         print(f"Loading checkpoint: {ckpt_path}")
         state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
         model.load_state_dict(state_dict, strict=False)
+    else:
+        print(f"[warn] checkpoint not found: {ckpt_path}")
     return model
 
 
@@ -243,7 +245,15 @@ def hold_out_set(df, labels, subject_col, test_size: float = 0.2, seed: int = 42
     return train_idx, test_idx
 
 
-def train_val_test_split(df, labels, subject_col, train_size=0.7, val_size=0.15, test_size=0.15, seed=42) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def train_val_test_split(
+    df,
+    labels,
+    subject_col,
+    train_size=0.64,
+    val_size=0.16,
+    test_size=0.20,
+    seed=42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Three-way subject-level stratified split: train / validation / test.
     
@@ -252,9 +262,9 @@ def train_val_test_split(df, labels, subject_col, train_size=0.7, val_size=0.15,
     - Returns scan-level indices for train, val, and test
     
     Args:
-        train_size: fraction for training (default 0.7)
-        val_size: fraction for validation (default 0.15)
-        test_size: fraction for testing (default 0.15)
+        train_size: fraction for training (default 0.64)
+        val_size: fraction for validation (default 0.16)
+        test_size: fraction for testing (default 0.20)
     """
     assert abs(train_size + val_size + test_size - 1.0) < 1e-6, "Sizes must sum to 1.0"
     
@@ -270,21 +280,36 @@ def train_val_test_split(df, labels, subject_col, train_size=0.7, val_size=0.15,
     subj_labels = labels.loc[subj_df.index]
     assert (subj_df.index == subj_labels.index).all()
 
-    # ---- 2. first split: train vs (val+test) ----
-    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=(val_size + test_size), random_state=seed)
-    train_s, temp_s = next(sss1.split(subj_df, subj_labels))
+    # ---- 2. first split: (train+val) vs test ----
+    try:
+        sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+        trainval_s, test_s = next(sss1.split(subj_df, subj_labels))
+    except ValueError as e:
+        raise ValueError(
+            "Stratified train/val vs test split failed. "
+            "Reduce the number of stratification columns or bins, or use a larger dataset. "
+            f"Original error: {e}"
+        ) from e
     
-    # ---- 3. second split: val vs test (on the remaining fraction) ----
-    # We need to split temp_s 50/50 to get val_size and test_size equally from the remainder
-    temp_subj_df = subj_df.iloc[temp_s].reset_index(drop=True)
-    temp_subj_labels = subj_labels.iloc[temp_s].reset_index(drop=True)
+    # ---- 3. second split: train vs val (within the remaining fraction) ----
+    temp_subj_df = subj_df.iloc[trainval_s].reset_index(drop=True)
+    temp_subj_labels = subj_labels.iloc[trainval_s].reset_index(drop=True)
     
-    sss2 = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state=seed+1)
-    val_s_temp, test_s_temp = next(sss2.split(temp_subj_df, temp_subj_labels))
+    remaining = train_size + val_size
+    val_ratio_within_temp = val_size / remaining
+    try:
+        sss2 = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio_within_temp, random_state=seed + 1)
+        train_s_temp, val_s_temp = next(sss2.split(temp_subj_df, temp_subj_labels))
+    except ValueError as e:
+        raise ValueError(
+            "Stratified train/val split failed. "
+            "Reduce the number of stratification columns or bins, or use a larger dataset. "
+            f"Original error: {e}"
+        ) from e
     
     # Map back to original indices
-    val_s = temp_s[val_s_temp]
-    test_s = temp_s[test_s_temp]
+    train_s = trainval_s[train_s_temp]
+    val_s = trainval_s[val_s_temp]
 
     # ---- 4. map back to scan-level indices ----
     train_ids = subj_df.iloc[train_s][subject_col]
@@ -378,36 +403,57 @@ def build_model_from_args(args, device=None, n_classes: int | None = None):
     return model
 
 
-def plot_metrics_from_csv(csv_path: str, out_png: str):
+def plot_metrics_from_csv(csv_path: str, out_png: str, val_out_png: str | None = None):
     """
-    Plot per-epoch validation metrics (AUC/ACC and/or MAE/RMSE/R2).
-    Uses a twin y-axis only if both families exist.
+    Plot per-epoch metrics from the training log CSV.
+    - `out_png`: validation metric overview
+    - `val_out_png`: optional training-vs-validation loss curve
     """
     if not os.path.exists(csv_path): return
     df = pd.read_csv(csv_path)
     if df.empty or "epoch" not in df.columns: return
 
-    # Define metric families and keep only those present
-    defs = [("eval_metric", "Evaluation_metric"), ("train_loss", "Training loss")]
+    all_metric_defs = [
+        ("eval_metric", "Evaluation metric"),
+        ("auc", "AUC"),
+        ("acc", "Accuracy"),
+        ("mae", "MAE"),
+        ("rmse", "RMSE"),
+        ("r2", "R2"),
+    ]
+    metric_defs = [(k, lbl) for k, lbl in all_metric_defs if k in df.columns]
 
-    plt.figure(figsize=(10, 6), dpi=300)
-    ax1 = plt.gca()
+    if metric_defs:
+        plt.figure(figsize=(10, 6), dpi=300)
+        ax1 = plt.gca()
 
-    x = df["epoch"]
-    #if cls and reg:
-    #    _plot_lines(ax1, x, df, cls, "Classification")
-    #    ax2 = ax1.twinx()
-    #    _plot_lines(ax2, x, df, reg, "Regression")
-    #else:
-    #    _plot_lines(ax1, x, df, cls or reg, "Classification" if cls else "Regression")
-    _plot_lines(ax1, x, df, defs, 'Value')
+        x = df["epoch"]
+        _plot_lines(ax1, x, df, metric_defs, 'Value')
 
-    ax1.set_xlabel("Epoch")
-    plt.title("Validation metrics vs training loss per epoch")
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(out_png), exist_ok=True)
-    plt.savefig(out_png, dpi=300)
-    plt.close()
+        ax1.set_xlabel("Epoch")
+        plt.title("Validation metrics per epoch")
+        plt.tight_layout()
+        os.makedirs(os.path.dirname(out_png), exist_ok=True)
+        plt.savefig(out_png, dpi=300)
+        plt.close()
+
+    if val_out_png and {"train_loss", "val_loss"}.issubset(df.columns):
+        plt.figure(figsize=(10, 6), dpi=300)
+        ax = plt.gca()
+        x = df["epoch"]
+        _plot_lines(
+            ax,
+            x,
+            df,
+            [("train_loss", "Training loss"), ("val_loss", "Validation loss")],
+            "Loss",
+        )
+        ax.set_xlabel("Epoch")
+        plt.title("Training and validation loss per epoch")
+        plt.tight_layout()
+        os.makedirs(os.path.dirname(val_out_png), exist_ok=True)
+        plt.savefig(val_out_png, dpi=300)
+        plt.close()
 
 def _plot_lines(ax, x, df, metrics, ylabel):
     for k, lbl in metrics:
