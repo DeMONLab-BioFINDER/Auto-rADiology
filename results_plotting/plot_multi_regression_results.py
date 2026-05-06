@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 import importlib.util
+import math
 
 import numpy as np
 import pandas as pd
@@ -67,6 +68,204 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     }
 
 
+PREFERRED_TARGET_ORDER = ["MetaTemporal", "TemporoParietal", "Frontal", "MesialTemporal"]
+
+
+def order_targets(targets: list[str]) -> list[str]:
+    target_map = {t.lower(): t for t in targets}
+    ordered = []
+    for pref in PREFERRED_TARGET_ORDER:
+        key = pref.lower()
+        if key in target_map:
+            ordered.append(target_map[key])
+    remaining = [t for t in targets if t not in ordered]
+    return ordered + remaining
+
+
+def find_demo_csv():
+    script_path = Path(__file__).resolve()
+    demo_candidates = [
+        script_path.parents[1] / "data" / "demo.csv",
+        script_path.parents[2] / "data" / "demo.csv",
+    ]
+    return next((p for p in demo_candidates if p.exists()), None)
+
+
+def get_valid_target_values(df: pd.DataFrame, target: str) -> tuple[np.ndarray, np.ndarray]:
+    y_true = pd.to_numeric(df[f"{target}_y"], errors="coerce").to_numpy()
+    y_pred = pd.to_numeric(df[f"{target}_pred"], errors="coerce").to_numpy()
+    valid = np.isfinite(y_true) & np.isfinite(y_pred)
+    return y_true[valid], y_pred[valid]
+
+
+def get_plot_limits(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
+    lo = float(np.nanmin([y_true.min(), y_pred.min()]))
+    hi = float(np.nanmax([y_true.max(), y_pred.max()]))
+    return lo, hi
+
+
+def get_target_label(target: str, mod) -> str:
+    display_target = mod.pretty_region_name(target)
+    return mod.format_ctrz_label(display_target)
+
+
+def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
+    for idx in range(start_idx, total_slots):
+        row_idx = idx // n_cols
+        col_idx = idx % n_cols
+        axes[row_idx][col_idx].set_visible(False)
+
+
+def make_true_vs_predicted_panel(
+    df_preds_wide: pd.DataFrame,
+    out_dir: Path,
+    targets: list[str],
+    mod,
+    title: str,
+    filename: str,
+):
+    targets = order_targets(targets)
+    if not targets:
+        return
+
+    n_cols = 2 if len(targets) > 1 else 1
+    n_rows = math.ceil(len(targets) / n_cols)
+    fig, axes = mod.plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 5.2 * n_rows), squeeze=False)
+
+    for idx, target in enumerate(targets):
+        r = idx // n_cols
+        c = idx % n_cols
+        ax = axes[r][c]
+
+        y_true, y_pred = get_valid_target_values(df_preds_wide, target)
+        if len(y_true) == 0:
+            ax.set_visible(False)
+            continue
+
+        ax.scatter(
+            y_true,
+            y_pred,
+            alpha=0.85,
+            s=38,
+            edgecolor="white",
+            linewidth=0.45,
+            color=mod.SEABORN_COLORS[0],
+        )
+        lo, hi = get_plot_limits(y_true, y_pred)
+        ax.plot([lo, hi], [lo, hi], linestyle="--", color="gray", linewidth=1.2, alpha=0.5)
+        if len(y_true) > 1:
+            fit_coeffs = np.polyfit(y_true, y_pred, 1)
+            fit_fn = np.poly1d(fit_coeffs)
+            ax.plot([lo, hi], fit_fn([lo, hi]), linestyle="-", color="black", linewidth=1.8)
+            corr = float(np.corrcoef(y_true, y_pred)[0, 1])
+        else:
+            corr = np.nan
+
+        target_label = get_target_label(target, mod)
+        mod.style_axes(
+            ax,
+            f"Reference vs Predicted\n{target_label}",
+            f"Reference {target_label}",
+            f"Predicted {target_label}",
+        )
+        ax.text(
+            0.96,
+            0.96,
+            f"r = {corr:.3f}",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        )
+    hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+
+    fig.suptitle(mod.wrap_plot_title(title), y=0.94, fontsize=mod.TITLE_SIZE)
+    fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.90, wspace=0.01, hspace=0.01)
+    fig.savefig(out_dir / filename, dpi=300)
+    mod.plt.close(fig)
+
+
+def make_ctrz_distribution_panel(
+    demo_path: Path,
+    out_dir: Path,
+    targets: list[str],
+    mod,
+    title: str,
+    filename: str,
+):
+    df_demo = pd.read_csv(demo_path)
+    targets = [t for t in order_targets(targets) if t in df_demo.columns]
+    if not targets:
+        return
+
+    n_cols = 2 if len(targets) > 1 else 1
+    n_rows = math.ceil(len(targets) / n_cols)
+    fig, axes = mod.plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 4.6 * n_rows), squeeze=False)
+
+    for idx, target in enumerate(targets):
+        r = idx // n_cols
+        c = idx % n_cols
+        ax = axes[r][c]
+
+        values = pd.to_numeric(df_demo[target], errors="coerce").dropna()
+        if values.empty:
+            ax.set_visible(False)
+            continue
+
+        mod.sns.histplot(values, bins=22, kde=True, ax=ax, color=mod.SEABORN_COLORS[0])
+        target_label = get_target_label(target, mod)
+        mod.style_axes(
+            ax,
+            f"Distribution of {target_label}",
+            target_label,
+            "Count",
+        )
+
+    hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+
+    fig.suptitle(mod.wrap_plot_title(title), y=0.99, fontsize=mod.TITLE_SIZE)
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
+    fig.savefig(out_dir / filename, dpi=300)
+    mod.plt.close(fig)
+
+
+def make_mae_boxstrip_panel(
+    base_dir: Path,
+    targets: list[str],
+    mod,
+    group: str,
+    title: str,
+    filename: str,
+):
+    targets = order_targets(targets)
+    if not targets:
+        return
+
+    n_cols = 2 if len(targets) > 1 else 1
+    n_rows = math.ceil(len(targets) / n_cols)
+    fig, axes = mod.plt.subplots(n_rows, n_cols, figsize=(6.2 * n_cols, 6.2 * n_rows), squeeze=False)
+
+    for idx, target in enumerate(targets):
+        r = idx // n_cols
+        c = idx % n_cols
+        ax = axes[r][c]
+        fig_path = base_dir / target / "figures_error_analysis" / f"mae_boxstrip_by_{group}.png"
+        if not fig_path.exists():
+            ax.set_visible(False)
+            continue
+
+        img = mod.plt.imread(fig_path)
+        ax.imshow(img)
+        ax.axis("off")
+
+    hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+
+    fig.suptitle(mod.wrap_plot_title(title), y=0.99, fontsize=mod.TITLE_SIZE)
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
+    fig.savefig(base_dir / filename, dpi=300)
+    mod.plt.close(fig)
+
+
 def main():
     args = parse_args()
     run_dir = Path(args.run_dir).resolve()
@@ -107,6 +306,53 @@ def main():
     mod.make_training_curve(df_curve, shared_fig_dir)
     mod.make_training_curve_cut_first4(df_curve, shared_fig_dir)
     mod.make_training_curve_cut_first4_panel(df_curve, shared_fig_dir)
+
+    make_true_vs_predicted_panel(
+        df_preds_wide,
+        shared_fig_dir,
+        targets,
+        mod,
+        title=f"Gothenburg Test Set: Reference vs Predicted {mod.CTRZ_LABEL}",
+        filename="true_vs_predicted_panel_test.png",
+    )
+
+    demo_path = find_demo_csv()
+    if demo_path is not None:
+        make_ctrz_distribution_panel(
+            demo_path,
+            shared_fig_dir,
+            targets,
+            mod,
+            title=f"Reference {mod.CTRZ_LABEL} Distributions (demo.csv)",
+            filename="ctr_z_distribution_panel.png",
+        )
+    else:
+        print("[WARNING] Could not find demo.csv for CTRz distribution panel.")
+
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="gender",
+        title=f"{mod.CTRZ_LABEL} Absolute Error by Gender",
+        filename="mae_boxstrip_by_gender_panel.png",
+    )
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="site",
+        title=f"{mod.CTRZ_LABEL} Absolute Error by Site",
+        filename="mae_boxstrip_by_site_panel.png",
+    )
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="apoe",
+        title=f"{mod.CTRZ_LABEL} Absolute Error by APOE",
+        filename="mae_boxstrip_by_apoe_panel.png",
+    )
 
     for target in targets:
         display_target = mod.pretty_region_name(target)
@@ -178,11 +424,22 @@ def main():
             p = np.poly1d(z)
             ax.plot([lo, hi], p([lo, hi]), linestyle="-", color="black", linewidth=1.8)
             col_display = "dx" if col == "dx_grouped" else col
+            label_map = {
+                "apoe": "APOE",
+                "amyloid_status": "Amyloid Status",
+                "cdr": "CDR",
+            }
+            if col_display == "dx":
+                display_group = "DX"
+            else:
+                key = col_display.lower()
+                display_group = label_map.get(key, col_display.replace("_", " ").title())
+            target_label = mod.format_ctrz_label(display_target)
             mod.style_axes(
                 ax,
-                f"Reference vs Predicted\n{display_target} SUVR\ncolored by {col_display}",
-                f"Reference {display_target} SUVR",
-                f"Predicted {display_target} SUVR",
+                f"Reference vs Predicted\n{target_label}\nColored by {display_group}",
+                f"Reference {target_label}",
+                f"Predicted {target_label}",
             )
 
             if is_categorical:
@@ -215,7 +472,7 @@ def main():
         df_err = mod.add_error_bins(df_merged.copy())
         bin_summary = mod.summarize_error_by_bin(df_err)
         bin_summary.to_csv(error_out_dir / "global_error_by_true_bin.csv", index=False)
-        mod.make_mae_by_bin_plot(bin_summary, error_out_dir)
+        mod.make_mae_by_bin_plot(bin_summary, error_out_dir, target)
         mod.make_residual_trend_plot(df_err, error_out_dir, target)
         mod.save_subgroup_bin_summary(
             df_err,
@@ -223,7 +480,7 @@ def main():
             subgroup_cols=["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex"],
         )
         group_cols = ["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex", "age"]
-        mod.make_group_mae_boxstrip_plots(df_merged, error_out_dir, group_cols)
+        mod.make_group_mae_boxstrip_plots(df_merged, error_out_dir, group_cols, target)
         mod.run_group_significance_tests(df_merged, error_out_dir, group_cols)
         mod.make_site_raw_value_plot(df_merged, error_out_dir, target)
         mod.make_site_error_correlation_plot(df_merged, error_out_dir, target)
