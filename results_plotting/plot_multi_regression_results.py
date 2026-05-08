@@ -180,7 +180,7 @@ def make_true_vs_predicted_panel(
     hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
 
     fig.suptitle(mod.wrap_plot_title(title), y=0.94, fontsize=mod.TITLE_SIZE)
-    fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.90, wspace=0.01, hspace=0.01)
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
     fig.savefig(out_dir / filename, dpi=300)
     mod.plt.close(fig)
 
@@ -312,7 +312,7 @@ def main():
         shared_fig_dir,
         targets,
         mod,
-        title=f"Gothenburg Test Set: Reference vs Predicted {mod.CTRZ_LABEL}",
+        title=f"Test Set: Reference vs Predicted {mod.CTRZ_LABEL}",
         filename="true_vs_predicted_panel_test.png",
     )
 

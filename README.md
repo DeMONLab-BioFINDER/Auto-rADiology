@@ -1,2 +1,2 @@
-# Aβ-PET → Visual Read / Centiloid
+# Tau-PET → Visual Read / CenTauR
 

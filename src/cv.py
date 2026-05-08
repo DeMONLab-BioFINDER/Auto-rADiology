@@ -65,11 +65,17 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         eval_df = val_df  # For k-fold CV, evaluate on the validation split
     
     train_only = (fold_name == "nestedcv-outer-test")
+    no_validation = (fold_name == "train-test-split")
     output_fold_dir, path_list = _make_outfolder_fold(args.output_path, fold_name) # path_list: csv_path, csv_loss_path, ckpt_path
     save_train_test_subjects(train_df, eval_df, path_list["preds_dir"], fold_name)
-    val_df.to_csv(os.path.join(path_list["preds_dir"], f'{fold_name}_validation-set.csv'))
+    if not no_validation:
+        val_df.to_csv(os.path.join(path_list["preds_dir"], f'{fold_name}_validation-set.csv'))
 
-    dl_tr, dl_va = get_train_val_loaders(train_df, val_df, args)
+    if no_validation:
+        dl_tr, _ = get_train_val_loaders(train_df, train_df.iloc[:0].copy(), args)
+        dl_va = None
+    else:
+        dl_tr, dl_va = get_train_val_loaders(train_df, val_df, args)
     _, dl_eval = get_train_val_loaders(eval_df, eval_df, args, repeat_train=False)
 
     # Determine output dimension from targets.
@@ -90,7 +96,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name,
                                         path_list=path_list, optuna_report=optuna_report)
     else:
-        print('Train (early stop on validation set)')
+        print('Train (fixed epochs, no validation)' if no_validation else 'Train (early stop on validation set)')
         model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name, path_list=path_list)
     
     plot_metrics_from_csv(
@@ -101,7 +107,8 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
 
     # ---- Test (inference) ----
     # Load best checkpoint
-    if not train_only: model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
+    if not train_only:
+        model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
     metrics_te, df_result_te = inference(model, dl_eval, args.device)
@@ -121,6 +128,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     when doing fine-tuning few shots, do early stop, not scheduler <-- dl_tr and dl_va should all be the few-shots images, don't touch test set
     """
     train_only = (fold_name == "nestedcv-outer-test") #!!! train only, no early stop
+    no_validation = (fold_name == "train-test-split")
 
     scaler = torch.cuda.amp.GradScaler() if args.amp and torch.cuda.is_available() else None
 
@@ -129,25 +137,32 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     es = EarlyStopper(mode="min", patience=args.es_patience, min_delta=args.es_min_delta)
 
     best_epoch = 0
+    best_val_loss = np.inf
     epoch_bar = tqdm(range(1, args.epochs + 1), desc=f"{fold_name} epochs", position=1, leave=False, dynamic_ncols=True)
     for epoch in epoch_bar:
         tr_loss_mean, tr_loss_all = train_one_epoch(model=model, loader=dl_tr, opt=optimizer, scaler=scaler,
                                                     device=args.device, loss_w_cls=args.loss_w_cls, loss_w_reg=args.loss_w_reg,
                                                     reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta)
-        va_loss_mean, metrics, _ = validate_one_epoch(
-            model=model,
-            loader=dl_va,
-            device=args.device,
-            loss_w_cls=args.loss_w_cls,
-            loss_w_reg=args.loss_w_reg,
-            reg_loss=args.reg_loss,
-            smoothl1_beta=args.smoothl1_beta,
-            desc="Val",
-        )
-        eval_metric = metrics.get("eval_metric", float("nan"))
-        early_stop_metric = va_loss_mean
+        if no_validation:
+            va_loss_mean = np.nan
+            metrics = {"auc": np.nan, "acc": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "eval_metric": np.nan}
+            eval_metric = float("nan")
+            early_stop_metric = np.nan
+        else:
+            va_loss_mean, metrics, _ = validate_one_epoch(
+                model=model,
+                loader=dl_va,
+                device=args.device,
+                loss_w_cls=args.loss_w_cls,
+                loss_w_reg=args.loss_w_reg,
+                reg_loss=args.reg_loss,
+                smoothl1_beta=args.smoothl1_beta,
+                desc="Val",
+            )
+            eval_metric = metrics.get("eval_metric", float("nan"))
+            early_stop_metric = va_loss_mean
 
-        if not train_only and 'few-shot' not in fold_name and np.isfinite(early_stop_metric): scheduler.step(early_stop_metric) # no scheduler when test only and fine-tunning few shots
+        if not train_only and (not no_validation) and 'few-shot' not in fold_name and np.isfinite(early_stop_metric): scheduler.step(early_stop_metric) # no scheduler when test only and fine-tunning few shots
 
         # ---- Optuna report, if callback provided ----
         if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, eval_metric)
@@ -160,14 +175,23 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
             mode="row",
         )
 
-        epoch_bar.set_postfix(train_loss=f"{tr_loss_mean:.4f}", val_loss=f"{va_loss_mean:.4f}", eval_metric=f"{eval_metric:.3f}")
+        if no_validation:
+            epoch_bar.set_postfix(train_loss=f"{tr_loss_mean:.4f}")
+        else:
+            epoch_bar.set_postfix(train_loss=f"{tr_loss_mean:.4f}", val_loss=f"{va_loss_mean:.4f}", eval_metric=f"{eval_metric:.3f}")
         
-        # ---- Early stopping + checkpoint ----
-        if not train_only:
-            stop, improved = es.step(early_stop_metric, epoch)
-            if improved:
-                best_epoch = es.best_epoch
+        # ---- Checkpointing + early stopping ----
+        if no_validation:
+            best_epoch = epoch
+            save_checkpoint(model, path_list['ckpt'])
+        elif not train_only:
+            # Save the true best validation-loss model, independent of early-stop min_delta.
+            if np.isfinite(early_stop_metric) and early_stop_metric < best_val_loss:
+                best_val_loss = early_stop_metric
+                best_epoch = epoch
                 save_checkpoint(model, path_list['ckpt'])
+
+            stop, _ = es.step(early_stop_metric, epoch)
             if stop:
                 tqdm.write(
                     f"[{fold_name}] Early stopping at epoch {epoch} "

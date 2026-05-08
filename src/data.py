@@ -1,6 +1,7 @@
 # src/data.py
 import os
 import re
+import json
 import torch
 import pickle
 import numpy as np
@@ -202,12 +203,14 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
             data_file = torch.load(p, map_location="cpu", weights_only=True) # torch tensor with shape [S, D, H, W]
             print(f"Reconstructed loaders from data.pt with shape [S, D, H, W].")
         else:
-            data_file = Path(args.input_path) / 'data' / args.data_type
-            if any(Path(data_file).glob("*.pt")):
-                print(f"Reconstructed loaders from data_idx.pt for each scan.")
+            data_file = Path(args.input_path) / "data" / args.data_type
+            if any(Path(data_file).glob("tau_batch_*.pt")):
+                print("Reconstructed loaders from preprocessed tau_batch_*.pt batches. Skipping MONAI preprocessing.")
+            elif any(Path(data_file).glob("data_*.pt")):
+                print("Reconstructed loaders from data_idx.pt for each scan.")
             else:
                 tfm = get_transforms(tuple(args.image_shape))
-                print(f"Reconstructed imgs from tau_batch_x.pkl for batched images.")
+                print("Reconstructed imgs from tau_batch_x.pkl for batched images.")
     else:
         tfm = get_transforms(tuple(args.image_shape))
         data_file = None
@@ -216,7 +219,7 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
         train_df = train_df.loc[train_df.index.repeat(args.train_repeat)].reset_index(drop=True)
 
     dl_tr = get_loader(train_df, tfm, data_file, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
-    dl_va = get_loader(val_df, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
+    dl_va = get_loader(val_df, tfm, data_file, args, batch_size=args.batch_size, augment=False, shuffle=False, train_test='test')
     
     return dl_tr, dl_va
 
@@ -334,9 +337,38 @@ class PETDataset(Dataset):
                                    if extra_global_feats is not None else [])
         self.augment = augment
         self.dtype = dtype
+        self._pt_batch_size = None
+        self._pt_batch_has_channel = None
+        self._pt_manifest = None
+        self._cached_pt_batch_id = None
+        self._cached_pt_batch = None
 
     def __len__(self):
         return len(self.table)
+
+    def _load_pt_manifest(self, data_dir: Path):
+        if self._pt_manifest is not None:
+            return self._pt_manifest
+
+        manifest_path = data_dir / "tau_pt_manifest.json"
+        if manifest_path.exists():
+            self._pt_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        else:
+            self._pt_manifest = {}
+        return self._pt_manifest
+
+    def _load_pt_batch(self, data_dir: Path, batch_id: int):
+        if self._cached_pt_batch_id == batch_id and self._cached_pt_batch is not None:
+            return self._cached_pt_batch
+
+        batch_path = data_dir / f"tau_batch_{batch_id:03d}.pt"
+        batch = torch.load(batch_path, map_location="cpu", weights_only=True)
+        if not torch.is_tensor(batch):
+            raise ValueError(f"{batch_path} must contain a torch.Tensor.")
+
+        self._cached_pt_batch_id = batch_id
+        self._cached_pt_batch = batch
+        return batch
 
     def __getitem__(self, idx):
         row = self.table.iloc[idx]
@@ -350,8 +382,29 @@ class PETDataset(Dataset):
             x = self.data_file[fid]
             x = x.unsqueeze(0) # ➜ becomes [1, D, H, W]
         elif isinstance(self.data_file, (str, bytes, os.PathLike)):
-            fid = str(int(row["ID"]))
-            if isinstance(self.transforms, Compose): 
+            fid_int = int(row["ID"])
+            fid = str(fid_int)
+            data_dir = Path(self.data_file)
+            pt_batch0 = data_dir / "tau_batch_000.pt"
+            if pt_batch0.exists():
+                manifest = self._load_pt_manifest(data_dir)
+                if self._pt_batch_size is None:
+                    batch0 = self._load_pt_batch(data_dir, 0)
+                    self._pt_batch_size = batch0.shape[0]
+                    self._pt_batch_has_channel = (batch0.ndim == 5)
+                    manifest_batch_size = manifest.get("batch_size")
+                    if manifest_batch_size is not None and int(manifest_batch_size) != int(self._pt_batch_size):
+                        raise ValueError(
+                            f"Manifest batch_size={manifest_batch_size} does not match tau_batch_000.pt shape[0]={self._pt_batch_size}."
+                        )
+
+                batch_id = fid_int // self._pt_batch_size
+                idx = fid_int % self._pt_batch_size
+                batch = self._load_pt_batch(data_dir, batch_id)
+                x = batch[idx]
+                if x.ndim == 3:
+                    x = x.unsqueeze(0)
+            elif isinstance(self.transforms, Compose):
                 # Load the preprocessed image from the corresponding pickle file (assuming it's stored in batches of 100)
                 with open(Path(self.data_file) / f"tau_batch_000.pkl", "rb") as f: data_0 = pickle.load(f)
                 batch_id = int(fid) // len(data_0)

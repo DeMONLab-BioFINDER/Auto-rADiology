@@ -296,16 +296,20 @@ def train_val_test_split(
     temp_subj_labels = subj_labels.iloc[trainval_s].reset_index(drop=True)
     
     remaining = train_size + val_size
-    val_ratio_within_temp = val_size / remaining
-    try:
-        sss2 = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio_within_temp, random_state=seed + 1)
-        train_s_temp, val_s_temp = next(sss2.split(temp_subj_df, temp_subj_labels))
-    except ValueError as e:
-        raise ValueError(
-            "Stratified train/val split failed. "
-            "Reduce the number of stratification columns or bins, or use a larger dataset. "
-            f"Original error: {e}"
-        ) from e
+    if val_size <= 0:
+        train_s_temp = np.arange(len(temp_subj_df))
+        val_s_temp = np.array([], dtype=int)
+    else:
+        val_ratio_within_temp = val_size / remaining
+        try:
+            sss2 = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio_within_temp, random_state=seed + 1)
+            train_s_temp, val_s_temp = next(sss2.split(temp_subj_df, temp_subj_labels))
+        except ValueError as e:
+            raise ValueError(
+                "Stratified train/val split failed. "
+                "Reduce the number of stratification columns or bins, or use a larger dataset. "
+                f"Original error: {e}"
+            ) from e
     
     # Map back to original indices
     train_s = trainval_s[train_s_temp]

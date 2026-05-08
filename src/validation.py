@@ -65,9 +65,9 @@ def run_few_shots(args, df, tfm, base_model, targets_list):
 
 def few_shots(base_model, df_fs, df_eval, tfm, args, it):
     # loaders
-    dl_fs_tr = get_loader(df_fs, tfm, args, batch_size=max(1, args.batch_size // 2), augment=True, shuffle=True)
-    dl_fs_va = get_loader(df_fs, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False)
-    dl_eval  = get_loader(df_eval, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False)
+    dl_fs_tr = get_loader(df_fs, tfm, args, batch_size=args.batch_size, augment=True, shuffle=True)
+    dl_fs_va = get_loader(df_fs, tfm, args, batch_size=args.batch_size, augment=False, shuffle=False)
+    dl_eval  = get_loader(df_eval, tfm, args, batch_size=args.batch_size, augment=False, shuffle=False)
 
     model = copy.deepcopy(base_model) # clone model (important!)
     # freeze backbone
@@ -167,7 +167,7 @@ def load_validation_data(args):
     df = df.dropna(subset=targets)
     print(f'Validation set size: {len(df)} images')
 
-    dl_va = get_loader(df, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
+    dl_va = get_loader(df, tfm, data_file, args, batch_size=args.batch_size, augment=False, shuffle=False, train_test='test')
 
     return tfm, dl_va, df, data_file
 

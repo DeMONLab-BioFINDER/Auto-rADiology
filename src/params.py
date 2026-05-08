@@ -123,7 +123,10 @@ def make_output_dir(args, proj_path, script_path):
         args.output_path = os.path.join(args.best_model_folder, 'validation')
     else:
         # Construct output path'
-        tune = f'hypertune-optuna-{args.n_trials}trials' if args.tune else '3split70-15-15'
+        if args.tune:
+            tune = f'hypertune-optuna-{args.n_trials}trials'
+        else:
+            tune = "3split64-16-20"
         extra_cl = f'extra-lastlayer-input-{args.input_cl}' if args.input_cl else ''
         args.output_name = "_".join(s for s in [args.data_type, args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
         # "_".join([args.model, args.targets, tune, f'stratify-{args.stratifycvby}', args.model_name_extra, extra_cl, args.output_date_time])

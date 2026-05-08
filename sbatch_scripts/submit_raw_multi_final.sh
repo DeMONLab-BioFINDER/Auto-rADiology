@@ -3,10 +3,11 @@
 
 #SBATCH -A berzelius-2026-31
 #SBATCH --gpus=1
-#SBATCH -t 1:00:00
-#SBATCH -J quick-test
-#SBATCH -o ../../logs/quick-test-slurm-%j.out
-#SBATCH -e ../../logs/quick-test-slurm-%j.err
+#SBATCH -t 6:00:00
+#SBATCH -J final-model-train
+#SBATCH --cpus-per-gpu=24
+#SBATCH -o ../../logs/final-model-train-slurm-%j.out
+#SBATCH -e ../../logs/final-model-train-slurm-%j.err
 
 # Load environment
 module load Miniforge3/24.7.1-2-hpc1-bdist
@@ -27,9 +28,10 @@ cd "${PROJECT_ROOT}" || exit 1
 python "${PROJECT_ROOT}/run.py" \
   --no-tune \
   --dataset Gothenburg \
-  --data_type tau_raw_test_subset \
-  --train_repeat 4 \
+  --data_type tau_raw \
   --targets MetaTemporal,MesialTemporal,Frontal,TemporoParietal \
-  --stratifycvby site,MetaTemporal,MesialTemporal,Frontal,TemporoParietal \
-  --epochs 50 \
-  --model_name_extra quick-test
+  --stratifycvby site,Universal \
+  --patience 20 \
+  --min_delta 0.0 \
+  --epochs 60 \
+  --model_name_extra final-model

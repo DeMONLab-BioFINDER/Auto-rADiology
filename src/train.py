@@ -11,6 +11,8 @@ from sklearn.metrics import roc_auc_score, accuracy_score, r2_score, mean_absolu
 
 def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta):
     model.train()
+    loss_sum = 0.0
+    sample_count = 0
     losses = []
 
     for x, y_cls, y_reg, extra, idx in tqdm(loader, desc="Train", leave=False):
@@ -39,10 +41,13 @@ def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, 
             loss.backward()
             opt.step()
 
+        batch_size = x.shape[0]
+        loss_sum += float(loss.detach().item()) * batch_size
+        sample_count += batch_size
         losses.append(float(loss.detach().item()))
     losses_dict = {i: v for i, v in enumerate(losses)}
 
-    return (float(np.mean(losses)), losses_dict) if losses else (0.0, {})
+    return (loss_sum / sample_count if sample_count > 0 else 0.0, losses_dict) if losses else (0.0, {})
 
 
 @torch.no_grad()
@@ -65,6 +70,8 @@ def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, 
     y_preds_reg, y_true_reg = [], []
     ids = []
     losses = []
+    loss_sum = 0.0
+    sample_count = 0
     any_cls, any_reg = False, False
     reg_target_names = getattr(loader.dataset, "regression_targets", [])
     for x, y_cls, y_reg, extra, id in tqdm(loader, desc=desc, leave=False):
@@ -90,6 +97,9 @@ def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, 
                 domain_weights=domain_weights,
                 out=out,
             )
+            batch_size = x.shape[0]
+            loss_sum += float(loss.detach().item()) * batch_size
+            sample_count += batch_size
             losses.append(float(loss.detach().item()))
 
         if (not y_cls.isnan().all()) and (logit is not None):
@@ -129,7 +139,7 @@ def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, 
         ids.append(id.to(device).cpu().numpy().ravel())
 
     metrics = compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_reg)
-    val_loss = float(np.mean(losses)) if losses else np.nan
+    val_loss = (loss_sum / sample_count) if sample_count > 0 else np.nan
 
     df_result = pd.DataFrame()
     if any_cls:

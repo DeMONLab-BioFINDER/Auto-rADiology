@@ -5,10 +5,15 @@ import os
 import pandas as pd
 
 from src.params import parse_arguments
-from src.utils import set_seed, train_val_test_split, make_splits, save_train_test_subjects, clone_args
+from src.utils import set_seed, train_val_test_split, hold_out_set, make_splits, save_train_test_subjects, clone_args
 from src.data import build_master_table
 from src.cv import get_stratify_labels, run_fold, cv_median_best_epoch, kfold_cv
 from src.hypertune import create_study_from_args, run_optuna, objective, print_best, get_best_args
+
+
+TRAIN_SIZE = 0.64
+VAL_SIZE = 0.16
+TEST_SIZE = 0.20
 
 
 def main(args):
@@ -16,21 +21,43 @@ def main(args):
     df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
     df_clean, stratify_labels = get_stratify_labels(df, args.stratifycvby, args.seed)
 
-    # held-out three-way split: train (70%), val (15%), test (15%)
-    tr_idx, va_idx, te_idx = train_val_test_split(df_clean, stratify_labels, subject_col=args.samesubject_col, train_size=0.7, val_size=0.15, test_size=0.15, seed=args.seed)
-    df_train = df_clean.iloc[tr_idx].reset_index(drop=True)
-    df_val = df_clean.iloc[va_idx].reset_index(drop=True)
-    df_test = df_clean.iloc[te_idx].reset_index(drop=True)
+    use_validation_split = VAL_SIZE > 0
+
+    if use_validation_split:
+        tr_idx, va_idx, te_idx = train_val_test_split(
+            df_clean,
+            stratify_labels,
+            subject_col=args.samesubject_col,
+            train_size=TRAIN_SIZE,
+            val_size=VAL_SIZE,
+            test_size=TEST_SIZE,
+            seed=args.seed,
+        )
+        df_train = df_clean.iloc[tr_idx].reset_index(drop=True)
+        df_test = df_clean.iloc[te_idx].reset_index(drop=True)
+        df_val = df_clean.iloc[va_idx].reset_index(drop=True)
+    else:
+        tr_idx, te_idx = hold_out_set(
+            df_clean,
+            stratify_labels,
+            subject_col=args.samesubject_col,
+            test_size=TEST_SIZE,
+            seed=args.seed,
+        )
+        df_train = df_clean.iloc[tr_idx].reset_index(drop=True)
+        df_test = df_clean.iloc[te_idx].reset_index(drop=True)
+        df_val = df_train.copy()
     
     # Save the splits
     split_dir = os.path.join(args.output_path, 'splits')
     os.makedirs(split_dir, exist_ok=True)
     save_train_test_subjects(df_train, df_test, split_dir, 'Hold-out')
-    df_val.to_csv(os.path.join(split_dir, 'Hold-out_validation-set.csv'), index=False)
-    
+    if use_validation_split:
+        df_val.to_csv(os.path.join(split_dir, 'Hold-out_validation-set.csv'), index=False)
+
     if 'dataset' in df_train.columns: 
         print('train:', df_train['dataset'].value_counts(), 
-              '\nval:', df_val['dataset'].value_counts(),
+              '\nval:', df_val['dataset'].value_counts() if use_validation_split else 'not used',
               '\ntest:', df_test['dataset'].value_counts())
     _, stratify_labels_train = get_stratify_labels(df_train, args.stratifycvby, args.seed)
 
@@ -66,12 +93,18 @@ def main(args):
     #     df_result_te = None
 
     else: # option 3: direct train/val/test (single split)
-        print('Direct training with validation and test split…')
-        # Train with early stopping on validation, evaluate on test
-        metrics_te, df_result_te = run_fold(df_train, df_val, df_test, args, fold_name="train-val-test")
-        print(f"\nTest set: AUC={metrics_te.get('auc'):.3f} "
-              f"ACC={metrics_te.get('acc'):.3f} MAE={metrics_te.get('mae'):.2f} "
-              f"RMSE={metrics_te.get('rmse'):.2f} R2={metrics_te.get('r2'):.3f}")
+        if use_validation_split:
+            print('Direct training with validation and test split…')
+            metrics_te, df_result_te = run_fold(df_train, df_val, df_test, args, fold_name="train-val-test")
+            print(f"\nTest set: AUC={metrics_te.get('auc'):.3f} "
+                  f"ACC={metrics_te.get('acc'):.3f} MAE={metrics_te.get('mae'):.2f} "
+                  f"RMSE={metrics_te.get('rmse'):.2f} R2={metrics_te.get('r2'):.3f}")
+        else:
+            print('Direct training with train/test split only…')
+            metrics_te, df_result_te = run_fold(df_train, df_train, df_test, args, fold_name="train-test-split")
+            print(f"\nTrain/test split: AUC={metrics_te.get('auc'):.3f} "
+                  f"ACC={metrics_te.get('acc'):.3f} MAE={metrics_te.get('mae'):.2f} "
+                  f"RMSE={metrics_te.get('rmse'):.2f} R2={metrics_te.get('r2'):.3f}")
 
     # Save Results (skip for CV since kfold_cv handles its own saving)
     if metrics_te is not None and df_result_te is not None:
