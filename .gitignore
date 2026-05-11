@@ -14,3 +14,14 @@ test.ipynb
 slurm*
 *~
 jobgraph_overview*
+
+# Model checkpoints and large binary artifacts
+# Ignore common checkpoint directories used by training runs
+**/checkpoints/
+**/checkpoints/*
+results/**/checkpoints/
+*.ckpt
+
+# PyTorch/torchscript artifacts
+*.pt
+*.pth

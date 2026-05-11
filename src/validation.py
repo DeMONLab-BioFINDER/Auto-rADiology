@@ -194,7 +194,9 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
 
     model = build_model_from_args(args, device=args.device, n_classes=out_dim)
 
-    ckpt = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")
+    ckpt_last = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_last.pt")
+    ckpt_best = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")
+    ckpt = ckpt_last if os.path.exists(ckpt_last) else ckpt_best
     print(f"Loading pretrained model: {ckpt}")
     sd = torch.load(ckpt, map_location=args.device, weights_only=True)
 

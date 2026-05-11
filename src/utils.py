@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from typing import Tuple
+from typing import Mapping, Tuple
 from types import SimpleNamespace
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
@@ -203,41 +203,83 @@ def make_splits(df, labels, n_splits, seed):
     return list(skf.split(df, labels))
 
 
+def _subject_level_split_inputs(df, labels, subject_col):
+    if subject_col is None:
+        subject_col = "ID"
+    if subject_col not in df.columns:
+        raise ValueError(f"Subject column '{subject_col}' not found in dataframe.")
+
+    df = df.copy()
+    if df[subject_col].isna().any():
+        raise ValueError(f"Subject column '{subject_col}' contains NaN values.")
+
+    print(f'[split] keep only first scan per subject, based on column "{subject_col}"')
+    subj_df = df.drop_duplicates(subset=subject_col, keep="first")
+    if len(subj_df) != subj_df[subject_col].nunique():
+        raise ValueError(f"Subject column '{subject_col}' must uniquely identify subject-level rows after de-duplication.")
+
+    subj_labels = labels.loc[subj_df.index]
+    if not (subj_df.index == subj_labels.index).all():
+        raise ValueError("Subject-level dataframe and stratification labels are not aligned.")
+
+    return df, subject_col, subj_df, subj_labels
+
+
+def _check_stratification_counts(labels, split_name):
+    counts = labels.astype(str).value_counts()
+    if counts.empty:
+        raise ValueError(f"{split_name} split failed: no stratification labels available.")
+    sparse = counts[counts < 2]
+    if not sparse.empty:
+        examples = sparse.head(10).to_dict()
+        raise ValueError(
+            f"{split_name} split failed: each stratum needs at least 2 subjects for stratified splitting. "
+            f"Sparse strata examples: {examples}. Reduce stratification columns/bins or use more data."
+        )
+
+
+def _stratified_subject_shuffle_split(subj_df, subj_labels, test_size, seed, split_name):
+    _check_stratification_counts(subj_labels, split_name)
+    try:
+        splitter = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+        train_idx, test_idx = next(splitter.split(subj_df, subj_labels))
+    except ValueError as e:
+        raise ValueError(
+            f"{split_name} split failed with subject-level stratification. "
+            "Reduce the number of stratification columns/bins, use a larger dataset, "
+            "or adjust split fractions so each split can contain all strata. "
+            f"Original error: {e}"
+        ) from e
+
+    return train_idx, test_idx
+
+
+def _scan_indices_from_subjects(df, subject_col, subject_ids):
+    return df[df[subject_col].isin(subject_ids)].index.to_numpy()
+
+
 def hold_out_set(df, labels, subject_col, test_size: float = 0.2, seed: int = 42,) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Subject-level hold-out split with stratification.
+    Subject-level hold-out split with stratified shuffle splitting.
 
     - Splits by subject (no leakage)
     - Stratifies using subject-level labels
     - Returns scan-level indices
     """
-    df = df.copy()
-
-    # ---- 1. build subject-level dataframe ----
-    if subject_col is not None:
-        print('keep only the first scan for one subject, based on column', subject_col)
-    else:
-        subject_col = 'ID'
-    subj_df = df.drop_duplicates(subset=subject_col, keep='first') if subject_col is not None else df.copy()
-    assert len(subj_df) == subj_df[subject_col].nunique()
-    subj_labels = labels.loc[subj_df.index]
-    assert (subj_df.index == subj_labels.index).all()
-
-    # ---- 2. determine K from test_size ----
-    k = max(2, int(round(1.0 / float(test_size))))
-
-    # ---- 3. subject-level stratified splits ----
-    splits = make_splits(subj_df, subj_labels, n_splits=k, seed=seed)
-
-    # pick last fold as hold-out (your original logic)
-    train_s, test_s = splits[-1]
+    df, subject_col, subj_df, subj_labels = _subject_level_split_inputs(df, labels, subject_col)
+    train_s, test_s = _stratified_subject_shuffle_split(
+        subj_df,
+        subj_labels,
+        test_size=test_size,
+        seed=seed,
+        split_name="Hold-out train/test",
+    )
 
     train_ids = subj_df.iloc[train_s][subject_col]
     test_ids  = subj_df.iloc[test_s][subject_col]
 
-    # ---- 4. map back to scan-level indices ----
-    train_idx = df[df[subject_col].isin(train_ids)].index.to_numpy()
-    test_idx  = df[df[subject_col].isin(test_ids)].index.to_numpy()
+    train_idx = _scan_indices_from_subjects(df, subject_col, train_ids)
+    test_idx  = _scan_indices_from_subjects(df, subject_col, test_ids)
 
     print("hold out training vs testing:", len(train_idx), len(test_idx),
           f"(subjects: {len(train_ids)} / {len(test_ids)})")
@@ -249,9 +291,9 @@ def train_val_test_split(
     df,
     labels,
     subject_col,
-    train_size=0.64,
-    val_size=0.16,
-    test_size=0.20,
+    train_size=0.75,
+    val_size=0.10,
+    test_size=0.15,
     seed=42,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -262,34 +304,22 @@ def train_val_test_split(
     - Returns scan-level indices for train, val, and test
     
     Args:
-        train_size: fraction for training (default 0.64)
-        val_size: fraction for validation (default 0.16)
-        test_size: fraction for testing (default 0.20)
+        train_size: fraction for training (default 0.75)
+        val_size: fraction for validation (default 0.10)
+        test_size: fraction for testing (default 0.15)
     """
     assert abs(train_size + val_size + test_size - 1.0) < 1e-6, "Sizes must sum to 1.0"
     
-    df = df.copy()
-
-    # ---- 1. build subject-level dataframe ----
-    if subject_col is not None:
-        print(f'[split] keep only first scan per subject, based on column "{subject_col}"')
-    else:
-        subject_col = 'ID'
-    subj_df = df.drop_duplicates(subset=subject_col, keep='first') if subject_col is not None else df.copy()
-    assert len(subj_df) == subj_df[subject_col].nunique()
-    subj_labels = labels.loc[subj_df.index]
-    assert (subj_df.index == subj_labels.index).all()
+    df, subject_col, subj_df, subj_labels = _subject_level_split_inputs(df, labels, subject_col)
 
     # ---- 2. first split: (train+val) vs test ----
-    try:
-        sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
-        trainval_s, test_s = next(sss1.split(subj_df, subj_labels))
-    except ValueError as e:
-        raise ValueError(
-            "Stratified train/val vs test split failed. "
-            "Reduce the number of stratification columns or bins, or use a larger dataset. "
-            f"Original error: {e}"
-        ) from e
+    trainval_s, test_s = _stratified_subject_shuffle_split(
+        subj_df,
+        subj_labels,
+        test_size=test_size,
+        seed=seed,
+        split_name="Hold-out trainval/test",
+    )
     
     # ---- 3. second split: train vs val (within the remaining fraction) ----
     temp_subj_df = subj_df.iloc[trainval_s].reset_index(drop=True)
@@ -301,15 +331,13 @@ def train_val_test_split(
         val_s_temp = np.array([], dtype=int)
     else:
         val_ratio_within_temp = val_size / remaining
-        try:
-            sss2 = StratifiedShuffleSplit(n_splits=1, test_size=val_ratio_within_temp, random_state=seed + 1)
-            train_s_temp, val_s_temp = next(sss2.split(temp_subj_df, temp_subj_labels))
-        except ValueError as e:
-            raise ValueError(
-                "Stratified train/val split failed. "
-                "Reduce the number of stratification columns or bins, or use a larger dataset. "
-                f"Original error: {e}"
-            ) from e
+        train_s_temp, val_s_temp = _stratified_subject_shuffle_split(
+            temp_subj_df,
+            temp_subj_labels,
+            test_size=val_ratio_within_temp,
+            seed=seed + 1,
+            split_name="Hold-out train/validation",
+        )
     
     # Map back to original indices
     train_s = trainval_s[train_s_temp]
@@ -320,14 +348,71 @@ def train_val_test_split(
     val_ids   = subj_df.iloc[val_s][subject_col]
     test_ids  = subj_df.iloc[test_s][subject_col]
 
-    train_idx = df[df[subject_col].isin(train_ids)].index.to_numpy()
-    val_idx   = df[df[subject_col].isin(val_ids)].index.to_numpy()
-    test_idx  = df[df[subject_col].isin(test_ids)].index.to_numpy()
+    train_idx = _scan_indices_from_subjects(df, subject_col, train_ids)
+    val_idx   = _scan_indices_from_subjects(df, subject_col, val_ids)
+    test_idx  = _scan_indices_from_subjects(df, subject_col, test_ids)
 
     print(f"[split] train/val/test (scans): {len(train_idx)} / {len(val_idx)} / {len(test_idx)} "
           f"(subjects: {len(train_ids)} / {len(val_ids)} / {len(test_ids)})")
 
     return train_idx, val_idx, test_idx
+
+
+def save_split_audit(df, split_indices: Mapping[str, np.ndarray], labels, output_path, subject_col=None):
+    """
+    Save and print a compact audit for subject leakage and stratification balance.
+    """
+    subject_col = subject_col or "ID"
+    if subject_col not in df.columns:
+        raise ValueError(f"Subject column '{subject_col}' not found in dataframe.")
+
+    os.makedirs(output_path, exist_ok=True)
+
+    subject_sets = {}
+    rows = []
+    for split_name, idx in split_indices.items():
+        split_df = df.iloc[idx]
+        subjects = set(split_df[subject_col].astype(str))
+        subject_sets[split_name] = subjects
+        audit_df = split_df[[subject_col]].copy()
+        audit_df["_stratum"] = labels.iloc[idx].astype(str).to_numpy()
+
+        rows.append({
+            "split": split_name,
+            "stratum": "__ALL__",
+            "n_scans": len(split_df),
+            "n_subjects": len(subjects),
+        })
+        for stratum, split_stratum_df in audit_df.groupby("_stratum", sort=True):
+            rows.append({
+                "split": split_name,
+                "stratum": stratum,
+                "n_scans": len(split_stratum_df),
+                "n_subjects": split_stratum_df[subject_col].nunique(),
+            })
+
+    names = list(split_indices)
+    overlap_rows = []
+    for i, left in enumerate(names):
+        for right in names[i + 1:]:
+            overlap = subject_sets[left] & subject_sets[right]
+            overlap_rows.append({"left": left, "right": right, "n_overlap_subjects": len(overlap)})
+            if overlap:
+                examples = sorted(overlap)[:10]
+                raise ValueError(
+                    f"Subject leakage between {left} and {right}: {len(overlap)} overlapping subjects. "
+                    f"Examples: {examples}"
+                )
+
+    pd.DataFrame(rows).to_csv(os.path.join(output_path, "split_audit_strata.csv"), index=False)
+    pd.DataFrame(overlap_rows).to_csv(os.path.join(output_path, "split_audit_overlap.csv"), index=False)
+
+    size_msg = ", ".join(
+        f"{name}: {len(df.iloc[idx])} scans / {len(subject_sets[name])} subjects"
+        for name, idx in split_indices.items()
+    )
+    print(f"[split-audit] {size_msg}")
+    print(f"[split-audit] no subject overlap across: {', '.join(names)}")
 
 
 def _resolve_model_class(name: str):

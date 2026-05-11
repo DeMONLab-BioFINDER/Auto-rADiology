@@ -65,7 +65,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         eval_df = val_df  # For k-fold CV, evaluate on the validation split
     
     train_only = (fold_name == "nestedcv-outer-test")
-    no_validation = (fold_name == "train-test-split")
+    no_validation = (val_df is None) or (len(val_df) == 0)
     output_fold_dir, path_list = _make_outfolder_fold(args.output_path, fold_name) # path_list: csv_path, csv_loss_path, ckpt_path
     save_train_test_subjects(train_df, eval_df, path_list["preds_dir"], fold_name)
     if not no_validation:
@@ -128,7 +128,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     when doing fine-tuning few shots, do early stop, not scheduler <-- dl_tr and dl_va should all be the few-shots images, don't touch test set
     """
     train_only = (fold_name == "nestedcv-outer-test") #!!! train only, no early stop
-    no_validation = (fold_name == "train-test-split")
+    no_validation = dl_va is None
 
     scaler = torch.cuda.amp.GradScaler() if args.amp and torch.cuda.is_available() else None
 
@@ -217,10 +217,11 @@ def _make_outfolder_fold(output_path, fold_name):
     val_eval_png_path = os.path.join(metrics_dir, "validation_metrics_per_epoch.png")
     test_eval_pkl_path = os.path.join(preds_dir, "train-test_preds-metrics_thisfold.pkl")
 
+    ckpt_filename = f"{fold_name}_last.pt" if fold_name == "train-test-split" else f"{fold_name}_best.pt"
     path_list = {'train_eval_csv': train_eval_csv_path, 'train_loss_csv': train_loss_csv_path,
                  'train_eval_png': train_eval_png_path, 'val_eval_png': val_eval_png_path,
                  'train-test_eval_pkl': test_eval_pkl_path,
-                 'ckpt': os.path.join(weights_dir, f"{fold_name}_best.pt"),
+                 'ckpt': os.path.join(weights_dir, ckpt_filename),
                  'preds_dir': preds_dir}
 
     return output_fold_dir, path_list

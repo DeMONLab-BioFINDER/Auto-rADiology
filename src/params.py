@@ -38,18 +38,22 @@ def parse_arguments():
     parser.add_argument("--loss_w_cls", type=float, default=1.0)
     parser.add_argument("--loss_w_reg", type=float, default=1.0)
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")
-    parser.add_argument("--smoothl1_beta", type=float, default=10, help="regression smooth L1 loss beta, CL units that is acceptable")
+    parser.add_argument("--smoothl1_beta", type=float, default=0.2, help="Regression SmoothL1 beta in target units.")
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to load (optional)")
     parser.add_argument("--amp", type=bool, default=True, help="Use automatic mixed precision if CUDA is available.")
     parser.add_argument("--train_repeat", type=int, default=1, help="Repeat each training sample this many times for augmentation.")
-    parser.add_argument("--es_patience", type=int, default=10, help="Early stopping patience.")
-    parser.add_argument("--es_min_delta", type=float, default=1e-2, help="Early stopping minimum delta.")
+    parser.add_argument("--es_patience", "--patience", dest="es_patience", type=int, default=10, help="Early stopping patience in epochs.")
+    parser.add_argument("--es_min_delta", "--min_delta", dest="es_min_delta", type=float, default=0.001, help="Minimum validation-loss improvement required to reset early stopping.")
+    parser.add_argument("--select_epoch_then_retrain", action=argparse.BooleanOptionalAction, default=False, help="Select best_epoch on the validation split, then retrain on train+val for exactly best_epoch epochs and evaluate test once.")
 
     # CV
     parser.add_argument("--n_splits", type=int, default=5, help="Number of folds for StratifiedKFold.")
     parser.add_argument("--stratifycvby", default="site,visual_read", help=",site,tracer, List of column names to stratify by (e.g., visual_read CL age gender).")
     parser.add_argument("--samesubject_col", type=str, default=None, help="Column name to identify same subjects to keep them in the same split (e.g., sameID).")
+    parser.add_argument("--train_size", type=float, default=0.64, help="Training fraction for direct hold-out runs.")
+    parser.add_argument("--val_size", type=float, default=0.16, help="Validation fraction for direct hold-out runs. Set to 0 for pure train/test runs.")
+    parser.add_argument("--test_size", type=float, default=0.20, help="Testing fraction for direct hold-out runs.")
     
     # Hypertune - Optuna
     parser.add_argument("--tune", action=argparse.BooleanOptionalAction, default=True)
@@ -126,7 +130,7 @@ def make_output_dir(args, proj_path, script_path):
         if args.tune:
             tune = f'hypertune-optuna-{args.n_trials}trials'
         else:
-            tune = "3split64-16-20"
+            tune = format_split_tag(args.train_size, args.val_size, args.test_size)
         extra_cl = f'extra-lastlayer-input-{args.input_cl}' if args.input_cl else ''
         args.output_name = "_".join(s for s in [args.data_type, args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
         # "_".join([args.model, args.targets, tune, f'stratify-{args.stratifycvby}', args.model_name_extra, extra_cl, args.output_date_time])
@@ -137,3 +141,14 @@ def make_output_dir(args, proj_path, script_path):
     print(f"Output directory created at: {args.output_path}")
 
     return args
+
+
+def format_split_tag(train_size: float, val_size: float, test_size: float) -> str:
+    total = train_size + val_size + test_size
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(f"train_size + val_size + test_size must sum to 1.0, got {total:.6f}")
+
+    to_pct = lambda x: int(round(x * 100))
+    if val_size <= 0:
+        return f"2split{to_pct(train_size)}-{to_pct(test_size)}"
+    return f"3split{to_pct(train_size)}-{to_pct(val_size)}-{to_pct(test_size)}"
