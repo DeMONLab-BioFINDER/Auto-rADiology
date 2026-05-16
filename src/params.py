@@ -45,7 +45,7 @@ def parse_arguments():
     parser.add_argument("--train_repeat", type=int, default=1, help="Repeat each training sample this many times for augmentation.")
     parser.add_argument("--es_patience", "--patience", dest="es_patience", type=int, default=10, help="Early stopping patience in epochs.")
     parser.add_argument("--es_min_delta", "--min_delta", dest="es_min_delta", type=float, default=0.001, help="Minimum validation-loss improvement required to reset early stopping.")
-    parser.add_argument("--select_epoch_then_retrain", action=argparse.BooleanOptionalAction, default=False, help="Select best_epoch on the validation split, then retrain on train+val for exactly best_epoch epochs and evaluate test once.")
+    parser.add_argument("--run_kfold_cv", action=argparse.BooleanOptionalAction, default=False, help="Run k-fold CV on the training pool.")
 
     # CV
     parser.add_argument("--n_splits", type=int, default=5, help="Number of folds for StratifiedKFold.")

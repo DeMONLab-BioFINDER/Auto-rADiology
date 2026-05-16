@@ -35,13 +35,22 @@ def kfold_cv(df_clean, stratify_labels, args):
         
         # Log results
         append_metrics_csv(metrics_path, {"fold": i, **m}, mode='row')
-        append_metrics_csv(results_path, {"fold": i, **r}, mode='row')
+        append_metrics_csv(results_path, {"fold": i, "n_eval": int(len(r))}, mode='row')
 
         tqdm.write(f"[{fold_name}] AUC={m.get('auc'):.3f} ACC={m.get('acc'):.3f} "
                    f"MAE={m.get('mae'):.2f} RMSE={m.get('rmse'):.2f} R2={m.get('r2'):.3f}"
-                   f"val_metric={m.get('val_metric'):.2f}")
+               f"eval_metric={m.get('eval_metric'):.2f}")
 
-    print(f"\nDone. Metrics saved to: {metrics_path}")
+    try:
+        df_metrics = pd.read_csv(metrics_path)
+        if 'best_epoch' in df_metrics.columns and not df_metrics['best_epoch'].dropna().empty:
+            median_epoch = int(df_metrics['best_epoch'].dropna().astype(int).median())
+            print(f"\nDone. Metrics saved to: {metrics_path}")
+            print(f"Median best_epoch across folds: {median_epoch}")
+        else:
+            print(f"\nDone. Metrics saved to: {metrics_path} (no best_epoch column present)")
+    except Exception:
+        print(f"\nDone. Metrics saved to: {metrics_path} (failed to compute median best_epoch)")
 
 
 
@@ -266,7 +275,7 @@ def cv_median_best_epoch(df_train, stratify_labels_train, args) -> int:
         fold_name = f"kfold-{i}"
         tr_df = df_train.iloc[tr_idx].reset_index(drop=True)
         va_df = df_train.iloc[va_idx].reset_index(drop=True)
-        m = run_fold(tr_df, va_df, args=args, fold_name=fold_name)
+        m, _ = run_fold(tr_df, va_df, args=args, fold_name=fold_name)
         be = int(m.get("best_epoch", 0))
         if be > 0:
             best_epochs.append(be)
@@ -276,3 +285,47 @@ def cv_median_best_epoch(df_train, stratify_labels_train, args) -> int:
         return int(args.epochs)
 
     return int(np.median(best_epochs))
+
+
+def print_cv_summary(output_path):
+    """
+    Print CV summary from metrics.csv.
+    Called after kfold_cv completes.
+    """
+    metrics_csv = os.path.join(output_path, "metrics.csv")
+    
+    if not os.path.exists(metrics_csv):
+        return
+    
+    try:
+        df = pd.read_csv(metrics_csv)
+        
+        print("\n" + "="*80)
+        print("CV Summary")
+        print("="*80)
+        print(df.to_string(index=False))
+        
+        # Cross-fold statistics
+        metric_cols = [c for c in df.columns if c not in ["fold", "best_epoch"]]
+        if metric_cols:
+            print("\n" + "-"*80)
+            print("Cross-fold statistics (mean ± std):")
+            print("-"*80)
+            for col in metric_cols:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    mean = df[col].mean()
+                    std = df[col].std()
+                    print(f"  {col:15s}: {mean:7.3f} ± {std:7.3f}")
+        
+        # Best epoch info
+        if "best_epoch" in df.columns:
+            best_epochs = df["best_epoch"].dropna().astype(int)
+            if len(best_epochs) > 0:
+                print(f"\n  best_epoch:      median={int(np.median(best_epochs)):3d}, "
+                      f"min={best_epochs.min()}, max={best_epochs.max()}")
+        
+        # Median epoch for retrain is implied by the best_epoch column above.
+        
+        print("="*80 + "\n")
+    except Exception as e:
+        print(f"Warning: failed to print CV summary: {e}")
