@@ -10,6 +10,14 @@ import pandas as pd
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 
 
+def save_figure(fig, out_path: Path, **kwargs) -> bool:
+    if out_path.exists():
+        print(f"[skip] {out_path} exists")
+        return False
+    fig.savefig(out_path, **kwargs)
+    return True
+
+
 def load_single_target_plot_module():
     script_path = Path(__file__).resolve().parent / "plot_metatemporal_results.py"
     spec = importlib.util.spec_from_file_location("plot_metatemporal_results", script_path)
@@ -41,6 +49,14 @@ def infer_targets(df_preds: pd.DataFrame) -> list[str]:
             if pred_col in df_preds.columns:
                 targets.append(target)
     return targets
+
+
+def resolve_existing_path(candidates, label: str) -> Path:
+    for path in candidates:
+        if path.exists():
+            return path
+    searched = "\n".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Missing {label}. Checked:\n{searched}")
 
 
 def compute_metrics(df: pd.DataFrame) -> dict:
@@ -181,7 +197,7 @@ def make_true_vs_predicted_panel(
 
     fig.suptitle(mod.wrap_plot_title(title), y=0.94, fontsize=mod.TITLE_SIZE)
     mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
-    fig.savefig(out_dir / filename, dpi=300)
+    save_figure(fig, out_dir / filename, dpi=300)
     mod.plt.close(fig)
 
 
@@ -225,7 +241,7 @@ def make_ctrz_distribution_panel(
 
     fig.suptitle(mod.wrap_plot_title(title), y=0.99, fontsize=mod.TITLE_SIZE)
     mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
-    fig.savefig(out_dir / filename, dpi=300)
+    save_figure(fig, out_dir / filename, dpi=300)
     mod.plt.close(fig)
 
 
@@ -262,7 +278,7 @@ def make_mae_boxstrip_panel(
 
     fig.suptitle(mod.wrap_plot_title(title), y=0.99, fontsize=mod.TITLE_SIZE)
     mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
-    fig.savefig(base_dir / filename, dpi=300)
+    save_figure(fig, base_dir / filename, dpi=300)
     mod.plt.close(fig)
 
 
@@ -270,16 +286,29 @@ def main():
     args = parse_args()
     run_dir = Path(args.run_dir).resolve()
     validation_dir = run_dir / "validation" / "Gothenburg"
-    preds_path = validation_dir / "Test_Gothenburg_results.csv"
-    train_curve_path = run_dir / "train-test-split" / "trainning_metrics_per_epoch.csv"
-    test_split_path = run_dir / "train-test-split" / "train-test-split_testing-set.csv"
-
-    if not preds_path.exists():
-        raise FileNotFoundError(f"Missing predictions csv: {preds_path}")
-    if not train_curve_path.exists():
-        raise FileNotFoundError(f"Missing training curve csv: {train_curve_path}")
-    if not test_split_path.exists():
-        raise FileNotFoundError(f"Missing test split csv: {test_split_path}")
+    evaluation_dir = run_dir / "evaluation" / "Gothenburg"
+    preds_path = resolve_existing_path(
+        [
+            validation_dir / "Test_Gothenburg_results.csv",
+            evaluation_dir / "Eval_Gothenburg_results.csv",
+        ],
+        "predictions csv",
+    )
+    train_curve_path = resolve_existing_path(
+        [
+            run_dir / "train-test-split" / "trainning_metrics_per_epoch.csv",
+            run_dir / "train-test-split" / "metrics" / "trainning_metrics_per_epoch.csv",
+        ],
+        "training curve csv",
+    )
+    test_split_path = resolve_existing_path(
+        [
+            run_dir / "train-test-split" / "train-test-split_testing-set.csv",
+            run_dir / "train-test-split" / "preds" / "train-test-split_testing-set.csv",
+            run_dir / "splits" / "Hold-out_testing-set.csv",
+        ],
+        "test split csv",
+    )
 
     mod = load_single_target_plot_module()
     mod.sns.set_theme(style="whitegrid", palette=mod.CUSTOM_PALETTE)
@@ -291,7 +320,10 @@ def main():
     df_curve = pd.read_csv(train_curve_path)
     df_curve = df_curve.loc[:, ~df_curve.columns.str.contains(r"^Unnamed")]
 
-    df_demo = pd.read_csv(test_split_path, index_col=0).copy()
+    df_demo = pd.read_csv(test_split_path).copy()
+    if "ID" not in df_demo.columns and "Unnamed: 0" in df_demo.columns:
+        df_demo = df_demo.rename(columns={"Unnamed: 0": "ID"})
+    df_demo = df_demo.loc[:, ~df_demo.columns.str.contains(r"^Unnamed")]
     if args.dedup:
         df_demo = df_demo.drop_duplicates().reset_index(drop=True)
 
@@ -328,31 +360,6 @@ def main():
         )
     else:
         print("[WARNING] Could not find demo.csv for CTRz distribution panel.")
-
-    make_mae_boxstrip_panel(
-        run_dir / "figures_multi",
-        targets,
-        mod,
-        group="gender",
-        title=f"{mod.CTRZ_LABEL} Absolute Error by Gender",
-        filename="mae_boxstrip_by_gender_panel.png",
-    )
-    make_mae_boxstrip_panel(
-        run_dir / "figures_multi",
-        targets,
-        mod,
-        group="site",
-        title=f"{mod.CTRZ_LABEL} Absolute Error by Site",
-        filename="mae_boxstrip_by_site_panel.png",
-    )
-    make_mae_boxstrip_panel(
-        run_dir / "figures_multi",
-        targets,
-        mod,
-        group="apoe",
-        title=f"{mod.CTRZ_LABEL} Absolute Error by APOE",
-        filename="mae_boxstrip_by_apoe_panel.png",
-    )
 
     for target in targets:
         display_target = mod.pretty_region_name(target)
@@ -460,7 +467,7 @@ def main():
                 cbar.set_label(col, fontsize=mod.LABEL_SIZE)
 
             mod.finalize_figure(fig)
-            fig.savefig(demo_fig_dir / f"true_vs_predicted_by_{col}.png", dpi=300)
+            save_figure(fig, demo_fig_dir / f"true_vs_predicted_by_{col}.png", dpi=300)
             mod.plt.close(fig)
             n_demo_plots += 1
 
@@ -489,6 +496,31 @@ def main():
         print(f"[done] {target}: saved plots to {out_dir}")
         print(f"[done] {target}: saved demographic plots to {demo_fig_dir} (count: {n_demo_plots})")
         print(f"[done] {target}: saved error analysis to {error_out_dir}")
+
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="gender",
+        title=f"{mod.CTRZ_LABEL} Absolute Error by Gender",
+        filename="mae_boxstrip_by_gender_panel.png",
+    )
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="site",
+        title=f"{mod.CTRZ_LABEL} Absolute Error by Site",
+        filename="mae_boxstrip_by_site_panel.png",
+    )
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="apoe",
+        title=f"{mod.CTRZ_LABEL} Absolute Error by APOE",
+        filename="mae_boxstrip_by_apoe_panel.png",
+    )
 
     print(f"[done] shared training-curve plots saved to {shared_fig_dir}")
 

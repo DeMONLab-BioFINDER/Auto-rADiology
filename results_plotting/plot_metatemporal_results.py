@@ -105,6 +105,14 @@ def finalize_figure(fig, *, rect=(0.0, 0.0, 0.97, 0.97)):
     fig.tight_layout(rect=rect)
 
 
+def save_figure(fig, out_path: Path, **kwargs) -> bool:
+    if out_path.exists():
+        print(f"[skip] {out_path} exists")
+        return False
+    fig.savefig(out_path, **kwargs)
+    return True
+
+
 def style_axes(ax, title: str, xlabel: str, ylabel: str, *, xrotation: int = 0):
     ax.set_title(wrap_plot_title(title), fontsize=TITLE_SIZE, pad=12, loc="center")
     ax.set_xlabel(xlabel, fontsize=LABEL_SIZE)
@@ -230,7 +238,7 @@ def make_group_mae_boxstrip_plots(
         ax.margins(x=0.03)
         ax.grid(axis="y", alpha=0.25)
         finalize_figure(fig)
-        fig.savefig(out_dir / f"mae_boxstrip_by_{col}.png", dpi=300)
+        save_figure(fig, out_dir / f"mae_boxstrip_by_{col}.png", dpi=300)
         plt.close(fig)
 
 
@@ -334,7 +342,7 @@ def make_site_raw_value_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     )
     ax.grid(axis="y", alpha=0.25)
     finalize_figure(fig)
-    fig.savefig(out_dir / "site_raw_value_distribution.png", dpi=300)
+    save_figure(fig, out_dir / "site_raw_value_distribution.png", dpi=300)
     plt.close(fig)
 
 
@@ -395,7 +403,7 @@ def make_site_error_correlation_plot(df: pd.DataFrame, out_dir: Path, target_nam
     )
     style_legend(ax, title="site", loc="upper right")
     finalize_figure(fig)
-    fig.savefig(out_dir / "site_error_vs_true_correlation.png", dpi=300)
+    save_figure(fig, out_dir / "site_error_vs_true_correlation.png", dpi=300)
     plt.close(fig)
 
     if rows:
@@ -403,8 +411,14 @@ def make_site_error_correlation_plot(df: pd.DataFrame, out_dir: Path, target_nam
 
 
 def make_training_distribution_plot(run_dir: Path, out_dir: Path, target_name: str):
-    train_path = run_dir / "Hold-out_training-set.csv"
-    if not train_path.exists():
+    train_candidates = [
+        run_dir / "Hold-out_training-set.csv",
+        run_dir / "splits" / "Hold-out_training-set.csv",
+        run_dir / "train-test-split" / "train-test-split_training-set.csv",
+        run_dir / "train-test-split" / "preds" / "train-test-split_training-set.csv",
+    ]
+    train_path = next((path for path in train_candidates if path.exists()), None)
+    if train_path is None:
         return
     display_target = pretty_region_name(target_name)
     target_label = format_ctrz_label(display_target)
@@ -457,7 +471,7 @@ def make_training_distribution_plot(run_dir: Path, out_dir: Path, target_name: s
             axes[i].set_visible(False)
 
     finalize_figure(fig)
-    fig.savefig(out_dir / "training_distribution_overview.png", dpi=300)
+    save_figure(fig, out_dir / "training_distribution_overview.png", dpi=300)
     plt.close(fig)
 
 def parse_args():
@@ -512,19 +526,27 @@ def infer_latest_run_dir(results_root: Path, target_name: str) -> Path:
 
 
 def load_results(run_dir: Path, dataset: str):
+    evaluation_dir = run_dir / "evaluation" / dataset
     preds_path = resolve_existing_path(
-        [run_dir / "validation" / dataset / f"Test_{dataset}_results.csv"],
+        [
+            run_dir / "validation" / dataset / f"Test_{dataset}_results.csv",
+            evaluation_dir / f"Eval_{dataset}_results.csv",
+        ],
         "predictions csv",
     )
     metrics_path = resolve_existing_path(
         [
             run_dir / "validation" / dataset / f"Test_{dataset}_metrics.csv",
             run_dir / "validation" / f"{dataset}Test_{dataset}_metrics.csv",
+            evaluation_dir / f"Eval_{dataset}_metrics.csv",
         ],
         "metrics csv",
     )
     curve_path = resolve_existing_path(
-        [run_dir / "train-test-split" / "trainning_metrics_per_epoch.csv"],
+        [
+            run_dir / "train-test-split" / "trainning_metrics_per_epoch.csv",
+            run_dir / "train-test-split" / "metrics" / "trainning_metrics_per_epoch.csv",
+        ],
         "training curve csv",
     )
 
@@ -593,7 +615,7 @@ def make_training_curve(df_curve: pd.DataFrame, out_dir: Path):
 
     fig.suptitle("Training-Set Regression Metrics Per Epoch", y=0.995, fontsize=TITLE_SIZE)
     finalize_figure(fig)
-    fig.savefig(out_dir / "training_curves_regression.png", dpi=300)
+    save_figure(fig, out_dir / "training_curves_regression.png", dpi=300)
     plt.close(fig)
 
 
@@ -625,7 +647,7 @@ def make_training_curve_cut_first4(df_curve: pd.DataFrame, out_dir: Path):
     style_axes(ax, "MAE & RMSE (Epoch > 4)", "Epoch", "Error")
     style_legend(ax, loc="best")
     finalize_figure(fig)
-    fig.savefig(out_dir / "training_mae_rmse_cut_first4.png", dpi=300)
+    save_figure(fig, out_dir / "training_mae_rmse_cut_first4.png", dpi=300)
     plt.close(fig)
 
     # R2 plot
@@ -641,7 +663,7 @@ def make_training_curve_cut_first4(df_curve: pd.DataFrame, out_dir: Path):
         style_axes(ax, "R2 (Epoch > 4)", "Epoch", "R2")
         style_legend(ax, loc="best")
         finalize_figure(fig)
-        fig.savefig(out_dir / "training_r2_cut_first4.png", dpi=300)
+        save_figure(fig, out_dir / "training_r2_cut_first4.png", dpi=300)
         plt.close(fig)
 
 
@@ -705,7 +727,7 @@ def make_training_curve_cut_first4_panel(df_curve: pd.DataFrame, out_dir: Path):
 
     fig.suptitle("Training-Set Regression Metrics Per Epoch (Epoch > 4)", y=0.995, fontsize=TITLE_SIZE)
     finalize_figure(fig)
-    fig.savefig(out_dir / "training_curves_regression_cut_first4.png", dpi=300)
+    save_figure(fig, out_dir / "training_curves_regression_cut_first4.png", dpi=300)
     plt.close(fig)
 
 
@@ -752,7 +774,7 @@ def make_scatter_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
         bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
     )
     finalize_figure(fig)
-    fig.savefig(out_dir / "true_vs_predicted.png", dpi=300)
+    save_figure(fig, out_dir / "true_vs_predicted.png", dpi=300)
     plt.close(fig)
 
 
@@ -779,7 +801,7 @@ def make_residual_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
         f"Residual (Predicted - Reference {CTRZ_LABEL})",
     )
     finalize_figure(fig)
-    fig.savefig(out_dir / "residuals_vs_true.png", dpi=300)
+    save_figure(fig, out_dir / "residuals_vs_true.png", dpi=300)
     plt.close(fig)
 
 
@@ -791,7 +813,7 @@ def make_residual_histogram(df_preds: pd.DataFrame, out_dir: Path):
     ax.axvline(0, linestyle="--", color="black", linewidth=1.6)
     style_axes(ax, "Residual Distribution", f"Residual (Predicted - Reference {CTRZ_LABEL})", "Count")
     finalize_figure(fig)
-    fig.savefig(out_dir / "residual_histogram.png", dpi=300)
+    save_figure(fig, out_dir / "residual_histogram.png", dpi=300)
     plt.close(fig)
 
 
@@ -806,7 +828,7 @@ def make_true_value_histogram(df_preds: pd.DataFrame, out_dir: Path, target_name
     target_label = format_ctrz_label(display_target)
     style_axes(ax, f"Distribution of Reference\n{target_label}", f"Reference {target_label}", "Count")
     finalize_figure(fig)
-    fig.savefig(out_dir / "true_value_histogram.png", dpi=300)
+    save_figure(fig, out_dir / "true_value_histogram.png", dpi=300)
     plt.close(fig)
 
 
@@ -888,7 +910,7 @@ def make_mae_by_bin_plot(summary: pd.DataFrame, out_dir: Path, target_name=None)
     ax2.grid(False)
 
     finalize_figure(fig)
-    fig.savefig(out_dir / "mae_by_true_bin.png", dpi=300)
+    save_figure(fig, out_dir / "mae_by_true_bin.png", dpi=300)
     plt.close(fig)
 
 
@@ -940,7 +962,7 @@ def make_residual_trend_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     style_axes(ax_hist, "", f"Reference {target_label}", "Number of Test Subjects")
     ax_hist.grid(False)
     finalize_figure(fig)
-    fig.savefig(out_dir / "residual_trend_vs_true.png", dpi=300)
+    save_figure(fig, out_dir / "residual_trend_vs_true.png", dpi=300)
     plt.close(fig)
 
 
@@ -1161,7 +1183,7 @@ def main():
                 cbar.set_label(col, fontsize=LABEL_SIZE)
             finalize_figure(fig)
             fname = f"true_vs_predicted_by_{col}.png"
-            fig.savefig(demo_fig_dir / fname, dpi=300)
+            save_figure(fig, demo_fig_dir / fname, dpi=300)
             plt.close(fig)
             n_demo_plots += 1
     else:

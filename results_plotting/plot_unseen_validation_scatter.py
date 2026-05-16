@@ -13,6 +13,14 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 PREFERRED_TARGET_ORDER = ["MetaTemporal", "TemporoParietal", "Frontal", "MesialTemporal"]
 
 
+def save_figure(fig: plt.Figure, out_path: Path, **kwargs) -> bool:
+    if out_path.exists():
+        print(f"[skip] {out_path} exists")
+        return False
+    fig.savefig(out_path, **kwargs)
+    return True
+
+
 def order_targets(targets: list[str]) -> list[str]:
     target_map = {t.lower(): t for t in targets}
     ordered = []
@@ -211,7 +219,7 @@ def save_individual_plots(df: pd.DataFrame, targets: list[str], run_dir: Path, m
             bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
         )
         mod.finalize_figure(fig)
-        fig.savefig(out_dir / "true_vs_predicted.png", dpi=300)
+        save_figure(fig, out_dir / "true_vs_predicted.png", dpi=300)
         plt.close(fig)
 
 
@@ -301,7 +309,7 @@ def main():
     mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.97))
     combined_name = "true_vs_predicted_final_vs_4x.png" if len(runs) > 1 else "true_vs_predicted_final.png"
     combined_path = out_dir / combined_name
-    fig.savefig(combined_path, dpi=300)
+    save_figure(fig, combined_path, dpi=300)
     plt.close(fig)
 
     metrics_path = out_dir / "per_region_metrics.csv"

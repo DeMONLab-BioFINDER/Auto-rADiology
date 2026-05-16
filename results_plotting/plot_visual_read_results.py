@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -9,6 +10,24 @@ from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay
 RUN_DIR = Path(
     "../results/tau_raw_Gothenburg_CNN3D_visual_read_2split80-20_stratify-site,visual_read_raw-quick-test_20260408_141238"
 )
+
+
+def save_figure(fig: plt.Figure, out_path: Path, **kwargs) -> bool:
+    if out_path.exists():
+        print(f"[skip] {out_path} exists")
+        return False
+    fig.savefig(out_path, **kwargs)
+    return True
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Create plots for visual_read runs.")
+    parser.add_argument(
+        "--run_dir",
+        default=str(RUN_DIR),
+        help="Path to the run directory (defaults to the hardcoded example).",
+    )
+    return parser.parse_args()
 
 
 def load_results(run_dir: Path):
@@ -37,7 +56,7 @@ def make_training_curve(df_curve: pd.DataFrame, out_dir: Path):
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(out_dir / "training_curves.png", dpi=300)
+    save_figure(fig, out_dir / "training_curves.png", dpi=300)
     plt.close(fig)
 
 
@@ -61,7 +80,7 @@ def make_probability_histogram(df_preds: pd.DataFrame, out_dir: Path):
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(out_dir / "probability_histogram.png", dpi=300)
+    save_figure(fig, out_dir / "probability_histogram.png", dpi=300)
     plt.close(fig)
 
 
@@ -77,7 +96,7 @@ def make_confusion_matrix(df_preds: pd.DataFrame, out_dir: Path):
     )
     ax.set_title("Confusion Matrix")
     fig.tight_layout()
-    fig.savefig(out_dir / "confusion_matrix.png", dpi=300)
+    save_figure(fig, out_dir / "confusion_matrix.png", dpi=300)
     plt.close(fig)
 
 
@@ -87,7 +106,7 @@ def make_roc_curve(df_preds: pd.DataFrame, out_dir: Path):
     ax.set_title("ROC Curve")
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(out_dir / "roc_curve.png", dpi=300)
+    save_figure(fig, out_dir / "roc_curve.png", dpi=300)
     plt.close(fig)
 
 
@@ -117,7 +136,8 @@ def print_summary(df_metrics: pd.DataFrame, df_preds: pd.DataFrame):
 
 
 def main():
-    run_dir = RUN_DIR.resolve()
+    args = parse_args()
+    run_dir = Path(args.run_dir).resolve()
     out_dir = run_dir / "figures"
     out_dir.mkdir(exist_ok=True)
 
