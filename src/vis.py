@@ -45,7 +45,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
 
     vis_sum = {'class': None,'pos_vs_neg':None}
     vis_count = {'class': 0, 'pos_vs_neg': 0}
-    for x, _, _, extra, pid in loader:
+    for x, _, _, _, _, extra, pid in loader:
         x = x.to(device)
         extra = extra.to(device)
         

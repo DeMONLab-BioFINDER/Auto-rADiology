@@ -17,12 +17,12 @@ def parse_arguments():
     parser.add_argument("--device", type=str, default=get_device(), help='e.g., "cpu", "cuda", "cuda:0"')
 
     # Input paths and data
-    parser.add_argument("--dataset", type=str, default="Gothenburg", help="Dataset name, ADNI, IDEAS, or ADNI_CL (suffix to load demographics .csv)")
+    parser.add_argument("--dataset", type=str, default="IDEAS,ADNI", help="Dataset name, ADNI, IDEAS, or ADNI_CL (suffix to load demographics .csv)")
     parser.add_argument("--data_type", type=str, default="tau_T1MNI", help="Type of data to process")
     parser.add_argument("--input_path", type=str, default='', help='images save in BIDS format. If not input, will set as <proj_path>/data/<data_type>') # Berkeley server ADNI data path: /home/jagust/xnat/squid/adni/
     parser.add_argument("--data_suffix", type=str, default='', help='images finding pattern **/*<suffix>/*/*/*.nii* for find_pet_images function, specifically to IDEAS data. e.g._Inten_Norm or SCANS (folder name of Berkeley server ADNI data)')
     parser.add_argument("--targets", type=str, default="visual_read", help="Predict variables name, corresponds to column names in demographics.csv, seperate by ,")
-    parser.add_argument("--image_shape", nargs=3, type=int, default=[128,128,128], help="Input image shape (x,y,z) after resampling, can be tuned by Optuna")
+    parser.add_argument("--sample_weights", type=str, default="expertise", help="expertise of visual read / CL preprocessing methods, for weighted loss")
     parser.add_argument("--input_cl", type=str, default=None, help="Name of extra input CL used to plug in at the last fully connected layer, should be the column name in demo.csv e.g. CL, CL_pred")
     parser.add_argument("--extra_global_feats", type=str, default=None, help="Extra gloabl input used to plug in at the last fully connected layer. e.g. p95,std,frac_hi")
     
@@ -33,12 +33,24 @@ def parse_arguments():
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--model_kwargs", type=str, default="", help='JSON string of extra kwargs for the selected model (e.g., \'{"features": 32}\')')
     
+    # Preprocessing
+    parser.add_argument("--image_shape", type=int, nargs=3, default=(128, 128, 128), help="Input image shape (x,y,z) after resampling, can be tuned by Optuna")
+    parser.add_argument("--spacing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--pixdim", nargs=3, type=float, default=(2.0, 2.0, 2.0))
+    parser.add_argument("--intensity_norm", default='percentile_01')
+    parser.add_argument("--intensity_pct", nargs=2, type=float, default=(1.0, 99.0))
+
     # Training
     parser.add_argument("--epochs", type=int, default=200) # true model should start with 30 
     parser.add_argument("--loss_w_cls", type=float, default=1.0)
     parser.add_argument("--loss_w_reg", type=float, default=1.0)
-    parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")
+    parser.add_argument("--loss_w_dataset", type=float, default=0.0, help=">0 only when model returns dataset_logit")
+    parser.add_argument("--cls_loss", type=str, default='bce', choices=["ce","weighted_bce","bce"], help="regression loss name")
+    parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1","huber","weighted_mse","weighted_smoothl1","weighted_huber"], help="regression loss name")
     parser.add_argument("--smoothl1_beta", type=float, default=10, help="regression smooth L1 loss beta, CL units that is acceptable")
+    parser.add_argument("--cls_threshold", type=float, default=0.5, help="classification threshold, probability -> class")
+    parser.add_argument("--lambda_grl", type=float, default=1.0, help="lamba of dataset specific loss")
+
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to load (optional)")
     parser.add_argument("--amp", type=bool, default=True, help="Use automatic mixed precision if CUDA is available.")
@@ -47,7 +59,7 @@ def parse_arguments():
 
     # CV
     parser.add_argument("--n_splits", type=int, default=5, help="Number of folds for StratifiedKFold.")
-    parser.add_argument("--stratifycvby", default="site,visual_read", help=",site,tracer, List of column names to stratify by (e.g., visual_read CL age gender).")
+    parser.add_argument("--stratifycvby", default="dataset,visual_read", help="dataset,site,tracer, List of column names to stratify by (e.g., visual_read CL age gender).")
     parser.add_argument("--samesubject_col", type=str, default=None, help="Column name to identify same subjects to keep them in the same split (e.g., sameID).")
     
     # Hypertune - Optuna
@@ -68,6 +80,7 @@ def parse_arguments():
     parser.add_argument("--unfreeze_layers", type=int, default=1, help="Number of last layers to unfreeze during few-shot finetuning. (e.g., 1 = final linear layer; 2 = dropout + linear).")
     
     # Visualization
+    parser.add_argument("--run_vis", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--visualization_name", type=str, default='gradcam', help="Interpretation method. e.g. 'gradcam' or 'occlusion'")
     parser.add_argument("--vis_img_list", type=str, default='0,1,2', help="visulize specific subject, ID seperate by comma")
 

@@ -1,4 +1,4 @@
-# abpet/utils.py
+# src/utils.py
 import os, csv, json, time, math
 import torch, random, inspect
 import pandas as pd
@@ -131,19 +131,24 @@ def append_metrics_csv(csv_path: str, data: dict, mode: str = "row"):
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
     if mode == "row":
-        df_new = pd.DataFrame([data])  # one row
+        df_new = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame([data])  # one row
         if os.path.exists(csv_path):
             df_old = pd.read_csv(csv_path)
             df = pd.concat([df_old, df_new], ignore_index=True)
+        else:
+            df = df_new
     elif mode == "column":
+        if isinstance(data, pd.DataFrame): raise ValueError("column mode expects a dict, not a DataFrame.")
         df_new = pd.DataFrame.from_dict(data, orient="index", columns=["value"])
         if os.path.exists(csv_path):
             df_old = pd.read_csv(csv_path, index_col=0)
             df = pd.concat([df_old, df_new], axis=1)
+        else:
+            df = df_new
     else:
         raise ValueError("mode must be 'row' or 'column'")
-    if not os.path.exists(csv_path): df = df_new
-    df.to_csv(csv_path)
+
+    df.to_csv(csv_path, index=False)
 
 
 def combine_metrics_for_minimize(m: dict) -> float:
@@ -172,48 +177,83 @@ def clone_args(args, **overrides):
     return SimpleNamespace(**d)
 
 
-def make_splits(df, labels, n_splits, seed):
+def make_splits(df, labels, n_splits, seed, split_name):
     """Freeze splits once so objective() is deterministic across trials."""
+    validate_stratification(labels, n_splits, split_name)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     return list(skf.split(df, labels))
 
 
-def hold_out_set(df, labels, subject_col, test_size: float = 0.2, seed: int = 42,) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Subject-level hold-out split with stratification.
+def validate_stratification(labels, n_splits, name):
+    vc = pd.Series(labels).value_counts()
+    if vc.empty:
+        raise ValueError(f"{name}: no labels available.")
+    min_count = int(vc.min())
+    if min_count < n_splits:
+        raise ValueError(f"{name}: least frequent stratum has {min_count} samples, but n_splits={n_splits}. Reduce n_splits or simplify stratification. Counts:\n{vc}")
 
-    - Splits by subject (no leakage)
-    - Stratifies using subject-level labels
-    - Returns scan-level indices
-    """
-    df = df.copy()
 
-    # ---- 1. build subject-level dataframe ----
-    if subject_col is not None:
+def hold_out_set(df, labels, stratify_split: bool = True, subject_col: str = 'ID', hold_out_datasets: str = None, test_size: float = 0.2, seed: int = 42,) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Create train/test indices using optional dataset-level hold-out and optional subject-level stratified split.
+
+    Modes:
+    - hold_out_datasets only: held-out datasets are test; all remaining rows are train.
+    - stratify_split only: split subjects into train/test with stratification; scans from the same subject stay together.
+    - both: first remove held-out datasets as test, then stratified-split the remaining datasets.
+
+    Returns
+    -------
+    train_idx, test_idx : np.ndarray
+        Row indices from the original dataframe.
+    """
+    if stratify_split and subject_col not in df.columns: raise ValueError("subject_col must exist in input df when stratify_split=True")
+    if hold_out_datasets is not None and "dataset" not in df.columns: raise ValueError("dataset column must exist when hold_out_datasets is provided")
+    if not stratify_split and hold_out_datasets is None: raise ValueError("Either stratify_split=True or hold_out_datasets must be provided")
+    
+    df_split = df.copy()
+    labels_split = labels
+    test_idx_holdout = np.array([], dtype=int)
+
+    # dataset hold-out first
+    if hold_out_datasets is not None:
+        print('Leave out', hold_out_datasets, 'as hold-out set...')
+        holdout_datasets = [d.strip() for d in hold_out_datasets.split(",")]
+        holdout_mask = df["dataset"].isin(holdout_datasets)
+        test_idx_holdout = df[holdout_mask].index.to_numpy()
+        df_split = df[~holdout_mask].copy()
+        labels_split = labels.loc[df_split.index]
+
+    #train_idx_holdout = df_split.index.to_numpy()
+
+    if stratify_split:
+        # ---- 1. build subject-level dataframe ----
         print('keep only the first scan for one subject, based on column', subject_col)
+            
+        subj_df = df_split.drop_duplicates(subset=subject_col, keep='first')
+        assert len(subj_df) == subj_df[subject_col].nunique()
+        subj_labels = labels_split.loc[subj_df.index]
+        assert (subj_df.index == subj_labels.index).all()
+
+        # ---- 2. subject-level stratified splits ----
+        k = max(2, int(round(1.0 / float(test_size))))  # determine K from test_size
+        splits = make_splits(subj_df, subj_labels, n_splits=k, seed=seed, split_name='Outer hold out')
+
+        train_s, test_s = splits[-1] # pick last fold as hold-out
+        train_ids_s = subj_df.iloc[train_s][subject_col]
+        test_ids_s  = subj_df.iloc[test_s][subject_col]
+
+        # ---- 3. map back to scan-level indices ----
+        train_idx = df_split[df_split[subject_col].isin(train_ids_s)].index.to_numpy()
+        test_idx_s  = df_split[df_split[subject_col].isin(test_ids_s)].index.to_numpy()
     else:
-        subject_col = 'ID'
-    subj_df = df.drop_duplicates(subset=subject_col, keep='first') if subject_col is not None else df.copy()
-    assert len(subj_df) == subj_df[subject_col].nunique()
-    subj_labels = labels.loc[subj_df.index]
-    assert (subj_df.index == subj_labels.index).all()
+        train_idx = df_split.index.to_numpy()
+        test_idx_s = np.array([], dtype=int)
 
-    # ---- 2. determine K from test_size ----
-    k = max(2, int(round(1.0 / float(test_size))))
+    test_idx = np.concatenate([test_idx_s, test_idx_holdout])
 
-    # ---- 3. subject-level stratified splits ----
-    splits = make_splits(subj_df, subj_labels, n_splits=k, seed=seed)
-
-    # pick last fold as hold-out (your original logic)
-    train_s, test_s = splits[-1]
-
-    train_ids = subj_df.iloc[train_s][subject_col]
-    test_ids  = subj_df.iloc[test_s][subject_col]
-
-    # ---- 4. map back to scan-level indices ----
-    train_idx = df[df[subject_col].isin(train_ids)].index.to_numpy()
-    test_idx  = df[df[subject_col].isin(test_ids)].index.to_numpy()
-
+    train_ids = df.iloc[train_idx][subject_col].unique() if subject_col in df.columns else []
+    test_ids  = df.iloc[test_idx][subject_col].unique() if subject_col in df.columns else []
     print("hold out training vs testing:", len(train_idx), len(test_idx),
           f"(subjects: {len(train_ids)} / {len(test_ids)})")
 
@@ -235,7 +275,7 @@ def save_train_test_subjects(df_train, df_test, output_path, savename):
     df_test.to_csv(os.path.join(output_path, f'{savename}_testing-set.csv'))
 
 
-def build_model_from_args(args, device=None, n_classes: int | None = None):
+def build_model_from_args(args, device=None, n_classes: int | None = None, num_domains: int = 0):
     """
     Dynamically instantiate a model by name from models.py using args.model.
     - Filters kwargs to what the class __init__ accepts.
@@ -261,6 +301,10 @@ def build_model_from_args(args, device=None, n_classes: int | None = None):
         extra_dim += len(feats)
         print(f'add extra global input {args.extra_global_feats} to the last FC layer')
     defaults["extra_dim"] = extra_dim
+
+    # dataset loss input
+    defaults["num_domains"] = num_domains
+    defaults["lambda_grl"] = getattr(args, "lambda_grl", 1.0)
 
     # JSON-only model kwargs
     extra = {}

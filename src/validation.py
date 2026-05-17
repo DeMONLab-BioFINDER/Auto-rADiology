@@ -1,4 +1,4 @@
-# finetune.py
+#src/validation.py
 from src.warnings import ignore_warnings
 ignore_warnings()
 
@@ -9,19 +9,20 @@ import pickle
 import numpy as np
 import pandas as pd
 import torch.nn as nn
+from pathlib import Path
 from sklearn.model_selection import StratifiedShuffleSplit
 
 from src.data import build_master_table, get_transforms, get_loader
 from src.train import inference
 from src.cv import train_model
-from src.utils import compute_smooth_sigma_vox, build_model_from_args, load_best_checkpoint, add_quantile_bins
+from src.utils import build_model_from_args, load_best_checkpoint, add_quantile_bins
 
 import torch.multiprocessing as mp
 os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
 mp.set_sharing_strategy("file_system")
 
 
-def run_few_shots(args, df, tfm, base_model, targets_list):
+def run_few_shots(args, df, tfm, data_file, base_model, targets_list):
     finetune_path = os.path.join(args.output_path, f"fewshot-{args.few_shot}")
     os.makedirs(finetune_path, exist_ok=True)
 
@@ -49,7 +50,7 @@ def run_few_shots(args, df, tfm, base_model, targets_list):
         df_ids = pd.DataFrame(all_fs_ids)
 
         # ----- FEW-SHOT -----
-        metrics, df_result = few_shots(base_model, df_fs, df_eval, tfm, args, it) # results on test set
+        metrics, df_result = few_shots(base_model, df_fs, df_eval, tfm, data_file, args, it) # results on test set
         print("metrics:", metrics)
 
         # ----- COLLECT -----
@@ -63,11 +64,11 @@ def run_few_shots(args, df, tfm, base_model, targets_list):
     return df_metrics, df_results, df_ids
 
 
-def few_shots(base_model, df_fs, df_eval, tfm, args, it):
+def few_shots(base_model, df_fs, df_eval, tfm, data_file, args, it):
     # loaders
-    dl_fs_tr = get_loader(df_fs, tfm, args, batch_size=max(1, args.batch_size // 2), augment=True, shuffle=True)
-    dl_fs_va = get_loader(df_fs, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False)
-    dl_eval  = get_loader(df_eval, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False)
+    dl_fs_tr = get_loader(df_fs, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=True, shuffle=True)
+    dl_fs_va = get_loader(df_fs, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False)
+    dl_eval  = get_loader(df_eval, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False)
 
     model = copy.deepcopy(base_model) # clone model (important!)
     # freeze backbone
@@ -77,7 +78,7 @@ def few_shots(base_model, df_fs, df_eval, tfm, args, it):
     model, save_path = finetune(model, dl_fs_tr, dl_fs_va, it, args, fold_name=f"fewshot-{args.few_shot}_iter-{args.few_shot_iterations}-{it}")
 
     # evaluate
-    metrics, df_result = inference(model, dl_eval, args.device)
+    metrics, df_result = inference(model, dl_eval, args.device, cls_threshold=args.cls_threshold)
     pickle.dump([metrics, df_result], open(f"{save_path}_inference_testset.pkl", "wb"))
     return metrics, df_result
 
@@ -115,7 +116,9 @@ def load_validation_data(args):
     - For 'IDEAS' dataset, torch tensors are loaded directly from the specified input path. 
     
     """
-
+    data_file = None
+    tfm = get_transforms(target_shape=tuple(args.image_shape), add_spacing=args.spacing, pixdim=args.pixdim,
+                                     intensity_norm=args.intensity_norm, pct_lo=args.intensity_pct[0], pct_hi=args.intensity_pct[1])
     if 'ADNI' in args.dataset: # Berkeley server, load NIfTI files
         print('Validate on ADNI test set...')
         test_set = os.path.join(args.proj_path, "data", f'{args.dataset}_found_scans_{args.data_suffix}_{args.targets}.csv')
@@ -124,23 +127,29 @@ def load_validation_data(args):
             df = pd.read_csv(test_set, index_col=0)
         else:
             print('finding scans from folder')
-            df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset)
+            df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
             df.to_csv(os.path.join(args.proj_path, "data", f'{args.dataset}_found_scans_{args.data_suffix}_{args.targets}.csv'))
-        
-        sigma_vox = compute_smooth_sigma_vox(args.voxel_sizes, fwhm_current_mm=6.0, fwhm_target_mm=10.0) if args.voxel_sizes else None # for ADNI SCANS
-        tfm = get_transforms(smooth_sigma_vox = sigma_vox)
+        #tfm = get_transforms(tuple(args.image_shape), smooth_sigma_vox = sigma_vox)
     elif 'IDEAS' in args.dataset: # Berzelius, load torch tensors
         print('Validate on IDEAS test set...')
         test_set = os.path.join(args.best_model_folder,'Hold-out_testing-set.csv')
         print(test_set)
         df = pd.read_csv(test_set, index_col=0)
-        tfm = args.input_path
+        data_file = Path(args.input_path) / 'data' / args.data_type
+        tfm = None
     elif 'A4' in args.dataset: # Berzelius, load torch tensors
         print('Validate on A4 dataset...')
         test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}.csv')
         print(test_set)
         df = pd.read_csv(test_set, index_col=0)
-        tfm = args.input_path
+        data_file = Path(args.input_path) / 'data' / args.data_type
+        tfm = None
+    elif 'Gothenburg' in args.dataset:
+        print('Validate on Gothenbug: A05C and AVID dataset...')
+        test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}_{args.data_type}_validation.csv')
+        print(test_set)
+        df = pd.read_csv(test_set, index_col=0)
+        data_file = Path(args.input_path) / 'data' / args.data_type
     
     # remove nan
     print(df)
@@ -148,9 +157,9 @@ def load_validation_data(args):
     df = df.dropna(subset=targets)
     print(f'Validation set size: {len(df)} images')
 
-    dl_va = get_loader(df, tfm, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
+    dl_va = get_loader(df, tfm, data_file, args, batch_size=max(1, args.batch_size // 2), augment=False, shuffle=False, train_test='test')
 
-    return tfm, dl_va, df
+    return tfm, data_file, dl_va, df
 
 
 def load_preatrained_model(args, df) -> torch.nn.Module:
@@ -165,13 +174,20 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
         torch.nn.Module: The model with loaded weights.
     """
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
-    n_classes = int(df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    #n_classes = int(df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    if 'visual_read' in targets_list:
+        n_classes = 1 if args.cls_loss in {"bce", "weighted_bce"} else 2
+    else:
+        n_classes = None
 
     model = build_model_from_args(args, device=args.device, n_classes=n_classes)
 
-    ckpt = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")
-    print(f"Loading pretrained model: {ckpt}")
-    sd = torch.load(ckpt, map_location=args.device, weights_only=True)
+    ckpts = [os.path.join(args.best_model_folder, "nestedcv-outer-test/checkpoints/nestedcv-outer-test_best.pt"),
+             os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")]
+    for ckpt in ckpts:
+        if os.path.exists(ckpt):
+            print(f"Loading pretrained model: {ckpt}")
+            sd = torch.load(ckpt, map_location=args.device, weights_only=True)
 
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
     model.load_state_dict(state_dict, strict=False)
@@ -224,6 +240,12 @@ def stratified_few_shot_split(df: pd.DataFrame, n_shot: int, stratify_col: str, 
         raise ValueError("few-shot size must be < dataset size")
 
     y = df[stratify_col]
+
+    vc = df[stratify_col].value_counts()
+    if n_shot < len(vc):
+        raise ValueError(f"few_shot={n_shot} is smaller than number of strata={len(vc)}. Increase few_shot or reduce stratification granularity.")
+    if (vc < 2).any():
+        raise ValueError(f"Some strata have <2 samples, cannot make disjoint few-shot/eval split:\n{vc}")
 
     splitter = StratifiedShuffleSplit(n_splits=1, train_size=n_shot, random_state=seed,)
 

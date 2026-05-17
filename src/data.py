@@ -1,6 +1,5 @@
 # src/data.py
 import os
-import re
 import torch
 import pickle
 import numpy as np
@@ -11,14 +10,14 @@ from typing import List, Optional, Union
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from monai.data import MetaTensor
 from monai.transforms import (LoadImage, EnsureChannelFirst, Orientation, Resize,
-        ScaleIntensityRangePercentiles, Compose, CropForeground, GaussianSmooth,
-        Lambda)
+        ScaleIntensityRangePercentiles, Compose, CropForeground, 
+        Lambda, Spacing, NormalizeIntensity)
 
 from src.utils import seed_worker
 # ------------------------------
 # Master table
 # ------------------------------
-def build_master_table(input_path: str, preproce_method: str, targets: List[str], dataset: str, data_type: str, subjects: Optional[List[str]] = None) -> pd.DataFrame:
+def build_master_table(input_path: str, preproce_method: str, targets: List[str], dataset: str, data_type: str, modality: str = "abeta") -> pd.DataFrame:
     """
     Build the table required by the training code, given the custom folder layout.
     Normal mode: discover images + join demographics.
@@ -35,7 +34,7 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
         df = pd.read_csv(csv, index_col=0) # Must have 'ID' column from 0 to len(df)
         print(f"[cache] Loaded {csv} with {len(df)} rows (no filesystem scan).")
     else:
-        pets = find_pet_files(input_path=input_path, preproc_method=preproce_method, allow=subjects)
+        pets = find_pet_files(input_path=input_path, dataset=dataset, modality=modality)
         if pets.empty:
             raise FileNotFoundError(f"No NIfTI files found under '{input_path}' with preproc suffix  '{preproce_method}' for dataset '{dataset}'.")
         else:
@@ -59,105 +58,63 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
 
     # Only scans with targets value
     targets_list = [t.strip() for t in targets.split(",") if t.strip()]
-    df = df[~df[targets_list].isna().values].reset_index(drop=True)
+    #df = df[~df[targets_list].isna().values].reset_index(drop=True)
+    df = df.dropna(subset=targets_list).reset_index(drop=True)
     print(f'Found {df.shape[0]} scans with demographics for {targets}')
 
     return df
 
 
-def find_pet_files(input_path: str, preproc_method: str, allow: Optional[Union[pd.DataFrame, str, Path]] = None) -> pd.DataFrame:
+def find_pet_files(input_path: str,  dataset: str, modality="abeta") -> pd.DataFrame:
     """
-    Discover PET NIfTI files via:
-      (A) input_path/PET/**/*_{preproc_method}/*/*/*.nii*
-      (B) input_path/<ID>/PET_<ScanDate>_<tracer>/SCANS/*.nii[.gz], tracer in {FBB, FBP}
+    Find amyloid PET files in BIDS format:
 
-    If `allow` (DataFrame or CSV) is provided:
-      - must contain 'ID'; optional 'ScanDate'
-      - if only 'ID': filter by ID (keep all columns combined)
-      - if 'ID' + 'ScanDate': inner-join on both (keep all columns combined)
+      dataset/raw/sub-xxxx/ses-xxx/pet/*trc-{fbp,fbb,nav,pib,flut}*.nii*
+
+    Returns:
+      dataset, ID, ses, tracer, pet_path, imagefile
     """
+
+    TRACERS = {"abeta": ["fbp", "fbb", "nav", "pib", "flut"],
+               "tau": ["ftp", "mk6240", "pi"]}
+    
     ipath = Path(input_path)
     rows = []
 
-    # Pattern A
-    root_a = ipath / "PET"
-    pattern_a = f"**/*{preproc_method}/*/*/*.nii*"
-    if root_a.exists():
-        for nii in root_a.glob(pattern_a):
-            try:
-                sid = nii.relative_to(root_a).parts[0]
-            except Exception:
-                continue
-            rows.append({
-                "ID": str(sid),
-                "pet_path": str(nii).replace('/._','/'),
-                "imagefile": nii.name,
-                "ScanDate": None,
-                "tracer": None,
-            })
-    else:
-        # Pattern B -- ADNI data on Berkeley cluster
-        # e.g. /116-S-6550/PET_2018-08-29_FTP/SCANS/116-S-6550_AV1451_2018-08-29_P4-6mm_I1600375.nii
-        if '.nii' in preproc_method:
-            print(f'finding ADNI data /analysis/{preproc_method}')
-            method_pat = re.escape(preproc_method) + r'(?:\.gz)?'
-            regex_b = re.compile(
-                rf'^(?P<ID>[^/]+)/PET_(?P<ScanDate>\d{{4}}-\d{{2}}-\d{{2}})_(?P<tracer>FBB|FBP)/analysis/{re.escape(preproc_method)}$')
-            #regex_b = re.compile(
-            #    r'^(?P<ID>[^/]+)/PET_(?P<ScanDate>\d{4}-\d{2}-\d{2})_(?P<tracer>FBB|FBP)/analysis/'r'wsuvr_cere[^/]*\.nii(?:\.gz)?$')
-            glob_pattern = "*analysis/*.nii*"
-        else: # step 4 ADNI data
-            print(f'finding ADNI data /SCANS/')
-            regex_b = re.compile(
-                r'^(?P<ID>[^/]+)/PET_(?P<ScanDate>\d{4}-\d{2}-\d{2})_(?P<tracer>FBB|FBP)/SCANS/[^/]+\.nii(\.gz)?$')
-            glob_pattern = "*SCANS/*.nii*"
-        print("PATTERN:", regex_b.pattern)
-        
-        for nii in ipath.rglob(glob_pattern):
-            m = regex_b.match(nii.relative_to(ipath).as_posix())
-            if not m: 
-                continue
-            rows.append({
-                "ID": m.group("ID").replace('-','_'),
-                "pet_path": str(nii),
-                "imagefile": nii.name,
-                "ScanDate": m.group("ScanDate"),
-                "tracer": m.group("tracer"),
-            })
+    allowed_tracers = TRACERS.get(modality, set())
 
-    df = pd.DataFrame(rows, columns=["ID", "pet_path", "imagefile", "ScanDate", "tracer"])
+    pattern = "sub-*/ses-*/pet/*trc-*.nii*"
+    print(f"search {ipath / pattern}")
+
+    for nii in ipath.glob(pattern):
+        try:
+            sub_dir = nii.parents[2].name   # sub-xxxx
+            ses_dir = nii.parents[1].name   # ses-xxx
+            fname = nii.name.lower()
+
+            sid = sub_dir.replace("sub-", "")
+            ses = int(ses_dir.replace("ses-", ""))
+
+            tracer = None
+            for trc in allowed_tracers:
+                if f"trc-{trc}" in fname:
+                    tracer = trc
+                    break
+            if tracer is None: continue
+
+        except Exception:
+            continue
+
+        rows.append({"dataset": dataset, "ID": sid, "ses": ses,
+                     "tracer": tracer, "pet_path": str(nii), "imagefile": nii.name})
+
+    df = pd.DataFrame(rows, columns=["dataset", "ID", "ses", "tracer", "pet_path", "imagefile"])
+
     if df.empty: return df
 
-    # Deterministic dedupe: keep first path per ID
-    df = (df.sort_values(["ID", "pet_path"])
-            .groupby("ID", as_index=False, group_keys=False)
-            .head(1).reset_index(drop=True))
-
-    # --- Unified filtering / intersection with `allow` ---
-    if allow is not None:
-        if isinstance(allow, (str, Path)):
-            allow_df = pd.read_csv(input_path + allow, index_col=0)
-        else:
-            allow_df = allow.copy()
-
-        if "ID" not in allow_df.columns:
-            raise ValueError("`allow` must contain column 'ID'.")
-
-        # Normalize types
-        df["ID"] = df["ID"].astype(str)
-        allow_df["ID"] = allow_df["ID"].astype(str)
-
-        has_date = "ScanDate" in allow_df.columns
-        if has_date:
-            # ensure YYYY-MM-DD strings
-            allow_df["ScanDate"] = pd.to_datetime(allow_df["ScanDate"]).dt.strftime("%Y-%m-%d")
-            df["ScanDate"] = df["ScanDate"].astype(str).str.slice(0,10)
-            keys = ["ID", "ScanDate"]
-        else:
-            keys = ["ID"]
-
-        df = pd.merge(df, allow_df, on=keys, how="inner", suffixes=("", "_allow"))
-        df = df.sort_values(keys + [c for c in ["pet_path"] if c in df.columns]).reset_index(drop=True)
+    df = (df.sort_values(["dataset", "ID", "ses", "tracer", "pet_path"])
+          .drop_duplicates(subset=["dataset", "ID", "ses", "tracer"], keep="first")
+          .reset_index(drop=True))
 
     return df
 
@@ -190,21 +147,24 @@ def load_participants_labels(input_path: str, dataset: Optional[str] = None) -> 
 def get_train_val_loaders(train_df, val_df, args):
     # Detect cached mode
     use_cache = (not args.data_suffix) or (str(args.data_suffix).strip() == "")
+    
+    tfm = get_transforms(target_shape=tuple(args.image_shape), add_spacing=args.spacing, pixdim=args.pixdim,
+                                     intensity_norm=args.intensity_norm, pct_lo=args.intensity_pct[0],
+                                     pct_hi=args.intensity_pct[1])
     if use_cache:
-        tfm = None
         p = Path(args.input_path) / "data.pt"
         if p.exists():
+            tfm = None
             data_file = torch.load(p, map_location="cpu", weights_only=True) # torch tensor with shape [S, D, H, W]
             print(f"Reconstructed loaders from data.pt with shape [S, D, H, W].")
         else:
             data_file = Path(args.input_path) / 'data' / args.data_type
             if any(Path(data_file).glob("*.pt")):
+                tfm = None
                 print(f"Reconstructed loaders from data_idx.pt for each scan.")
             else:
-                tfm = get_transforms(tuple(args.image_shape))
                 print(f"Reconstructed imgs from tau_batch_x.pkl for batched images.")
     else:
-        tfm = get_transforms(tuple(args.image_shape))
         data_file = None
 
     dl_tr = get_loader(train_df, tfm, data_file, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
@@ -217,7 +177,7 @@ def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=Fals
     g = torch.Generator()
     g.manual_seed(args.seed)
 
-    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats, augment=augment)
+    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, sample_weights=args.sample_weights, extra_global_feats=args.extra_global_feats, augment=augment)
 
     if "dataset" in df.columns and train_test=='train': #### domain-balanced sampling
         print('------ Balanced sampling ------')
@@ -262,45 +222,30 @@ def brain_outer_mask(x):
 
 def get_transforms(target_shape=(128, 128, 128), pct_lo: float = 1.0, pct_hi: float = 99.0,
     crop_foreground: bool = True, ras: bool = True, interp: str = "trilinear", out_range: tuple = (0.0, 1.0),
-    smooth_sigma_vox: tuple | None = None, apply_brain_mask: bool = True, process: bool = True) -> Compose:
+    apply_brain_mask: bool = True, process: bool = True, #smooth_sigma_vox: tuple | None = None,
+    add_spacing: bool = False, pixdim: tuple[float, float, float] = (2.0, 2.0, 2.0), # pixdim: Target voxel spacing in mm, e.g., (2.0, 2.0, 2.0).
+    intensity_norm: str = "percentile_01",) -> Compose: # percentile_01, zscore, none
     """
     PET-optimized preprocessing pipeline using MONAI.
-
-    Parameters
-    ----------
-    target_shape : tuple of int
-        Desired (D, H, W) volume size.
-    pct_lo, pct_hi : float
-        Percentiles for intensity scaling.
-    crop_foreground : bool
-        Whether to crop to nonzero foreground.
-    ras : bool
-        Reorient to RAS anatomical orientation.
-    interp : str
-        Interpolation mode for resizing (e.g., 'trilinear').
-    out_range : tuple
-        Output intensity range (min, max).
-    smooth_sigma_vox: tuple
-        mm-based smoothing → computed for *original* voxels)
-    apply_brain_mask : bool
-        Whether to apply a brain mask to zero out non-brain regions.
-    Returns
-    -------
-    monai.transforms.Compose
-        A composed MONAI transform pipeline.
     """
     steps = [LoadImage(image_only=True),
-             EnsureChannelFirst()] # adds a channel dimension: (D, H, W) → (C=1, D, H, W)
-    if ras: steps.append(Orientation(axcodes="RAS", labels=None)) # Reorients the image to a standard anatomical orientation: Right–Anterior–Superior
+             EnsureChannelFirst()] 
+    if ras: steps.append(Orientation(axcodes="RAS", labels=None)) 
     
-    if smooth_sigma_vox is not None: # Smooth BEFORE crop/resize (improves SNR for bounding box & interpolation)
-        steps.append(GaussianSmooth(sigma=smooth_sigma_vox))
+    if add_spacing: steps.append(Spacing(pixdim=pixdim, mode=interp))
+
+    #if smooth_sigma_vox is not None: # Smooth BEFORE crop/resize (improves SNR for bounding box & interpolation) -- should do with freesurfer
+    #    steps.append(GaussianSmooth(sigma=smooth_sigma_vox))
 
     if process:
         if crop_foreground: steps.append(CropForeground()) # Crop out huge empty regions
         steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
-        # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
-        steps.append(ScaleIntensityRangePercentiles(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True))
+        if intensity_norm == "percentile_01":
+            steps.append(ScaleIntensityRangePercentiles(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True)) # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
+        elif intensity_norm == "zscore":
+            steps.append(NormalizeIntensity(nonzero=True, channel_wise=False))
+        elif intensity_norm == "none":
+            pass
 
         # ---- Force background = 0 (critical for model to focus on brain) ----
         if apply_brain_mask:
@@ -315,16 +260,19 @@ class PETDataset(Dataset):
       - table columns: ["ID", "pet_path", "visual_read", "CL", ...]
       - transforms: a MONAI Compose returning a (1, D, H, W) Tensor/MetaTensor (float-like)
     """
-    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None,input_cl=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
+    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None, input_cl=None, sample_weights=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
         self.table = table.reset_index(drop=True)
         self.transforms = transforms
         self.data_file = data_file
         self.targets = [t.strip() for t in targets.split(",") if t.strip()]
         self.input_cl = input_cl
+        self.sample_weights = sample_weights
         self.extra_global_feats = ([f.strip() for f in extra_global_feats.split(",")]
                                    if extra_global_feats is not None else [])
         self.augment = augment
         self.dtype = dtype
+
+        self.site_to_idx = {s: i for i, s in enumerate(sorted(self.table["site"].dropna().unique()))} if "site" in self.table.columns else {}
 
     def __len__(self):
         return len(self.table)
@@ -337,18 +285,18 @@ class PETDataset(Dataset):
             path = row["pet_path"]
             x = self.transforms(path)
         elif torch.is_tensor(self.data_file): # torch tensor with shape  [S, D, H, W]
-            fid = str(int(row["ID"]))
+            fid = int(row["ID"])
             x = self.data_file[fid]
             x = x.unsqueeze(0) # ➜ becomes [1, D, H, W]
         elif isinstance(self.data_file, (str, bytes, os.PathLike)):
             fid = str(int(row["ID"]))
             if isinstance(self.transforms, Compose): 
                 # Load the preprocessed image from the corresponding pickle file (assuming it's stored in batches of 100)
-                with open(Path(self.data_file) / f"tau_batch_000.pkl", "rb") as f: data_0 = pickle.load(f)
+                with open(Path(self.data_file) / f"data_batch_000.pkl", "rb") as f: data_0 = pickle.load(f)
                 batch_id = int(fid) // len(data_0)
                 idx = int(fid) % len(data_0)
 
-                pkl_path = Path(self.data_file) / f"tau_batch_{batch_id:03d}.pkl"
+                pkl_path = Path(self.data_file) / f"data_batch_{batch_id:03d}.pkl"
                 with open(pkl_path, "rb") as f: data = pickle.load(f)
                 sample = data[idx]
 
@@ -360,33 +308,6 @@ class PETDataset(Dataset):
                 load_img = MetaTensor(torch.as_tensor(sample["image"]), meta=sample["meta"])
                 t_no_load = Compose(self.transforms.transforms[1:])  # remove LoadImage
                 x = t_no_load(load_img)
-                '''
-                print(fid, idx)
-                print(
-                    f"{sample['image'].__class__.__name__}: "
-                    f"shape={tuple(sample['image'].shape)}, "
-                    f"min={np.nanmin(sample['image']):.4f}, "
-                    f"max={np.nanmax(sample['image']):.4f}, "
-                    f"mean={np.nanmean(sample['image']):.4f}, "
-                    f"nan={np.isnan(sample['image']).sum()/sample['image'].size:.6f}"
-                )
-                x = load_img
-                for t in t_no_load.transforms:
-                    x = t(x)
-
-                    xt = x.as_tensor() if isinstance(x, MetaTensor) else x
-                    xt = xt.detach().cpu()
-                    if torch.isnan(xt).all().item():
-                        print(t.__class__.__name__, 'all nan')
-                    print(
-                        f"{t.__class__.__name__}: "
-                        f"shape={tuple(xt.shape)}, "
-                        f"min={xt[~torch.isnan(xt)].min().item():.4f}, "
-                        f"max={xt[~torch.isnan(xt)].max().item():.4f}, "
-                        f"mean={xt[~torch.isnan(xt)].mean().item():.4f}, "
-                        f"nan={torch.isnan(xt).sum()/xt.numel()}"
-                    )
-                '''
             else:
                 path = row["pet_path"]
                 path = Path(self.data_file) / "data" / "data_{}.pt".format(fid)
@@ -410,19 +331,30 @@ class PETDataset(Dataset):
         if 'CL' in self.targets:
             y_reg = torch.tensor([row["CL"]], dtype=torch.float32)
 
+        # dataset
+        dataset_target = torch.tensor(self.site_to_idx[row["site"]], dtype=torch.long) if "site" in self.table.columns and pd.notna(row["site"]) else torch.tensor(-1, dtype=torch.long)
+
+        # sample weight
+        if self.sample_weights is not None and pd.notna(row[self.sample_weights]):
+            sample_weights = float(row[self.sample_weights])
+        else:
+            sample_weights = 1.0
+        sample_weights = torch.tensor(sample_weights, dtype=torch.float32)
+
         # extra inputs
         extras = []
         # optional input CL
-        if self.input_cl is not None and pd.notna(row[self.input_cl]):
-            extras.append(torch.tensor([row[self.input_cl]], dtype=torch.float32))
+        if self.input_cl is not None:
+            val = float(row[self.input_cl]) if pd.notna(row[self.input_cl]) else 0.0
+            extras.append(torch.tensor([val], dtype=torch.float32))
         # global PET features
         if self.extra_global_feats:
             feats = self.global_feats_from_x(x)
             extras.append(feats)
         
-        extra_input = torch.cat(extras) if extras else torch.tensor([float("nan")])
+        extra_input = torch.cat(extras) if extras else torch.tensor([float("nan")], dtype=torch.float32)
 
-        return x, y_cls, y_reg, extra_input, int(row["ID"])
+        return x, y_cls, y_reg, dataset_target, sample_weights, extra_input, int(row["ID"])
     
     def global_feats_from_x(self, x, hi_thr=0.7, eps=1e-6):
         """

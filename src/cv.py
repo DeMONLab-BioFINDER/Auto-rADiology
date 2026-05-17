@@ -3,7 +3,6 @@ import os, torch, pickle
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from dataclasses import dataclass
 from sklearn.model_selection import StratifiedKFold
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
@@ -11,7 +10,7 @@ from src.data import get_train_val_loaders
 from src.early_stopping import EarlyStopper
 from src.train import train_one_epoch, inference
 from src.vis import run_visualization
-from src.utils import (append_metrics_csv, save_checkpoint, build_model_from_args,
+from src.utils import (append_metrics_csv, save_checkpoint, build_model_from_args, combine_metrics_for_minimize,
                        load_best_checkpoint, plot_metrics_from_csv, save_train_test_subjects,
                        random_assign_nan_labels, add_quantile_bins, is_continuous_numeric)
 
@@ -33,6 +32,8 @@ def kfold_cv(df_clean, stratify_labels, args):
         m, r = run_fold(train_df, val_df, args, fold_name=fold_name)
         
         # Log results
+        r = r.copy()
+        r["fold"] = i
         append_metrics_csv(metrics_path, {"fold": i, **m}, mode='row')
         append_metrics_csv(results_path, {"fold": i, **r}, mode='row')
 
@@ -61,9 +62,14 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
 
     # Determine classification/regression
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
-    n_classes = int(train_df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    #n_classes = int(train_df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    num_domains = int(train_df["site"].dropna().nunique()) if getattr(args, "loss_w_dataset", 0.0) > 0 and "site" in train_df.columns else 0
+    if targets_list == ["visual_read"]:
+        n_classes = 1 if args.cls_loss in {"bce", "weighted_bce"} else int(train_df["visual_read"].dropna().nunique())
+    else:
+        n_classes = None
 
-    model = build_model_from_args(args, device=args.device, n_classes=n_classes)
+    model = build_model_from_args(args, device=args.device, n_classes=n_classes, num_domains=num_domains)
 
     # ---- Train ----
     if args.tune:
@@ -80,14 +86,14 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
     if not train_only: model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
-    metrics_tr, df_result_tr = inference(model, dl_eval, args.device)
-    metrics_te, df_result_te = inference(model, dl_va, args.device)
+    metrics_tr, df_result_tr = inference(model, dl_eval, args.device, cls_threshold=args.cls_threshold)
+    metrics_te, df_result_te = inference(model, dl_va, args.device, cls_threshold=args.cls_threshold)
     metrics_te["best_epoch"] = int(best_epoch)
     pickle.dump({'train':{'metric': metrics_tr, 'preds': df_result_tr},
                  'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
 
     # ---- Interpretation: grad-CAM or ... ----
-    run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name) # the best model on validation set, save .png and .nii
+    if getattr(args, "run_visu", False) and fold_name in {"nestedcv-outer-test", "train-test-split"}: run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name) # the best model on validation set, save .png and .nii
 
     return metrics_te, df_result_te
 
@@ -100,7 +106,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     """
     train_only = (fold_name == "nestedcv-outer-test") #!!! train only, no early stop
 
-    scaler = torch.cuda.amp.GradScaler() if args.amp and torch.cuda.is_available() else None
+    scaler = torch.amp.GradScaler("cuda") if args.amp and torch.cuda.is_available() else None
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=3, min_lr=1e-6) # NOT using Scheduler in final retrain
@@ -109,18 +115,19 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     best_epoch = 0
     epoch_bar = tqdm(range(1, args.epochs + 1), desc=f"{fold_name} epochs", position=1, leave=False, dynamic_ncols=True)
     for epoch in epoch_bar:
-        tr_loss_mean, tr_loss_all = train_one_epoch(model=model, loader=dl_tr, opt=optimizer, scaler=scaler,
-                                                    device=args.device, loss_w_cls=args.loss_w_cls, loss_w_reg=args.loss_w_reg,
-                                                    reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta)
+        tr_loss_mean, tr_loss_all = train_one_epoch(model=model, loader=dl_tr, opt=optimizer, scaler=scaler, device=args.device,
+                                                    loss_w_cls=args.loss_w_cls, loss_w_reg=args.loss_w_reg, reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta,
+                                                    cls_loss=args.cls_loss, pos_weight=getattr(args, "pos_weight", None),
+                                                    loss_w_dataset=getattr(args, "loss_w_dataset", 0.0))
 
         # ---- Inference on training (or inner test of validation) ----
-        metrics, _ = inference(model, dl_va, args.device)
+        metrics, _ = inference(model, dl_va, args.device, cls_threshold=args.cls_threshold)
         eval_metric = metrics.get("eval_metric", float("nan"))
 
         if not train_only and 'few-shot' not in fold_name and np.isfinite(eval_metric): scheduler.step(eval_metric) # no scheduler when test only and fine-tunning few shots
 
         # ---- Optuna report, if callback provided ----
-        if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, eval_metric)
+        if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, combine_metrics_for_minimize(metrics))
 
         # ---- save training loss and evaluation metrics (used to early stop) ----
         append_metrics_csv(path_list['train_loss_csv'], {"epoch": epoch, **tr_loss_all}, mode='row')
@@ -140,6 +147,10 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
                     f"(no improvement > {args.es_min_delta} for {args.es_patience} epochs)."
                 )
                 break
+            
+    if train_only:
+        best_epoch = args.epochs
+        save_checkpoint(model, path_list['ckpt'])
 
     return model, best_epoch
 
@@ -177,7 +188,7 @@ def get_stratify_labels(df: pd.DataFrame, cols, seed):
     for l in labels:
         if is_continuous_numeric(df[l]):
             df = add_quantile_bins(df, l)
-            df[f"{l}_qbin"] = df[f"{l}_qbin"].cat.codes
+            df[f"{l}_qbin"] = df[f"{l}_qbin"].cat.codes.replace(-1, np.nan)
             labels[labels.index(l)] = f"{l}_qbin"
     df = random_assign_nan_labels(df, labels, seed)
     print('stratified labels:', labels)
@@ -196,7 +207,7 @@ def cv_median_best_epoch(df_train, stratify_labels_train, args) -> int:
         fold_name = f"kfold-{i}"
         tr_df = df_train.iloc[tr_idx].reset_index(drop=True)
         va_df = df_train.iloc[va_idx].reset_index(drop=True)
-        m = run_fold(tr_df, va_df, args, fold_name=fold_name)
+        m, _ = run_fold(tr_df, va_df, args, fold_name=fold_name)
         be = int(m.get("best_epoch", 0))
         if be > 0:
             best_epochs.append(be)

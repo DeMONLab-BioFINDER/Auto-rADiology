@@ -16,7 +16,7 @@ mp.set_sharing_strategy("file_system")
 
 def main(args):
     # Load the full external validation Dataset
-    tfm, dl, df = load_validation_data(args)
+    tfm, data_file, dl, df = load_validation_data(args)
     # Load Pretrained Model
     model, targets_list = load_preatrained_model(args, df)
     
@@ -25,7 +25,7 @@ def main(args):
         print("\n========== FEW-SHOT FINETUNING MODE ==========\n")
         print('set finetune epochs', args.epochs, '(orginal) to', args.finetune_epochs)
         args.epochs = args.finetune_epochs
-        df_metrics, df_results, df_ids = run_few_shots(args, df, tfm, model, targets_list)
+        df_metrics, df_results, df_ids = run_few_shots(args, df, tfm, data_file, model, targets_list)
         print("metrics:")
         print(df_metrics.describe())
         out_csv_prefix = os.path.join(args.output_path, f'External_validation_{args.dataset}_{args.data_suffix}_{args.targets}_unfreeze-{args.unfreeze_layers}_fewshot-{args.few_shot}_iter-{args.few_shot_iterations}')
@@ -33,7 +33,7 @@ def main(args):
         print("\n========== FEW-SHOT FINETUNING COMPLETE ==========\n")
     else:
         print("\n========== INFERENCE DIRECTLY ==========\n")
-        metrics, df_results = inference(model, dl, args.device)
+        metrics, df_results = inference(model, dl, args.device, cls_threshold=args.cls_threshold)
         print("metrics:", metrics)
         df_metrics = pd.DataFrame([metrics])
         out_csv_prefix = os.path.join(args.output_path, f'External_validation_{args.dataset}_{args.data_suffix}_{args.targets}_zeroshot')

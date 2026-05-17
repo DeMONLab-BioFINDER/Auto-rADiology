@@ -11,7 +11,7 @@ module load Miniforge3/24.7.1-2-hpc1-bdist
 mamba activate ai-pet
 
 # Execute your code
-python run.py --no-tune --stratifycvby site,visual_read --dataset Gothenburg --data_type tau_T1
+python run.py --no-tune --stratifycvby site,visual_read --dataset Gothenburg --data_type abeta_raw
 
 #--model_name_extra brainmask --stratifycvby visual_read,gender --model UNet3D  --samesubject_col sameID --model_name_extra Balanced_sampling_L1-10_all-scans 
 

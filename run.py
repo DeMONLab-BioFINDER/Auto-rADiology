@@ -28,7 +28,7 @@ def main(args):
     if args.tune: # default is tuninig    
         # --- Tuning ---
         print('Runing Hyperparameter tuning...')
-        splits = make_splits(df_train, stratify_labels_train, args.n_splits, args.seed)
+        splits = make_splits(df_train, stratify_labels_train, args.n_splits, args.seed, 'Hypertune Inner CV')
         # to save the splits
         study  = create_study_from_args(args)
         study  = run_optuna(study, objective, args, df_train, splits, args.model)
@@ -63,7 +63,7 @@ def main(args):
     test_folder = os.path.join(args.output_path, 'validation', args.dataset)
     os.makedirs(test_folder, exist_ok=True)
     df_result_te.to_csv(f'{test_folder}/Test_{args.dataset}_results.csv', index=False)
-    pd.DataFrame([metrics_te]).to_csv(f'{test_folder}Test_{args.dataset}_metrics.csv', index=False)
+    pd.DataFrame([metrics_te]).to_csv(f'{test_folder}/Test_{args.dataset}_metrics.csv', index=False)
     
     print('DONE!')
 

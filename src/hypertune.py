@@ -1,5 +1,6 @@
 # src/hypertune.py
 import os
+import json
 import optuna
 from copy import deepcopy
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ def objective(trial, base_args, df_clean, splits, model_name):
     # --- hyperparams to be tuned ---
     common = suggest_common(trial, base_args)
     model_name, model_kwargs_json = suggest_model(trial, base_args, common, model_name)
+    trial.set_user_attr("model_kwargs", model_kwargs_json) # ????
 
     # proxy settings (shorter training)
     proxy_epochs = getattr(base_args, "proxy_epochs", 8)
@@ -30,6 +32,15 @@ def objective(trial, base_args, df_clean, splits, model_name):
         weight_decay=common["weight_decay"],
         batch_size=common["batch_size"] if model_name != "UNet3D" else min(common["batch_size"], 4), # UNet often needs smaller batch sizes
         dropout=common["dropout"],            # in case your code reads it elsewhere
+        # preprocessing
+        spacing=common["spacing"],
+        intensity_norm=common["intensity_norm"],
+        # losses
+        cls_loss=common.get("cls_loss", getattr(base_args, "cls_loss", "bce")),
+        cls_threshold=common.get("cls_threshold", getattr(base_args, "cls_threshold", 0.5)),
+        reg_loss=common.get("reg_loss", getattr(base_args, "reg_loss", "mse")),
+        loss_w_dataset=common.get("loss_w_dataset", getattr(base_args, "loss_w_dataset", 0.0)),
+
         epochs=min(base_args.epochs, proxy_epochs),
         output_path=os.path.join(base_args.output_path, f"optuna_trial_{trial.number}"),
         es_patience=getattr(base_args, "es_patience", 10),
@@ -49,12 +60,6 @@ def objective(trial, base_args, df_clean, splits, model_name):
         val = combine_metrics_for_minimize(m) # not logging r (df_results_te) because too much for hypertune
         scores.append(val)
 
-        # pruning support (report intermediate)
-        trial.report(sum(scores)/len(scores), step=reporter.step)
-        if trial.should_prune():
-            raise optuna.TrialPruned()
-    # plot and log
-    #if trial.number % 5 == 0:
     try:
         optuna_plot(targs.output_path, trial.study)
     except Exception: # never break the trial because of plotting I/O
@@ -67,9 +72,9 @@ class PruningReporter:
         self.trial = trial
         self.step = 0
 
-    def __call__(self, fold_idx: int, epoch: int, val_loss: float):
+    def __call__(self, fold_idx: int, epoch: int, objective_value: float):
         self.step += 1
-        self.trial.report(val_loss, step=self.step)
+        self.trial.report(objective_value, step=self.step)
         if self.trial.should_prune():
             raise optuna.TrialPruned()
 
@@ -118,14 +123,16 @@ def get_best_args(args, study, out_subdir: str = "best_params") -> SimpleNamespa
     best = deepcopy(vars(args))
     best.update(study.best_params)
 
-    # widths may come back as tuple; keep consistency with your code
-    if "widths" in best and isinstance(best["widths"], tuple):
-        best["widths"] = list(best["widths"])
-
     best_args = SimpleNamespace(**best)
+
+    # recover model kwargs from user attrs
+    if "model_kwargs" in study.best_trial.user_attrs:
+        best_args.model_kwargs = study.best_trial.user_attrs["model_kwargs"]
+
     best_args.epochs = args.epochs  # full epochs for retrain
     best_args.output_path = os.path.join(args.output_path, out_subdir)
     os.makedirs(best_args.output_path, exist_ok=True)
+
     return best_args
 
 
