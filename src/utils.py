@@ -77,7 +77,8 @@ def load_best_checkpoint(model: torch.nn.Module, ckpt_path: str, device: torch.d
             sd = torch.load(ckpt_path, map_location=device)
         print(f"Loading checkpoint: {ckpt_path}")
         state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
-        model.load_state_dict(state_dict, strict=False)
+        load_model_state_checked(model, sd, checkpoint_path=ckpt_path)
+        
     return model
 
 
@@ -336,6 +337,17 @@ def build_model_from_args(args, device=None, n_classes: int | None = None, num_d
 
     print(model)
     return model
+
+def load_model_state_checked(model, checkpoint_or_state, *, checkpoint_path="<memory>", allowed_prefixes=("dataset_head.",), strict=False):
+    state_dict = checkpoint_or_state.get("model", checkpoint_or_state) if isinstance(checkpoint_or_state, dict) else checkpoint_or_state
+    missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+    allowed_missing = [k for k in missing if any(k.startswith(prefix) for prefix in allowed_prefixes)]
+    allowed_unexpected = [k for k in unexpected if any(k.startswith(prefix) for prefix in allowed_prefixes)]
+    bad_missing = sorted(set(missing) - set(allowed_missing))
+    bad_unexpected = sorted(set(unexpected) - set(allowed_unexpected))
+    if bad_missing or bad_unexpected:
+        raise RuntimeError(f"Checkpoint/model mismatch when loading {checkpoint_path}. Missing keys: {bad_missing}. Unexpected keys: {bad_unexpected}.")
+    return missing, unexpected
 
 
 def plot_metrics_from_csv(csv_path: str, out_png: str):

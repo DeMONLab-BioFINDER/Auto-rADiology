@@ -63,7 +63,7 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
     # Determine classification/regression
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     #n_classes = int(train_df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
-    num_domains = int(train_df["site"].dropna().nunique()) if getattr(args, "loss_w_dataset", 0.0) > 0 and "site" in train_df.columns else 0
+    num_domains = int(train_df["dataset"].dropna().nunique()) if getattr(args, "loss_w_dataset", 0.0) > 0 and "dataset" in train_df.columns else 0
     if targets_list == ["visual_read"]:
         n_classes = 1 if args.cls_loss in {"bce", "weighted_bce"} else int(train_df["visual_read"].dropna().nunique())
     else:

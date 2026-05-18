@@ -331,7 +331,7 @@ class PETDataset(Dataset):
                     t_no_load = Compose(self.transforms.transforms[1:])  # remove LoadImage
                     x = t_no_load(load_img)
                 else:
-                    path = Path(self.data_file) / "data_{fid}.pt".format(fid)
+                    path = Path(self.data_file) / "data_{fid}.pt"
                     x = torch.load(path, map_location="cpu", weights_only=True)
 
         if isinstance(x, MetaTensor): x = x.as_tensor()
@@ -371,7 +371,7 @@ class PETDataset(Dataset):
         
         extra_input = torch.cat(extras) if extras else torch.tensor([float("nan")], dtype=torch.float32)
 
-        return x, y_cls, y_reg, dataset_target, sample_weights, extra_input, int(row["ID"])
+        return x, y_cls, y_reg, dataset_target, sample_weights, extra_input, row["ID"]
     
     def global_feats_from_x(self, x, hi_thr=0.7, eps=1e-6):
         """

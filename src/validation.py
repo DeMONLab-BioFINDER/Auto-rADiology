@@ -4,6 +4,7 @@ ignore_warnings()
 
 import os
 import copy
+import json
 import torch
 import pickle
 import numpy as np
@@ -15,7 +16,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from src.data import build_master_table, get_transforms, get_loader
 from src.train import inference
 from src.cv import train_model
-from src.utils import build_model_from_args, load_best_checkpoint, add_quantile_bins
+from src.utils import build_model_from_args, load_model_state_checked, load_best_checkpoint, add_quantile_bins
 
 import torch.multiprocessing as mp
 os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
@@ -179,9 +180,21 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
     else:
         n_classes = None
 
+    best_args_json = os.path.join(args.best_model_folder, "best_params", "best_args.json")
+    if os.path.exists(best_args_json):
+        with open(best_args_json, "r") as f:
+            saved_args = json.load(f)
+        for key in ["model", "model_kwargs", "widths", "in_channels", "input_cl", "extra_global_feats", "lambda_grl"]:
+            if key in saved_args:
+                setattr(args, key, saved_args[key])
+        print(f"Loaded tuned model configuration from {best_args_json}")
+    else:
+        print(f"! No best_args.json found at {best_args_json}; using CLI args to rebuild model architecture.")
+
     model = build_model_from_args(args, device=args.device, n_classes=n_classes)
 
-    ckpts = [os.path.join(args.best_model_folder, "nestedcv-outer-test/checkpoints/nestedcv-outer-test_best.pt"),
+    ckpts = [os.path.join(args.best_model_folder, "best_params/nestedcv-outer-test/checkpoints/nestedcv-outer-test_best.pt"),
+             os.path.join(args.best_model_folder, "nestedcv-outer-test/checkpoints/nestedcv-outer-test_best.pt"),
              os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")]
     ckpt_found = None
     for ckpt in ckpts:
@@ -192,8 +205,7 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
 
     print(f"Loading pretrained model: {ckpt_found}")
     sd = torch.load(ckpt_found, map_location=args.device, weights_only=True)
-    state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
-    model.load_state_dict(state_dict, strict=False)
+    load_model_state_checked(model, sd, checkpoint_path=ckpt_found)
 
     return model, targets_list
 

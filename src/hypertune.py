@@ -1,5 +1,6 @@
 # src/hypertune.py
 import os
+import json
 import optuna
 import numpy as np
 from copy import deepcopy
@@ -141,6 +142,9 @@ def get_best_args(args, study, out_subdir: str = "best_params") -> SimpleNamespa
     best_args.epochs = args.epochs  # full epochs for retrain
     best_args.output_path = os.path.join(args.output_path, out_subdir)
     os.makedirs(best_args.output_path, exist_ok=True)
+
+    with open(os.path.join(best_args.output_path, "best_args.json"), "w") as f:
+        json.dump(vars(best_args), f, indent=2, default=str)
 
     return best_args
 
