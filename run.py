@@ -7,7 +7,7 @@ import pandas as pd
 from src.params import parse_arguments
 from src.utils import set_seed, make_splits, hold_out_set, save_train_test_subjects, clone_args
 from src.data import build_master_table
-from src.cv import get_stratify_labels, run_fold, cv_median_best_epoch
+from src.cv import get_stratify_labels, run_fold
 from src.hypertune import create_study_from_args, run_optuna, objective, print_best, get_best_args
 
 
@@ -36,7 +36,7 @@ def main(args):
 
         # Retrain with best params (full epochs) on df_train and evaluate ONCE on df_test
         best_args = get_best_args(args, study, out_subdir="best_params")
-        E_final = cv_median_best_epoch(df_train, stratify_labels_train, best_args)
+        E_final = int(study.best_trial.user_attrs.get("median_best_epoch", best_args.epochs))
         print(f"Final retrain epochs (median best_epoch across folds): {E_final}")
         best_args_fixed = clone_args(best_args, epochs=E_final)
         print("\nRetraining with best params on full training set…")

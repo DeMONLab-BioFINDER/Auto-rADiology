@@ -17,7 +17,7 @@ from src.utils import seed_worker
 # ------------------------------
 # Master table
 # ------------------------------
-def build_master_table(input_path: str, preproce_method: str, targets: List[str], dataset: str, data_type: str, modality: str = "abeta") -> pd.DataFrame:
+def build_master_table(input_path: str, preproce_method: str, targets: List[str], datasets: str, data_type: str, modality: str = "abeta") -> pd.DataFrame:
     """
     Build the table required by the training code, given the custom folder layout.
     Normal mode: discover images + join demographics.
@@ -25,24 +25,28 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
                  load demo.csv only (no disk scans), and return that table.
     In cached mode, adds 'ID' to preserve the order matching data.pt.
     """
+    targets_list = [t.strip() for t in targets.split(",") if t.strip()]
+    if len(targets_list) != 1 or targets_list[0] not in {"visual_read", "CL"}: # the code now only works for single head regression/classification
+        raise ValueError("Use exactly one target: 'visual_read' for classification OR 'CL' for regression.")
+
     # Detect cached mode
     use_cache = (not preproce_method) or (str(preproce_method).strip() == "")
     if use_cache:
         csv = Path(input_path) / "demo.csv"
         if not csv.exists():
-            dataset_name = dataset.replace(",", "_")
+            dataset_name = datasets.replace(",", "-")
             csv = Path(input_path) / f"demo_{dataset_name}_{data_type}.csv"
         df = pd.read_csv(csv, index_col=0) # Must have 'ID' column from 0 to len(df)
         print(f"[cache] Loaded {csv} with {len(df)} rows (no filesystem scan).")
     else:
-        pets = find_pet_files(input_path=input_path, dataset=dataset, modality=modality)
+        pets = find_pet_files(input_path=input_path, dataset=datasets, modality=modality)
         if pets.empty:
-            raise FileNotFoundError(f"No NIfTI files found under '{input_path}' with preproc suffix  '{preproce_method}' for dataset '{dataset}'.")
+            raise FileNotFoundError(f"No NIfTI files found under '{input_path}' with preproc suffix  '{preproce_method}' for dataset '{datasets}'.")
         else:
             print(f'Found {pets.shape[0]} scans')
             print(pets.columns, pets.head(3))
 
-        labels = load_participants_labels(input_path, dataset=dataset)
+        labels = load_participants_labels(input_path, datasets=datasets)
         labels["ID"] = labels["ID"].astype(str).str.strip()
         #df = pd.merge(pets, labels, on="ID", how="inner")
         has_date = "ScanDate" in labels.columns
@@ -58,7 +62,6 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
         df = df.sort_values(keys + [c for c in ["pet_path"] if c in df.columns]).reset_index(drop=True)
 
     # Only scans with targets value
-    targets_list = [t.strip() for t in targets.split(",") if t.strip()]
     #df = df[~df[targets_list].isna().values].reset_index(drop=True)
     df = df.dropna(subset=targets_list).reset_index(drop=True)
     print(f'Found {df.shape[0]} scans with demographics for {targets}')
@@ -66,7 +69,7 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
     return df
 
 
-def find_pet_files(input_path: str,  dataset: str, modality="abeta") -> pd.DataFrame:
+def find_pet_files(input_path: str,  datasets: str, modality="abeta") -> pd.DataFrame:
     """
     Find amyloid PET files in BIDS format:
 
@@ -80,34 +83,38 @@ def find_pet_files(input_path: str,  dataset: str, modality="abeta") -> pd.DataF
                "tau": ["ftp", "mk6240", "pi"]}
     
     ipath = Path(input_path)
+    datasets_list = [d.strip() for d in datasets.split(",") if d.strip()]
     rows = []
 
     allowed_tracers = TRACERS.get(modality, set())
+    if allowed_tracers is None: raise ValueError(f"Unknown modality '{modality}'. Available: {list(TRACERS)}")
+    
+    pattern = "raw/sub-*/ses-*/pet/*trc-*.nii*" ### find raw images only
 
-    pattern = "sub-*/ses-*/pet/*trc-*.nii*"
-    print(f"search {ipath / pattern}")
+    for dataset in datasets_list:
+        print(f"search {ipath / dataset / pattern}")
 
-    for nii in ipath.glob(pattern):
-        try:
-            sub_dir = nii.parents[2].name   # sub-xxxx
-            ses_dir = nii.parents[1].name   # ses-xxx
-            fname = nii.name.lower()
+        for nii in (ipath / dataset).glob(pattern):
+            try:
+                sub_dir = nii.parents[2].name   # sub-xxxx
+                ses_dir = nii.parents[1].name   # ses-xxx
+                fname = nii.name.lower()
 
-            sid = sub_dir.replace("sub-", "")
-            ses = int(ses_dir.replace("ses-", ""))
+                sid = sub_dir.replace("sub-", "")
+                ses = int(ses_dir.replace("ses-", ""))
 
-            tracer = None
-            for trc in allowed_tracers:
-                if f"trc-{trc}" in fname:
-                    tracer = trc
-                    break
-            if tracer is None: continue
+                tracer = None
+                for trc in allowed_tracers:
+                    if f"trc-{trc}" in fname:
+                        tracer = trc
+                        break
+                if tracer is None: continue
 
-        except Exception:
-            continue
+            except Exception:
+                continue
 
-        rows.append({"dataset": dataset, "ID": sid, "ses": ses,
-                     "tracer": tracer, "pet_path": str(nii), "imagefile": nii.name})
+            rows.append({"dataset": dataset, "ID": sid, "ses": ses,
+                        "tracer": tracer, "pet_path": str(nii), "imagefile": nii.name})
 
     df = pd.DataFrame(rows, columns=["dataset", "ID", "ses", "tracer", "pet_path", "imagefile"])
 
@@ -120,22 +127,23 @@ def find_pet_files(input_path: str,  dataset: str, modality="abeta") -> pd.DataF
     return df
 
 
-def load_participants_labels(input_path: str, dataset: Optional[str] = None) -> pd.DataFrame: #cache: Optional[bool] = False
+def load_participants_labels(input_path: str, datasets: Optional[str] = None) -> pd.DataFrame: #cache: Optional[bool] = False
     """
     Load demographics.csv from input_path and return:
-    ID, site, visual_read, CL, age, gender
+    ID, dataset, visual_read, CL, age, gender
     """
     csv = Path(input_path) / "demographics.csv"
     if not csv.exists(): # try alternative path
         proj_path = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-        csv = Path(os.path.join(proj_path, "data")) / f"demographics_{dataset.replace(",", "_")}.csv"
+        dataset_name = datasets.replace(",", "-")
+        csv = Path(os.path.join(proj_path, "data")) / f"demographics_{dataset_name}.csv"
         if not csv.exists():
-            raise FileNotFoundError(f"Missing {csv}. Provide columns: ID, site, visual_read, CL, age, gender, ...")
+            raise FileNotFoundError(f"Missing {csv}. Provide columns: ID, dataset, visual_read, CL, age, gender, ...")
     df = pd.read_csv(csv, index_col=0)
     
     print(f'loaded participants from {csv}:', df.shape, df.columns, df.head(3))
     # Ensure required columns are present in the dataframe.
-    required = {"ID", "site", "visual_read", "CL", "age", "gender"}
+    required = {"ID", "dataset", "visual_read", "CL", "age", "gender"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns: {', '.join(missing)}")
@@ -178,7 +186,11 @@ def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=Fals
     g = torch.Generator()
     g.manual_seed(args.seed)
 
-    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, sample_weights=args.sample_weights, extra_global_feats=args.extra_global_feats, augment=augment)
+    SAMPLE_WEIGHT_LABELS = ["expert consensus w CL", "expert consensus", "expert", "non-expert"]
+    sample_weight_map = dict(zip(SAMPLE_WEIGHT_LABELS, args.sample_weight_scheme))
+
+    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, sample_weights=args.sample_weights, 
+                         sample_weight_map=sample_weight_map, extra_global_feats=args.extra_global_feats, augment=augment)
 
     if "dataset" in df.columns and train_test=='train': #### domain-balanced sampling
         print('------ Balanced sampling ------')
@@ -261,59 +273,66 @@ class PETDataset(Dataset):
       - table columns: ["ID", "pet_path", "visual_read", "CL", ...]
       - transforms: a MONAI Compose returning a (1, D, H, W) Tensor/MetaTensor (float-like)
     """
-    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None, input_cl=None, sample_weights=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
+    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None, input_cl=None, sample_weights=None, sample_weight_map=None,
+                 extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
         self.table = table.reset_index(drop=True)
         self.transforms = transforms
         self.data_file = data_file
         self.targets = [t.strip() for t in targets.split(",") if t.strip()]
         self.input_cl = input_cl
         self.sample_weights = sample_weights
+        self.sample_weight_map = sample_weight_map or {}
         self.extra_global_feats = ([f.strip() for f in extra_global_feats.split(",")]
                                    if extra_global_feats is not None else [])
         self.augment = augment
         self.dtype = dtype
+        self.index_col = "index"
 
-        self.site_to_idx = {s: i for i, s in enumerate(sorted(self.table["site"].dropna().unique()))} if "site" in self.table.columns else {}
+        self.dataset_idx = {s: i for i, s in enumerate(sorted(self.table["dataset"].dropna().unique()))} if "dataset" in self.table.columns else {}
         if self.sample_weights is not None and self.sample_weights not in self.table.columns: raise ValueError(f"sample_weights column '{self.sample_weights}' not found.")
+        
+        if self.data_file is not None and self.index_col not in self.table.columns: raise ValueError(f"data index column '{self.index_col}' not found in dataframe.")
 
     def __len__(self):
         return len(self.table)
 
     def __getitem__(self, idx):
         row = self.table.iloc[idx]
+        fid = int(row[self.index_col]) if self.data_file is not None else None
 
         if self.data_file is None and isinstance(self.transforms, Compose): # expect MAINAI Compose class
             # MONAI pipeline -> Tensor/MetaTensor with shape [C=1, D, H, W]
             path = row["pet_path"]
             x = self.transforms(path)
-        elif torch.is_tensor(self.data_file): # torch tensor with shape  [S, D, H, W]
-            fid = int(row["ID"])
-            x = self.data_file[fid]
-            x = x.unsqueeze(0) # ➜ becomes [1, D, H, W]
-        elif isinstance(self.data_file, (str, bytes, os.PathLike)):
-            fid = str(int(row["ID"]))
-            if isinstance(self.transforms, Compose): 
-                # Load the preprocessed image from the corresponding pickle file (assuming it's stored in batches of 100)
-                with open(Path(self.data_file) / f"data_batch_000.pkl", "rb") as f: data_0 = pickle.load(f)
-                batch_id = int(fid) // len(data_0)
-                idx = int(fid) % len(data_0)
+        else:
+            fid = int(row[self.index_col])
 
-                pkl_path = Path(self.data_file) / f"data_batch_{batch_id:03d}.pkl"
-                with open(pkl_path, "rb") as f: data = pickle.load(f)
-                sample = data[idx]
+            if torch.is_tensor(self.data_file): # torch tensor with shape  [S, D, H, W]
+                x = self.data_file[fid]
+                x = x.unsqueeze(0) # ➜ becomes [1, D, H, W]
+            elif isinstance(self.data_file, (str, bytes, os.PathLike)):
+                if isinstance(self.transforms, Compose): 
+                    # Load the preprocessed image from the corresponding pickle file (assuming it's stored in batches of 100)
+                    with open(Path(self.data_file) / f"batch_000.pkl", "rb") as f: data_0 = pickle.load(f)
+                    batch_id = int(fid) // len(data_0)
+                    local_idx = int(fid) % len(data_0)
 
-                # for strange warped images, put all nan and <0 values to 0
-                sample["image"] = np.nan_to_num(sample["image"], nan=0.0, posinf=0.0, neginf=0.0)
-                sample["image"] = np.clip(sample["image"], 0, None)
+                    pkl_path = Path(self.data_file) / f"batch_{batch_id:03d}.pkl"
+                    with open(pkl_path, "rb") as f: data = pickle.load(f)
+                    
+                    sample = data[local_idx]
 
-                # Apply the same transforms except loading (e.g., cropping, resizing, smoothing) to the loaded image
-                load_img = MetaTensor(torch.as_tensor(sample["image"]), meta=sample["meta"])
-                t_no_load = Compose(self.transforms.transforms[1:])  # remove LoadImage
-                x = t_no_load(load_img)
-            else:
-                path = row["pet_path"]
-                path = Path(self.data_file) / "data" / "data_{}.pt".format(fid)
-                x = torch.load(path, map_location="cpu", weights_only=True)
+                    # for strange warped images, put all nan and <0 values to 0
+                    sample["image"] = np.nan_to_num(sample["image"], nan=0.0, posinf=0.0, neginf=0.0)
+                    sample["image"] = np.clip(sample["image"], 0, None)
+
+                    # Apply the same transforms except loading (e.g., cropping, resizing, smoothing) to the loaded image
+                    load_img = MetaTensor(torch.as_tensor(sample["image"]), meta=sample["meta"])
+                    t_no_load = Compose(self.transforms.transforms[1:])  # remove LoadImage
+                    x = t_no_load(load_img)
+                else:
+                    path = Path(self.data_file) / "data_{fid}.pt".format(fid)
+                    x = torch.load(path, map_location="cpu", weights_only=True)
 
         if isinstance(x, MetaTensor): x = x.as_tensor()
         x = x.to(dtype=self.dtype)
@@ -334,14 +353,10 @@ class PETDataset(Dataset):
             y_reg = torch.tensor([row["CL"]], dtype=torch.float32)
 
         # dataset
-        dataset_target = torch.tensor(self.site_to_idx[row["site"]], dtype=torch.long) if "site" in self.table.columns and pd.notna(row["site"]) else torch.tensor(-1, dtype=torch.long)
+        dataset_target = torch.tensor(self.dataset_idx[row["dataset"]], dtype=torch.long) if "dataset" in self.table.columns and pd.notna(row["dataset"]) else torch.tensor(-1, dtype=torch.long)
 
         # sample weight
-        if self.sample_weights is not None and pd.notna(row[self.sample_weights]):
-            sample_weights = float(row[self.sample_weights])
-        else:
-            sample_weights = 1.0
-        sample_weights = torch.tensor(sample_weights, dtype=torch.float32)
+        sample_weights = torch.tensor(self.get_sample_weight(row), dtype=torch.float32)
 
         # extra inputs
         extras = []
@@ -384,3 +399,14 @@ class PETDataset(Dataset):
                 raise ValueError(f"Unknown global feature: {name}")
 
         return torch.stack(feats)
+    
+    def get_sample_weight(self, row):
+        if self.sample_weights is None or pd.isna(row[self.sample_weights]):
+            return 1.0
+        v = row[self.sample_weights]
+        if not isinstance(v, str):
+            return float(v)
+        key = v.strip()
+        if key not in self.sample_weight_map:
+            raise ValueError(f"Unknown sample weight category: {key}")
+        return float(self.sample_weight_map[key])

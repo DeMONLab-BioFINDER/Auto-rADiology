@@ -1,7 +1,7 @@
 # src/hypertune.py
 import os
-import json
 import optuna
+import numpy as np
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -20,8 +20,9 @@ def objective(trial, base_args, df_clean, splits, model_name):
     trial.set_user_attr("model_kwargs", model_kwargs_json) # ????
 
     # proxy settings (shorter training)
-    proxy_epochs = getattr(base_args, "proxy_epochs", 8)
-    proxy_folds  = getattr(base_args, "proxy_folds", len(splits))
+    proxy_epochs = getattr(base_args, "proxy_epochs", None)
+    proxy_epochs = base_args.epochs if proxy_epochs is None else proxy_epochs
+    proxy_folds = getattr(base_args, "proxy_folds", len(splits))
 
     # patch args for this trial
     targs = clone_args(
@@ -40,6 +41,7 @@ def objective(trial, base_args, df_clean, splits, model_name):
         cls_threshold=common.get("cls_threshold", getattr(base_args, "cls_threshold", 0.5)),
         reg_loss=common.get("reg_loss", getattr(base_args, "reg_loss", "mse")),
         loss_w_dataset=common.get("loss_w_dataset", getattr(base_args, "loss_w_dataset", 0.0)),
+        sample_weight_scheme=common.get("sample_weight_scheme", getattr(base_args, "sample_weight_scheme", [1.0, 1.0, 1.0, 1.0])),
 
         epochs=min(base_args.epochs, proxy_epochs),
         output_path=os.path.join(base_args.output_path, f"optuna_trial_{trial.number}"),
@@ -48,7 +50,7 @@ def objective(trial, base_args, df_clean, splits, model_name):
     )
 
     # run proxy folds
-    scores = []
+    scores, best_epochs = [], []
     reporter = PruningReporter(trial)  # <— stateful callback
     for i, (tr_idx, va_idx) in enumerate(splits[:proxy_folds], start=1):
         fold_name = f"hypertune-trial{trial.number}-k{i}"
@@ -59,6 +61,11 @@ def objective(trial, base_args, df_clean, splits, model_name):
         m, r = run_fold(train_df, val_df, targs, fold_name=fold_name, optuna_report=reporter)
         val = combine_metrics_for_minimize(m) # not logging r (df_results_te) because too much for hypertune
         scores.append(val)
+
+        be = int(m.get("best_epoch", 0))
+        if be > 0: best_epochs.append(be)
+    trial.set_user_attr("best_epochs", best_epochs)
+    trial.set_user_attr("median_best_epoch", int(np.median(best_epochs)) if best_epochs else int(targs.epochs))
 
     try:
         optuna_plot(targs.output_path, trial.study)
@@ -128,6 +135,8 @@ def get_best_args(args, study, out_subdir: str = "best_params") -> SimpleNamespa
     # recover model kwargs from user attrs
     if "model_kwargs" in study.best_trial.user_attrs:
         best_args.model_kwargs = study.best_trial.user_attrs["model_kwargs"]
+    if isinstance(getattr(best_args, "sample_weight_scheme", None), str):
+        best_args.sample_weight_scheme = [float(x.strip()) for x in best_args.sample_weight_scheme.split(",")]
 
     best_args.epochs = args.epochs  # full epochs for retrain
     best_args.output_path = os.path.join(args.output_path, out_subdir)

@@ -25,7 +25,7 @@ def main(args):
     print('df_select:',df_select)
     tfm = None
     data_file = Path(args.input_path) / 'data' / args.data_type
-    dl_va = get_loader(df_select, tfm, data_file, args, batch_size=1, augment=False, shuffle=False, train_test='test')
+    dl_va = get_loader(df_select, tfm, data_file, args, batch_size=1, augment=False, shuffle=False, train_test="test")
     
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     n_classes = 1 if 'visual_read' in targets_list and args.cls_loss in {"bce", "weighted_bce"} else None

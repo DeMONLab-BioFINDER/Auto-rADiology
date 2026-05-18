@@ -112,15 +112,15 @@ def load_validation_data(args):
         tuple: A tuple containing the transformations and the validation dataloader. 
     Notes
     -----
-    - For 'ADNI' dataset, NIfTI files are loaded and smoothed if voxel sizes are provided.
-    - For 'IDEAS' dataset, torch tensors are loaded directly from the specified input path. 
-    
+    - when data_suffix exists, NIfTI files are loaded and smoothed if voxel sizes are provided.
+    - when not, torch tensors are loaded directly from the specified input path. 
+    !!! remains cleaning !!!
     """
     data_file = None
     tfm = get_transforms(target_shape=tuple(args.image_shape), add_spacing=args.spacing, pixdim=args.pixdim,
                                      intensity_norm=args.intensity_norm, pct_lo=args.intensity_pct[0], pct_hi=args.intensity_pct[1])
-    if 'ADNI' in args.dataset: # Berkeley server, load NIfTI files
-        print('Validate on ADNI test set...')
+    if args.data_suffix: # Berkeley server, load NIfTI files
+        print(f'Validate on {args.dataset} - {args.data_suffix} test set...')
         test_set = os.path.join(args.proj_path, "data", f'{args.dataset}_found_scans_{args.data_suffix}_{args.targets}.csv')
         if os.path.exists(test_set):
             print('loading validation dataframe')
@@ -129,27 +129,26 @@ def load_validation_data(args):
             print('finding scans from folder')
             df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
             df.to_csv(os.path.join(args.proj_path, "data", f'{args.dataset}_found_scans_{args.data_suffix}_{args.targets}.csv'))
-        #tfm = get_transforms(tuple(args.image_shape), smooth_sigma_vox = sigma_vox)
-    elif 'IDEAS' in args.dataset: # Berzelius, load torch tensors
-        print('Validate on IDEAS test set...')
-        test_set = os.path.join(args.best_model_folder,'Hold-out_testing-set.csv')
-        print(test_set)
-        df = pd.read_csv(test_set, index_col=0)
-        data_file = Path(args.input_path) / 'data' / args.data_type
-        tfm = None
-    elif 'A4' in args.dataset: # Berzelius, load torch tensors
-        print('Validate on A4 dataset...')
-        test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}.csv')
-        print(test_set)
-        df = pd.read_csv(test_set, index_col=0)
-        data_file = Path(args.input_path) / 'data' / args.data_type
-        tfm = None
-    elif 'Gothenburg' in args.dataset:
-        print('Validate on Gothenbug: A05C and AVID dataset...')
+    else: # should be torch tensor images, without any preprocessing
+        print(f'Validate on {args.dataset} ...')
         test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}_{args.data_type}_validation.csv')
         print(test_set)
         df = pd.read_csv(test_set, index_col=0)
         data_file = Path(args.input_path) / 'data' / args.data_type
+    #elif 'IDEAS' in args.dataset: # Berzelius, load torch tensors
+    #    print('Validate on IDEAS test set...')
+    #    test_set = os.path.join(args.best_model_folder,'Hold-out_testing-set.csv')
+    #    print(test_set)
+    #    df = pd.read_csv(test_set, index_col=0)
+    #    data_file = Path(args.input_path) / 'data' / args.data_type
+    #    tfm = None
+    #elif 'A4' in args.dataset: # Berzelius, load torch tensors
+    #    print('Validate on A4 dataset...')
+    #    test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}.csv')
+    #    print(test_set)
+    #    df = pd.read_csv(test_set, index_col=0)
+    #    data_file = Path(args.input_path) / 'data' / args.data_type
+    #    tfm = None
     
     # remove nan
     print(df)

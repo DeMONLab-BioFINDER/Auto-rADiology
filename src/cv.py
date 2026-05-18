@@ -11,7 +11,7 @@ from src.early_stopping import EarlyStopper
 from src.train import train_one_epoch, inference
 from src.vis import run_visualization
 from src.utils import (append_metrics_csv, save_checkpoint, build_model_from_args, combine_metrics_for_minimize,
-                       load_best_checkpoint, plot_metrics_from_csv, save_train_test_subjects,
+                       load_best_checkpoint, plot_metrics_from_csv, save_train_test_subjects, make_splits,
                        random_assign_nan_labels, add_quantile_bins, is_continuous_numeric)
 
 
@@ -203,10 +203,10 @@ def get_stratify_labels(df: pd.DataFrame, cols, seed):
 
 def cv_median_best_epoch(df_train, stratify_labels_train, args) -> int:
     """Run CV on df_train to collect best_epoch per fold; return median."""
-    skf = StratifiedKFold(n_splits=args.n_splits, shuffle=True, random_state=args.seed)
+    splits = make_splits(df_train, stratify_labels_train, args.n_splits, args.seed, "Median best epoch CV")
+    
     best_epochs = []
-
-    for i, (tr_idx, va_idx) in enumerate(skf.split(df_train, stratify_labels_train), start=1):
+    for i, (tr_idx, va_idx) in enumerate(splits, start=1):
         fold_name = f"kfold-{i}"
         tr_df = df_train.iloc[tr_idx].reset_index(drop=True)
         va_df = df_train.iloc[va_idx].reset_index(drop=True)

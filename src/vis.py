@@ -104,9 +104,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
 
 def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_mode="trilinear"):
     model.eval()
-    
-    def fwd(x_):
-        return model(x_, extra=extra)
+    wrapped = ExtraWrapper(model, extra)
     
     # pick last Conv3d
     if target_layer is None:
@@ -134,21 +132,51 @@ def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_
 def occlusion_vis_fn(model, x, extra, **kwargs):
     model.eval()
 
-    def fwd(x_):
-        return model(x_, extra=extra)
-
+    wrapped = ExtraWrapper(model, extra)
     occ = OcclusionSensitivity(nn_module=model, mask_size=kwargs.get("mask_size", (8,8,8)), #lambda x_: model(x_, extra=extra)
                                n_batch=kwargs.get("n_batch", 16), overlap=kwargs.get("overlap", 0.75),
-                               activate=kwargs.get("activate", True),)
-    occ_map, _ = occ(x, extra=extra)  # [1,1,D,H,W,1] # calls fwd(x) 
+                               activate=kwargs.get("activate", False),)
+    
+    out = wrapped(x)
+    if hasattr(out, "get"):
+        out = out.get("logit", out.get("cent", out.get("reg", None)))
+    if isinstance(out, (tuple, list)):
+        out = out[0]
+    if out is None:
+        raise ValueError("Cannot infer model output for occlusion visualization.")
+    
+    out = out.detach()
+    occ_map, _ = occ(x)  # [1,1,D,H,W,1] # calls fwd(x) 
+    
     heat = (-occ_map).float().squeeze().cpu().numpy()
 
-    pred_class = model(x, extra=extra).argmax(dim=1).item()
-    heat_class = heat[pred_class] # Why did the model predict this class?
-    heat_pos_vs_neg = heat[1] - heat[0]
+    if out.ndim == 2 and out.shape[1] > 1:
+        pred_class = int(out.argmax(dim=1).item())
+        heat_class = heat[pred_class] if heat.ndim == 4 else heat
+        if out.shape[1] == 2 and heat.ndim == 4:
+            heat_pos_vs_neg = heat[1] - heat[0]
+        else:
+            heat_pos_vs_neg = None
+        return heat_class, heat_pos_vs_neg
 
-    return heat_class, heat_pos_vs_neg
+    if out.ndim == 2 and out.shape[1] == 1:
+        heat_scalar = heat[0] if heat.ndim == 4 else heat
+        return heat_scalar, None
 
+    if out.ndim == 1: return heat, None
+
+    raise ValueError(f"Unsupported model output shape for occlusion: {tuple(out.shape)}")
+
+
+class ExtraWrapper(nn.Module):
+    def __init__(self, model, extra):
+        super().__init__()
+        self.model = model
+        self.extra = extra
+
+    def forward(self, x):
+        return self.model(x, extra=self.extra)
+    
 
 def normalize_cam(cam, mode="zscore", eps=1e-6):
     mask = cam > 0

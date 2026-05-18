@@ -18,7 +18,7 @@ def parse_arguments():
 
     # Input paths and data
     parser.add_argument("--dataset", type=str, default="IDEAS,ADNI", help="Dataset name, ADNI, IDEAS, or ADNI_CL (suffix to load demographics .csv)")
-    parser.add_argument("--data_type", type=str, default="tau_T1MNI", help="Type of data to process")
+    parser.add_argument("--data_type", type=str, default="abeta_raw", help="Type of data to process")
     parser.add_argument("--input_path", type=str, default='', help='images save in BIDS format. If not input, will set as <proj_path>/data/<data_type>') # Berkeley server ADNI data path: /home/jagust/xnat/squid/adni/
     parser.add_argument("--data_suffix", type=str, default='', help='images finding pattern **/*<suffix>/*/*/*.nii* for find_pet_images function, specifically to IDEAS data. e.g._Inten_Norm or SCANS (folder name of Berkeley server ADNI data)')
     parser.add_argument("--targets", type=str, default="visual_read", help="Predict variables name, corresponds to column names in demographics.csv, seperate by ,")
@@ -49,7 +49,9 @@ def parse_arguments():
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1","huber","weighted_mse","weighted_smoothl1","weighted_huber"], help="regression loss name")
     parser.add_argument("--smoothl1_beta", type=float, default=10, help="regression smooth L1 loss beta, CL units that is acceptable")
     parser.add_argument("--cls_threshold", type=float, default=0.5, help="classification threshold, probability -> class")
+    
     parser.add_argument("--lambda_grl", type=float, default=1.0, help="lamba of dataset specific loss")
+    parser.add_argument("--sample_weight_scheme", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0], help="Weights for: expert consensus w CL, expert consensus, expert, non-expert")
 
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to load (optional)")

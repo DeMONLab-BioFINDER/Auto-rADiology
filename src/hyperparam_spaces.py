@@ -20,6 +20,7 @@ def suggest_common(trial, base_args) -> Dict:
     norm_choices = _csv_list(base_args, "tune_norm", ["percentile_01", "zscore"])
 
     lds_choices = _float_list(base_args, "tune_loss_w_dataset", [0.0, 0.001, 0.005, 0.01, 0.05, 0.1]) #!!! fail if UNet3D
+    scheme_str = trial.suggest_categorical("sample_weight_scheme", _weight_scheme_choices(base_args))
 
     common = {
         #"lr": trial.suggest_categorical("lr", lr_choices),
@@ -34,6 +35,8 @@ def suggest_common(trial, base_args) -> Dict:
         "loss_w_dataset": trial.suggest_categorical("loss_w_dataset", lds_choices)
     }
 
+    if getattr(base_args, "sample_weights", None): common["sample_weight_scheme"] = [float(x.strip()) for x in scheme_str.split(",")]
+    
     if _is_vr_task(base_args):
         cls_loss_choices = _csv_list(base_args, "tune_cls_loss", ["bce", "weighted_bce"])
         cls_thr_choices = _float_list(base_args, "tune_cls_threshold", [0.3, 0.4, 0.5, 0.6, 0.7])
@@ -154,6 +157,11 @@ def _json_tuple_choices(base_args, name, default):
             out.append(tuple(json.loads(item)))
     return out
 
+def _weight_scheme_choices(base_args):
+    v = getattr(base_args, "tune_sample_weight_scheme", None)
+    if v is None or str(v).strip() == "":
+        return ["1,1,1,1", "1,0.9,0.75,0.5", "1,0.8,0.6,0.4", "1,0.7,0.5,0.25"]
+    return [x.strip() for x in str(v).split(";") if x.strip()]
 
 def _is_vr_task(base_args):
     targets = getattr(base_args, "targets", "")
