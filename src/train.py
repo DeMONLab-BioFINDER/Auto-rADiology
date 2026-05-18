@@ -103,7 +103,7 @@ def evals(model, loader, device, cls_threshold):
 
 
 def compute_metrics(ycls, preds, probs, any_cls, yreg, cents, any_reg):
-    metrics = {"auc": np.nan, "acc": np.nan, "acc_opt": np.nan, "bacc": np.nan, "f1": np.nan, "mcc": np.nan, "best_thr": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "eval_metric": 0.0}
+    metrics = {"auc": np.nan, "acc": np.nan, "acc_opt": np.nan, "bacc": np.nan, "f1": np.nan, "mcc": np.nan, "best_thr": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "val_metric": np.nan}
 
     if any_cls:
         metrics.update(compute_cls_metrics(ycls, preds, probs))
@@ -247,7 +247,7 @@ def compute_cls_metrics(ycls, preds, probs):
     pred = pred[valid]
     prob = prob[valid] if prob.ndim == 1 else prob[valid, :]
 
-    out = {"auc": np.nan, "acc": np.nan, "acc_opt": np.nan, "bacc": np.nan, "f1": np.nan, "mcc": np.nan, "best_thr": np.nan, "eval_metric": 0.0}
+    out = {"auc": np.nan, "acc": np.nan, "acc_opt": np.nan, "bacc": np.nan, "f1": np.nan, "mcc": np.nan, "best_thr": np.nan}
 
     if len(np.unique(y)) < 2:
         out["acc"] = float(accuracy_score(y, pred)) if len(y) > 0 else np.nan
@@ -267,7 +267,6 @@ def compute_cls_metrics(ycls, preds, probs):
         out["auc"] = float(roc_auc_score(y, prob, multi_class="ovr", average="macro", labels=labels))
 
     out["acc"] = float(accuracy_score(y, pred))
-    out["eval_metric"] = np.nansum([out["auc"], out["acc"]])
 
     return out
 
@@ -280,7 +279,7 @@ def compute_reg_metrics(yreg, cents):
     y = y[valid]
     pred = pred[valid]
 
-    out = {"mae": np.nan, "rmse": np.nan, "r2": np.nan, "eval_metric": 0.0}
+    out = {"mae": np.nan, "rmse": np.nan, "r2": np.nan}
 
     if len(y) == 0:
         return out
@@ -292,9 +291,6 @@ def compute_reg_metrics(yreg, cents):
     mae_ref = np.median(np.abs(y - np.median(y)))
     if not np.isfinite(mae_ref) or mae_ref <= 1e-6:
         mae_ref = max(np.std(y), 1e-6)
-
-    mae_good = 1.0 - np.clip(out["mae"] / mae_ref, 0.0, 1.0)
-    out["eval_metric"] = np.nansum([mae_good, out["r2"]])
 
     return out
 

@@ -22,7 +22,7 @@ def parse_arguments():
     parser.add_argument("--input_path", type=str, default='', help='images save in BIDS format. If not input, will set as <proj_path>/data/<data_type>') # Berkeley server ADNI data path: /home/jagust/xnat/squid/adni/
     parser.add_argument("--data_suffix", type=str, default='', help='images finding pattern **/*<suffix>/*/*/*.nii* for find_pet_images function, specifically to IDEAS data. e.g._Inten_Norm or SCANS (folder name of Berkeley server ADNI data)')
     parser.add_argument("--targets", type=str, default="visual_read", help="Predict variables name, corresponds to column names in demographics.csv, seperate by ,")
-    parser.add_argument("--sample_weights", type=str, default="expertise", help="expertise of visual read / CL preprocessing methods, for weighted loss")
+    parser.add_argument("--sample_weights", type=str, default='expertise', help="Column name for weighted_* losses")
     parser.add_argument("--input_cl", type=str, default=None, help="Name of extra input CL used to plug in at the last fully connected layer, should be the column name in demo.csv e.g. CL, CL_pred")
     parser.add_argument("--extra_global_feats", type=str, default=None, help="Extra gloabl input used to plug in at the last fully connected layer. e.g. p95,std,frac_hi")
     
@@ -137,7 +137,9 @@ def make_output_dir(args, proj_path, script_path):
         # Construct output path'
         tune = f'hypertune-optuna-{args.n_trials}trials' if args.tune else '2split80-20'
         extra_cl = f'extra-lastlayer-input-{args.input_cl}' if args.input_cl else ''
-        args.output_name = "_".join(s for s in [args.data_type, args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
+        dataset_names = args.dataset.replace(",", "_")
+        args.output_name = "_".join(s for s in [args.data_type, dataset_names, args.model, args.targets, tune, f"stratify-{args.stratifycvby}",
+                                                args.model_name_extra, extra_cl, args.output_date_time] if s)
         # "_".join([args.model, args.targets, tune, f'stratify-{args.stratifycvby}', args.model_name_extra, extra_cl, args.output_date_time])
         args.output_path = os.path.join(proj_path, "results", args.output_name)
 

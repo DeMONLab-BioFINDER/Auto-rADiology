@@ -35,7 +35,7 @@ def kfold_cv(df_clean, stratify_labels, args):
         r = r.copy()
         r["fold"] = i
         append_metrics_csv(metrics_path, {"fold": i, **m}, mode='row')
-        append_metrics_csv(results_path, {"fold": i, **r}, mode='row')
+        append_metrics_csv(results_path, r, mode='row')
 
         tqdm.write(f"[{fold_name}] AUC={m.get('auc'):.3f} ACC={m.get('acc'):.3f} "
                    f"MAE={m.get('mae'):.2f} RMSE={m.get('rmse'):.2f} R2={m.get('r2'):.3f}"
@@ -73,7 +73,8 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
 
     # ---- Train ----
     if args.tune:
-        model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name,
+        monitor_loader = dl_eval if train_only else dl_va
+        model, best_epoch = train_model(model, dl_tr, monitor_loader, args=args, fold_name=fold_name,
                                         path_list=path_list, optuna_report=optuna_report)
     else:
         print('Train (early stop and scheduler using training set, if not "train_only")')
@@ -109,8 +110,8 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     scaler = torch.amp.GradScaler("cuda") if args.amp and torch.cuda.is_available() else None
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=3, min_lr=1e-6) # NOT using Scheduler in final retrain
-    es = EarlyStopper(patience=args.es_patience, min_delta=args.es_min_delta)
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-6) # NOT using Scheduler in final retrain
+    es = EarlyStopper(patience=args.es_patience, min_delta=args.es_min_delta, mode="min")
 
     best_epoch = 0
     epoch_bar = tqdm(range(1, args.epochs + 1), desc=f"{fold_name} epochs", position=1, leave=False, dynamic_ncols=True)
@@ -122,12 +123,14 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
 
         # ---- Inference on training (or inner test of validation) ----
         metrics, _ = inference(model, dl_va, args.device, cls_threshold=args.cls_threshold)
-        eval_metric = metrics.get("eval_metric", float("nan"))
+        #eval_metric = metrics.get("eval_metric", float("nan"))
+        eval_metric = combine_metrics_for_minimize(metrics)
+        metrics["eval_metric"] = eval_metric
 
         if not train_only and 'few-shot' not in fold_name and np.isfinite(eval_metric): scheduler.step(eval_metric) # no scheduler when test only and fine-tunning few shots
 
         # ---- Optuna report, if callback provided ----
-        if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, combine_metrics_for_minimize(metrics))
+        if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, eval_metric)
 
         # ---- save training loss and evaluation metrics (used to early stop) ----
         append_metrics_csv(path_list['train_loss_csv'], {"epoch": epoch, **tr_loss_all}, mode='row')
@@ -147,7 +150,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
                     f"(no improvement > {args.es_min_delta} for {args.es_patience} epochs)."
                 )
                 break
-            
+
     if train_only:
         best_epoch = args.epochs
         save_checkpoint(model, path_list['ckpt'])

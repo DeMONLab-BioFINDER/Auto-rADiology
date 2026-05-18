@@ -28,10 +28,10 @@ def objective(trial, base_args, df_clean, splits, model_name):
         base_args,
         model=model_name,
         model_kwargs=model_kwargs_json,       # JSON string only
-        lr=common["lr"],
-        weight_decay=common["weight_decay"],
-        batch_size=common["batch_size"] if model_name != "UNet3D" else min(common["batch_size"], 4), # UNet often needs smaller batch sizes
-        dropout=common["dropout"],            # in case your code reads it elsewhere
+        #lr=common["lr"],
+        #weight_decay=common["weight_decay"],
+        #batch_size=common["batch_size"] if model_name != "UNet3D" else min(common["batch_size"], 4), # UNet often needs smaller batch sizes
+        #dropout=common["dropout"],            # in case your code reads it elsewhere
         # preprocessing
         spacing=common["spacing"],
         intensity_norm=common["intensity_norm"],
@@ -72,9 +72,9 @@ class PruningReporter:
         self.trial = trial
         self.step = 0
 
-    def __call__(self, fold_idx: int, epoch: int, objective_value: float):
+    def __call__(self, fold_idx: int, epoch: int, val_metric: float):
         self.step += 1
-        self.trial.report(objective_value, step=self.step)
+        self.trial.report(val_metric, step=self.step)
         if self.trial.should_prune():
             raise optuna.TrialPruned()
 

@@ -4,6 +4,7 @@ ignore_warnings()
 import os
 import torch
 import pandas as pd
+from pathlib import Path
 
 from src.params import parse_arguments
 from src.utils import build_model_from_args, get_device, set_seed
@@ -22,12 +23,20 @@ def main(args):
         subject_id_list = [int(t.strip()) for t in args.vis_img_list.split(',') if t.strip()]
         df_select = df[df['ID'].isin(subject_id_list)]
     print('df_select:',df_select)
-    dl_va = get_loader(df_select, args.input_path, args, batch_size=1, augment=False, shuffle=False, train_test='test')
+    tfm = None
+    data_file = Path(args.input_path) / 'data' / args.data_type
+    dl_va = get_loader(df_select, tfm, data_file, args, batch_size=1, augment=False, shuffle=False, train_test='test')
     
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
-    n_classes = int(df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    n_classes = 1 if 'visual_read' in targets_list and args.cls_loss in {"bce", "weighted_bce"} else None
     model = build_model_from_args(args, device=args.device, n_classes=n_classes)
-    sd = torch.load(os.path.join(args.best_model_folder, 'train-test-split/checkpoints', 'train-test-split_best.pt'), map_location=args.device, weights_only=True)
+
+    ckpts = [os.path.join(args.best_model_folder, "nestedcv-outer-test/checkpoints/nestedcv-outer-test_best.pt"),
+             os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")]
+    ckpt = next((p for p in ckpts if os.path.exists(p)), None)
+    if ckpt is None:
+        raise FileNotFoundError(f"No checkpoint found. Tried: {ckpts}")
+    sd = torch.load(ckpt, map_location=args.device, weights_only=True)
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
     model.load_state_dict(state_dict, strict=False)
 

@@ -66,7 +66,7 @@ def suggest_CNN3D(trial, base_args, common: Dict) -> Tuple[str, str]:
         "widths": list(widths),
         "pool_every": 1,
         "norm": norm,
-        "dropout": common["dropout"],
+        #"dropout": common["dropout"],
         "block": block,
         "downsample": downsample,
     }

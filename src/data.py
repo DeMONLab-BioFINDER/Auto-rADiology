@@ -30,7 +30,7 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
     if use_cache:
         csv = Path(input_path) / "demo.csv"
         if not csv.exists():
-            csv = Path(input_path) / f"demo_{dataset}_{data_type}.csv"
+            csv = Path(input_path) / f"demo_{dataset.replace(",", "_")}_{data_type}.csv"
         df = pd.read_csv(csv, index_col=0) # Must have 'ID' column from 0 to len(df)
         print(f"[cache] Loaded {csv} with {len(df)} rows (no filesystem scan).")
     else:
@@ -127,7 +127,7 @@ def load_participants_labels(input_path: str, dataset: Optional[str] = None) -> 
     csv = Path(input_path) / "demographics.csv"
     if not csv.exists(): # try alternative path
         proj_path = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-        csv = Path(os.path.join(proj_path, "data")) / f"demographics_{dataset}.csv"
+        csv = Path(os.path.join(proj_path, "data")) / f"demographics_{dataset.replace(",", "_")}.csv"
         if not csv.exists():
             raise FileNotFoundError(f"Missing {csv}. Provide columns: ID, site, visual_read, CL, age, gender, ...")
     df = pd.read_csv(csv, index_col=0)
@@ -273,6 +273,7 @@ class PETDataset(Dataset):
         self.dtype = dtype
 
         self.site_to_idx = {s: i for i, s in enumerate(sorted(self.table["site"].dropna().unique()))} if "site" in self.table.columns else {}
+        if self.sample_weights is not None and self.sample_weights not in self.table.columns: raise ValueError(f"sample_weights column '{self.sample_weights}' not found.")
 
     def __len__(self):
         return len(self.table)

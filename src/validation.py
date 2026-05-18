@@ -39,9 +39,9 @@ def run_few_shots(args, df, tfm, data_file, base_model, targets_list):
             strat_col = "visual_read"
             df_use = df.dropna(subset=["visual_read"])
         else:
-            df_use = add_quantile_bins(df, "CL")
+            df_use = df.dropna(subset=["CL"]).copy()
+            df_use = add_quantile_bins(df_use, "CL")
             strat_col = "CL_qbin"
-            df = df.dropna(subset=['CL'])
 
         # ----- split -----
         print('few shot stratified by', strat_col, 'for', df_use.shape, 'scans')
@@ -184,11 +184,15 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
 
     ckpts = [os.path.join(args.best_model_folder, "nestedcv-outer-test/checkpoints/nestedcv-outer-test_best.pt"),
              os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")]
+    ckpt_found = None
     for ckpt in ckpts:
         if os.path.exists(ckpt):
-            print(f"Loading pretrained model: {ckpt}")
-            sd = torch.load(ckpt, map_location=args.device, weights_only=True)
+            ckpt_found = ckpt
+            break
+    if ckpt_found is None: raise FileNotFoundError(f"No pretrained checkpoint found. Tried: {ckpts}")
 
+    print(f"Loading pretrained model: {ckpt_found}")
+    sd = torch.load(ckpt_found, map_location=args.device, weights_only=True)
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
     model.load_state_dict(state_dict, strict=False)
 
