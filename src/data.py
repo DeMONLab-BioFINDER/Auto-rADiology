@@ -30,7 +30,8 @@ def build_master_table(input_path: str, preproce_method: str, targets: List[str]
     if use_cache:
         csv = Path(input_path) / "demo.csv"
         if not csv.exists():
-            csv = Path(input_path) / f"demo_{dataset.replace(",", "_")}_{data_type}.csv"
+            dataset_name = dataset.replace(",", "_")
+            csv = Path(input_path) / f"demo_{dataset_name}_{data_type}.csv"
         df = pd.read_csv(csv, index_col=0) # Must have 'ID' column from 0 to len(df)
         print(f"[cache] Loaded {csv} with {len(df)} rows (no filesystem scan).")
     else:

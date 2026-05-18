@@ -19,7 +19,7 @@ def suggest_common(trial, base_args) -> Dict:
     spacing_choices = _bool_list(base_args, "tune_spacing", [True, False])
     norm_choices = _csv_list(base_args, "tune_norm", ["percentile_01", "zscore"])
 
-    lds_choices = _float_list(base_args, "tune_loss_w_dataset", [0.0, 0.001, 0.005, 0.01, 0.05, 0.1])
+    lds_choices = _float_list(base_args, "tune_loss_w_dataset", [0.0, 0.001, 0.005, 0.01, 0.05, 0.1]) #!!! fail if UNet3D
 
     common = {
         #"lr": trial.suggest_categorical("lr", lr_choices),
@@ -88,7 +88,7 @@ def suggest_UNet3D(trial, base_args, common: Dict) -> Tuple[str, str]:
         "strides": [2, 2, 2, 2],
         "num_res_units": num_res,
         "norm": "instance",
-        "dropout": min(common["dropout"], 0.3),
+        #"dropout": min(common["dropout"], 0.3),
         "use_basic": use_basic,
     }
     return "UNet3D", json.dumps(kwargs)

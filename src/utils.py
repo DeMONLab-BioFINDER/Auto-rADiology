@@ -158,14 +158,12 @@ def combine_metrics_for_minimize(m: dict) -> float:
     """
     auc  = m.get("auc")
     mae  = m.get("mae")
-    rmse = m.get("rmse")
     r2   = m.get("r2")
 
     parts = []
     if auc  is not None and auc  == auc: parts.append(1.0 - float(auc))  # 1 - AUC
     if mae  is not None and mae  == mae: parts.append(float(mae))
-    if rmse is not None and rmse == rmse: parts.append(float(rmse))
-    if r2   is not None and r2   == r2:   parts.append(1.0 - float(r2))  # 1 - R2
+    if r2   is not None and r2   == r2:   parts.append(10.0 * (1.0 - float(r2)))  # 1 - R2 # !!!! this can be tuned and input as parameter
 
     return sum(parts) if parts else 1e9  # big penalty if missing
 
@@ -271,6 +269,7 @@ def _resolve_model_class(name: str):
         ) from e
 
 def save_train_test_subjects(df_train, df_test, output_path, savename):
+    os.makedirs(output_path, exist_ok=True)
     df_train.to_csv(os.path.join(output_path, f'{savename}_training-set.csv'))
     df_test.to_csv(os.path.join(output_path, f'{savename}_testing-set.csv'))
 

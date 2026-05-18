@@ -103,7 +103,7 @@ def evals(model, loader, device, cls_threshold):
 
 
 def compute_metrics(ycls, preds, probs, any_cls, yreg, cents, any_reg):
-    metrics = {"auc": np.nan, "acc": np.nan, "acc_opt": np.nan, "bacc": np.nan, "f1": np.nan, "mcc": np.nan, "best_thr": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "val_metric": np.nan}
+    metrics = {"auc": np.nan, "acc": np.nan, "acc_opt": np.nan, "bacc": np.nan, "f1": np.nan, "mcc": np.nan, "best_thr": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "eval_metric": np.nan}
 
     if any_cls:
         metrics.update(compute_cls_metrics(ycls, preds, probs))

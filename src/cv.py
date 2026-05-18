@@ -94,7 +94,7 @@ def run_fold(train_df, val_df, args, fold_name: str, *, optuna_report=None):
                  'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
 
     # ---- Interpretation: grad-CAM or ... ----
-    if getattr(args, "run_visu", False) and fold_name in {"nestedcv-outer-test", "train-test-split"}: run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name) # the best model on validation set, save .png and .nii
+    if getattr(args, "run_vis", False) and fold_name in {"nestedcv-outer-test", "train-test-split"}: run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name) # the best model on validation set, save .png and .nii
 
     return metrics_te, df_result_te
 
@@ -127,7 +127,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
         eval_metric = combine_metrics_for_minimize(metrics)
         metrics["eval_metric"] = eval_metric
 
-        if not train_only and 'few-shot' not in fold_name and np.isfinite(eval_metric): scheduler.step(eval_metric) # no scheduler when test only and fine-tunning few shots
+        if not train_only and 'fewshot' not in fold_name and np.isfinite(eval_metric): scheduler.step(eval_metric) # no scheduler when test only and fine-tunning few shots
 
         # ---- Optuna report, if callback provided ----
         if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, eval_metric)

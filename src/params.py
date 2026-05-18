@@ -60,7 +60,7 @@ def parse_arguments():
     # CV
     parser.add_argument("--n_splits", type=int, default=5, help="Number of folds for StratifiedKFold.")
     parser.add_argument("--stratifycvby", default="dataset,visual_read", help="dataset,site,tracer, List of column names to stratify by (e.g., visual_read CL age gender).")
-    parser.add_argument("--samesubject_col", type=str, default=None, help="Column name to identify same subjects to keep them in the same split (e.g., sameID).")
+    parser.add_argument("--samesubject_col", type=str, default='ID', help="Column name to identify same subjects to keep them in the same split (e.g., sameID).")
     
     # Hypertune - Optuna
     parser.add_argument("--tune", action=argparse.BooleanOptionalAction, default=True)
