@@ -12,24 +12,21 @@
 #SBATCH -o ../../logs/AVID-unseen-eval-slurm-%j.out
 #SBATCH -e ../../logs/AVID-unseen-eval-slurm-%j.err
 
-BEST_MODEL_FOLDER="${1:?Usage: sbatch submit_val_AVID_unseen.sh <best_model_folder_name>}"
-
 # Load environment
 module load Miniforge3/24.7.1-2-hpc1-bdist
 mamba activate ai-pet
 
-# Resolve project root robustly for Slurm.
-if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
-  PROJECT_ROOT="$(cd "${SLURM_SUBMIT_DIR}/.." && pwd)"
-else
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Determine project root based on current directory
+if [[ "$(basename "$PWD")" == "sbatch_scripts" ]]; then
+  cd .. || exit 1
+elif [[ ! -d "sbatch_scripts" ]]; then
+  echo "Error: Must be run from sbatch_scripts or Auto-rADiology root directory"
+  exit 1
 fi
-cd "${PROJECT_ROOT}" || exit 1
 
-python "${PROJECT_ROOT}/run_val.py" \
+python "./run_val.py" \
   --dataset AVID_unseen \
-  --best_model_folder "${BEST_MODEL_FOLDER}" \
+  --best_model_folder "/proj/berzelius-2024-156/users/x_nadpi/results/final-tau_raw_Gothenburg_CNN3D_MetaTemporal,MesialTemporal,Frontal,TemporoParietal_2split80-20_stratify-site,Universal_mse-final-47_20260512_222544" \
   --model CNN3D \
   --data_type tau_raw \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data/data/tau_raw \

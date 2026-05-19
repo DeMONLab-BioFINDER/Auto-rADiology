@@ -31,7 +31,6 @@ TITLE_SIZE = 17
 LABEL_SIZE = 15
 TICK_SIZE = 12
 LEGEND_SIZE = 11
-CTRZ_LABEL = "CTR$_{z}$"
 
 
 def combine_dx_groups(s: pd.Series) -> pd.Series:
@@ -87,14 +86,12 @@ def get_category_palette(order):
 
 
 def pretty_region_name(name: str) -> str:
-    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(name))
-    return re.sub(r"\s+", " ", name).strip()
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(name))
 
-
-def format_ctrz_label(display_target=None) -> str:
+def format_suvr_label(display_target=None) -> str:
     if display_target:
-        return f"{display_target} {CTRZ_LABEL}"
-    return CTRZ_LABEL
+        return f"{display_target} SUVR"
+    return "SUVR"
 
 
 def wrap_plot_title(title: str, width: int = 36) -> str:
@@ -138,7 +135,7 @@ def make_group_mae_boxstrip_plots(
     df_plot = df.copy()
     df_plot["abs_error"] = (df_plot["pred"] - df_plot["y"]).abs()
     display_target = pretty_region_name(target_name) if target_name else None
-    target_label = format_ctrz_label(display_target) if display_target else CTRZ_LABEL
+    target_label = format_suvr_label(display_target) if display_target else "SUVR"
 
     for col in group_cols:
         if col not in df_plot.columns:
@@ -158,12 +155,7 @@ def make_group_mae_boxstrip_plots(
             )
 
         g[col] = g[col].astype("string").fillna("NA")
-        keep = g[col].value_counts()
         min_n_for_plot = 2 if col == "dx_grouped" else 5
-        keep = keep[keep >= min_n_for_plot].index
-        g = g[g[col].isin(keep)]
-        if g.empty or g[col].nunique() < 2:
-            continue
 
         if col == "age":
             age_order = ["50-60", "60-70", "70-80", "80-90", "90+"]
@@ -171,18 +163,38 @@ def make_group_mae_boxstrip_plots(
             order = [x for x in age_order if x in present]
         else:
             order = get_display_order(g[col], col)
+        order = [x for x in order if (g[col] == x).sum() >= min_n_for_plot]
+        if len(order) < 2:
+            continue
         palette_map = get_category_palette(order)
 
         fig, ax = plt.subplots(figsize=(6.4, 6.4))
+        rotation = 25 if col == "dx_grouped" else 0
+        col_display = "dx" if col == "dx_grouped" else col
+        if display_target:
+            title = f"{target_label} Absolute Error by {col_display}"
+        else:
+            title = f"Absolute Error by {col_display}"
+        if col_display == "dx":
+            x_label = "DX"
+        else:
+            label_map = {
+                "apoe": "APOE",
+                "amyloid_status": "Amyloid Status",
+                "cdr": "CDR",
+            }
+            key = col_display.lower()
+            x_label = label_map.get(key, col_display.replace("_", " ").title())
+
         sns.boxplot(
             data=g,
             x=col,
             y="abs_error",
             hue=col,
+            hue_order=order,
             order=order,
             ax=ax,
             palette=palette_map,
-            legend=False,
             dodge=False,
             fliersize=0,
             width=0.46,
@@ -202,6 +214,7 @@ def make_group_mae_boxstrip_plots(
             x=col,
             y="abs_error",
             hue=col,
+            hue_order=order,
             order=order,
             ax=ax,
             palette=palette_map,
@@ -212,27 +225,11 @@ def make_group_mae_boxstrip_plots(
             linewidth=0.5,
             legend=False,
         )
-        col_display = "dx" if col == "dx_grouped" else col
-        rotation = 25 if col == "dx_grouped" else 0
-        if display_target:
-            title = f"{target_label} Absolute Error by {col_display}"
-        else:
-            title = f"Absolute Error by {col_display}"
-        label_map = {
-            "apoe": "APOE",
-            "amyloid_status": "Amyloid Status",
-            "cdr": "CDR",
-        }
-        if col_display == "dx":
-            x_label = "DX"
-        else:
-            key = col_display.lower()
-            x_label = label_map.get(key, col_display.replace("_", " ").title())
         style_axes(
             ax,
             title,
             x_label,
-            f"Absolute Error ({CTRZ_LABEL})",
+            f"Absolute Error (SUVR)",
             xrotation=rotation,
         )
         ax.margins(x=0.03)
@@ -297,7 +294,7 @@ def make_site_raw_value_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     if "site" not in df.columns:
         return
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
     tmp = df[["site", "y", "pred"]].copy()
     tmp["site"] = tmp["site"].astype("string").fillna("NA")
     long_df = tmp.melt(id_vars="site", value_vars=["y", "pred"], var_name="value_type", value_name="value")
@@ -350,7 +347,7 @@ def make_site_error_correlation_plot(df: pd.DataFrame, out_dir: Path, target_nam
     if "site" not in df.columns:
         return
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
 
     tmp = df[["site", "y", "pred"]].copy()
     tmp["site"] = tmp["site"].astype("string").fillna("NA")
@@ -399,7 +396,7 @@ def make_site_error_correlation_plot(df: pd.DataFrame, out_dir: Path, target_nam
         ax,
         f"Absolute Error vs Reference\n{target_label} by Site",
         f"Reference {target_label}",
-        f"Absolute Error ({CTRZ_LABEL})",
+            f"Absolute Error (SUVR)",
     )
     style_legend(ax, title="site", loc="upper right")
     finalize_figure(fig)
@@ -421,7 +418,7 @@ def make_training_distribution_plot(run_dir: Path, out_dir: Path, target_name: s
     if train_path is None:
         return
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
     dft = pd.read_csv(train_path)
     if "dx" in dft.columns:
         dft["dx_grouped"] = combine_dx_groups(dft["dx"])
@@ -733,7 +730,7 @@ def make_training_curve_cut_first4_panel(df_curve: pd.DataFrame, out_dir: Path):
 
 def make_scatter_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
     y_true = df_preds["y"].to_numpy()
     y_pred = df_preds["pred"].to_numpy()
 
@@ -793,12 +790,12 @@ def make_residual_plot(df_preds: pd.DataFrame, out_dir: Path, target_name: str):
     )
     ax.axhline(0, linestyle="--", color="black", linewidth=1.6)
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
     style_axes(
         ax,
         f"Residuals vs Reference\n{target_label}",
         f"Reference {target_label}",
-        f"Residual (Predicted - Reference {CTRZ_LABEL})",
+        f"Residual (Predicted - Reference SUVR)",
     )
     finalize_figure(fig)
     save_figure(fig, out_dir / "residuals_vs_true.png", dpi=300)
@@ -811,7 +808,7 @@ def make_residual_histogram(df_preds: pd.DataFrame, out_dir: Path):
     fig, ax = plt.subplots(figsize=(7.2, 5.8))
     ax.hist(residuals, bins=20, alpha=0.9, color=SEABORN_COLORS[0], edgecolor="white")
     ax.axvline(0, linestyle="--", color="black", linewidth=1.6)
-    style_axes(ax, "Residual Distribution", f"Residual (Predicted - Reference {CTRZ_LABEL})", "Count")
+    style_axes(ax, "Residual Distribution", f"Residual (Predicted - Reference SUVR)", "Count")
     finalize_figure(fig)
     save_figure(fig, out_dir / "residual_histogram.png", dpi=300)
     plt.close(fig)
@@ -825,7 +822,7 @@ def make_true_value_histogram(df_preds: pd.DataFrame, out_dir: Path, target_name
     fig, ax = plt.subplots(figsize=(7.2, 5.8))
     ax.hist(y_true, bins=20, alpha=0.9, color=SEABORN_COLORS[0], edgecolor="white")
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
     style_axes(ax, f"Distribution of Reference\n{target_label}", f"Reference {target_label}", "Count")
     finalize_figure(fig)
     save_figure(fig, out_dir / "true_value_histogram.png", dpi=300)
@@ -880,7 +877,7 @@ def summarize_error_by_bin(df: pd.DataFrame) -> pd.DataFrame:
 
 def make_mae_by_bin_plot(summary: pd.DataFrame, out_dir: Path, target_name=None):
     display_target = pretty_region_name(target_name) if target_name else None
-    target_label = format_ctrz_label(display_target) if display_target else CTRZ_LABEL
+    target_label = format_suvr_label(display_target) if display_target else "SUVR"
     title_prefix = f"{target_label} " if display_target else ""
     fig, ax1 = plt.subplots(figsize=(6.8, 6.8))
     x = np.arange(len(summary))
@@ -889,8 +886,8 @@ def make_mae_by_bin_plot(summary: pd.DataFrame, out_dir: Path, target_name=None)
     ax1.set_ylabel("MAE", color=SEABORN_COLORS[0], fontsize=LABEL_SIZE)
     ax1.set_xticks(x)
     ax1.set_xticklabels(summary["y_bin"], rotation=20, ha="right", fontsize=TICK_SIZE)
-    ax1.set_xlabel(f"Reference {CTRZ_LABEL} Bin", fontsize=LABEL_SIZE)
-    ax1.set_title(f"{title_prefix}MAE by Reference {CTRZ_LABEL} Bin", fontsize=TITLE_SIZE, pad=10)
+    ax1.set_xlabel(f"Reference SUVR Bin", fontsize=LABEL_SIZE)
+    ax1.set_title(f"{title_prefix}MAE by Reference SUVR Bin", fontsize=TITLE_SIZE, pad=10)
     ax1.tick_params(axis="y", labelsize=TICK_SIZE)
     ax1.grid(False)
 
@@ -949,12 +946,12 @@ def make_residual_trend_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     )
     ax.axhline(0, linestyle="--", color="black", linewidth=1.2)
     display_target = pretty_region_name(target_name)
-    target_label = format_ctrz_label(display_target)
+    target_label = format_suvr_label(display_target)
     style_axes(
         ax,
         f"Residuals Across Reference\n{target_label} Values",
         "",
-        f"Residual (Predicted - Reference {CTRZ_LABEL})",
+        f"Residual (Predicted - Reference SUVR)",
     )
     style_legend(ax, loc="upper right")
 
@@ -1009,8 +1006,8 @@ def print_summary(df_metrics: pd.DataFrame, df_preds: pd.DataFrame, target_name:
     print(df_metrics.to_string(index=False))
     print()
     print(f"Test set size: {len(df_preds)}")
-    print(f"Reference {target_name} {CTRZ_LABEL} range: {y_true.min():.3f} to {y_true.max():.3f}")
-    print(f"Predicted {target_name} {CTRZ_LABEL} range: {y_pred.min():.3f} to {y_pred.max():.3f}")
+    print(f"Reference {target_name} SUVR range: {y_true.min():.3f} to {y_true.max():.3f}")
+    print(f"Predicted {target_name} SUVR range: {y_pred.min():.3f} to {y_pred.max():.3f}")
     print(f"Pearson r: {corr:.3f}")
     print(f"Mean residual (bias): {bias:.3f}")
     print(f"Median absolute error: {np.median(abs_err):.3f}")
@@ -1140,7 +1137,7 @@ def main():
             p = np.poly1d(z)
             ax.plot([lo, hi], p([lo, hi]), linestyle="-", color="black", linewidth=1.8, label="Fitted line")
             col_display = "dx" if col == "dx_grouped" else col
-            target_label = format_ctrz_label(pretty_region_name(args.target_name))
+            target_label = format_suvr_label(pretty_region_name(args.target_name))
             style_axes(
                 ax,
                 f"Reference vs Predicted {target_label}\nColored by {col_display}",

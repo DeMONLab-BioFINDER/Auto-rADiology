@@ -122,7 +122,7 @@ def get_plot_limits(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, floa
 
 def get_target_label(target: str, mod) -> str:
     display_target = mod.pretty_region_name(target)
-    return mod.format_ctrz_label(display_target)
+    return mod.format_suvr_label(display_target)
 
 
 def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
@@ -201,7 +201,7 @@ def make_true_vs_predicted_panel(
     mod.plt.close(fig)
 
 
-def make_ctrz_distribution_panel(
+def make_suvr_distribution_panel(
     demo_path: Path,
     out_dir: Path,
     targets: list[str],
@@ -334,32 +334,33 @@ def main():
     summary_rows = []
     shared_fig_dir = run_dir / "figures_multi" / "_shared"
     shared_fig_dir.mkdir(parents=True, exist_ok=True)
+    has_validation_run = validation_dir.exists()
+    shared_panel_name = "true_vs_predicted_panel_validation.png" if has_validation_run else "true_vs_predicted_panel_test.png"
+    shared_panel_title = "Validation Set" if has_validation_run else "Test Set"
 
     mod.make_training_curve(df_curve, shared_fig_dir)
-    mod.make_training_curve_cut_first4(df_curve, shared_fig_dir)
-    mod.make_training_curve_cut_first4_panel(df_curve, shared_fig_dir)
 
     make_true_vs_predicted_panel(
         df_preds_wide,
         shared_fig_dir,
         targets,
         mod,
-        title=f"Test Set: Reference vs Predicted {mod.CTRZ_LABEL}",
-        filename="true_vs_predicted_panel_test.png",
+        title=f"{shared_panel_title}: Reference vs Predicted {mod.format_suvr_label()}",
+        filename=shared_panel_name,
     )
 
     demo_path = find_demo_csv()
     if demo_path is not None:
-        make_ctrz_distribution_panel(
+        make_suvr_distribution_panel(
             demo_path,
             shared_fig_dir,
             targets,
             mod,
-            title=f"Reference {mod.CTRZ_LABEL} Distributions (demo.csv)",
-            filename="ctr_z_distribution_panel.png",
+            title=f"Reference {mod.format_suvr_label()} Distributions (demo.csv)",
+            filename="suvr_distribution_panel.png",
         )
     else:
-        print("[WARNING] Could not find demo.csv for CTRz distribution panel.")
+        print("[WARNING] Could not find demo.csv for SUVR distribution panel.")
 
     for target in targets:
         display_target = mod.pretty_region_name(target)
@@ -441,7 +442,7 @@ def main():
             else:
                 key = col_display.lower()
                 display_group = label_map.get(key, col_display.replace("_", " ").title())
-            target_label = mod.format_ctrz_label(display_target)
+            target_label = mod.format_suvr_label(display_target)
             mod.style_axes(
                 ax,
                 f"Reference vs Predicted\n{target_label}\nColored by {display_group}",
@@ -502,7 +503,7 @@ def main():
         targets,
         mod,
         group="gender",
-        title=f"{mod.CTRZ_LABEL} Absolute Error by Gender",
+        title=f"{mod.format_suvr_label()} Absolute Error by Gender",
         filename="mae_boxstrip_by_gender_panel.png",
     )
     make_mae_boxstrip_panel(
@@ -510,7 +511,7 @@ def main():
         targets,
         mod,
         group="site",
-        title=f"{mod.CTRZ_LABEL} Absolute Error by Site",
+        title=f"{mod.format_suvr_label()} Absolute Error by Site",
         filename="mae_boxstrip_by_site_panel.png",
     )
     make_mae_boxstrip_panel(
@@ -518,7 +519,7 @@ def main():
         targets,
         mod,
         group="apoe",
-        title=f"{mod.CTRZ_LABEL} Absolute Error by APOE",
+        title=f"{mod.format_suvr_label()} Absolute Error by APOE",
         filename="mae_boxstrip_by_apoe_panel.png",
     )
 

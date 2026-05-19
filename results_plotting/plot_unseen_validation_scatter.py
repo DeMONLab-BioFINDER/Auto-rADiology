@@ -115,7 +115,7 @@ def draw_reference_and_fit_lines(ax, y_true: np.ndarray, y_pred: np.ndarray) -> 
 
 def get_target_label(target: str, mod) -> str:
     display_target = mod.pretty_region_name(target)
-    return mod.format_ctrz_label(display_target)
+    return mod.format_suvr_label(display_target)
 
 
 def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
@@ -302,7 +302,7 @@ def main():
             )
 
     fig.suptitle(
-        f"AVID Unseen Test Set: Reference vs Predicted {mod.CTRZ_LABEL}",
+        f"AVID Unseen Test Set: Reference vs Predicted {mod.format_suvr_label()}",
         y=0.995,
         fontsize=mod.TITLE_SIZE,
     )

@@ -12,16 +12,15 @@
 module load Miniforge3/24.7.1-2-hpc1-bdist
 mamba activate ai-pet
 
-# Resolve project root robustly for Slurm.
-if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
-  PROJECT_ROOT="$(cd "${SLURM_SUBMIT_DIR}/.." && pwd)"
-else
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Determine project root based on current directory
+if [[ "$(basename "$PWD")" == "sbatch_scripts" ]]; then
+  cd .. || exit 1
+elif [[ ! -d "sbatch_scripts" ]]; then
+  echo "Error: Must be run from sbatch_scripts or Auto-rADiology root directory"
+  exit 1
 fi
-cd "${PROJECT_ROOT}" || exit 1
 
-python "${PROJECT_ROOT}/run.py" \
+python "./run.py" \
   --no-tune \
   --dataset Gothenburg \
   --data_type tau_raw \
