@@ -11,6 +11,7 @@ The main final outputs are:
 - zero-shot external validation on the AVID unseen dataset
 - summary plots for these results
 
+The code used for data preprocessing, model training, and evaluation is available at: https://github.com/DeMONLab-BioFINDER/Auto-rADiology/tree/regional-suvr-nadine
 
 ## Project Overview
 
