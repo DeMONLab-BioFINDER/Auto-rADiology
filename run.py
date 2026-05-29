@@ -12,14 +12,51 @@ from src.hypertune import create_study_from_args, run_optuna, objective, print_b
 
 
 def main(args):
-    if args.reg_loss == "smoothl1":
-        print(f"Using SmoothL1 regression loss with beta={args.smoothl1_beta} target units.")
     print(f"Early stopping: patience={args.es_patience}, min_delta={args.es_min_delta}.")
     print(f"Split fractions: train={args.train_size}, val={args.val_size}, test={args.test_size}.")
 
     # 1) data
     df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
     df_clean, stratify_labels = get_stratify_labels(df, args.stratifycvby, args.seed)
+
+    # Determine whether regression targets are actually present (non-binary numeric)
+    targets = [t.strip() for t in args.targets.split(",") if t.strip()]
+    reg_targets_present = False
+    if args.loss_w_reg > 0 and len(targets) > 0:
+        for t in targets:
+            if t in df_clean.columns:
+                col = df_clean[t]
+                # consider regression if numeric and has more than two distinct finite values
+                if pd.api.types.is_numeric_dtype(col):
+                    vals = pd.to_numeric(col, errors="coerce").dropna().unique()
+                    if vals.size > 2:
+                        reg_targets_present = True
+                        break
+
+    if reg_targets_present and args.reg_loss == "smoothl1":
+        print(f"Using SmoothL1 regression loss with beta={args.smoothl1_beta} target units.")
+
+    # Determine whether classification targets are present and their type
+    class_targets_present = False
+    class_type = None
+    if args.loss_w_cls > 0 and len(targets) > 0:
+        max_unique = 0
+        for t in targets:
+            if t in df_clean.columns:
+                col = df_clean[t]
+                col_num = pd.to_numeric(col, errors="coerce")
+                unique_vals = col_num.dropna().unique()
+                if unique_vals.size > max_unique:
+                    max_unique = unique_vals.size
+        if max_unique > 0:
+            class_targets_present = True
+            class_type = 'binary' if max_unique <= 2 else 'multiclass'
+
+    if class_targets_present:
+        if class_type == 'binary':
+            print("Using classification loss: BCEWithLogitsLoss (binary targets).")
+        else:
+            print("Using classification loss: CrossEntropyLoss (multiclass targets).")
 
     use_validation_split = args.val_size > 0
 

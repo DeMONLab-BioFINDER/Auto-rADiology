@@ -36,12 +36,12 @@ LEGEND_SIZE = 11
 def combine_dx_groups(s: pd.Series) -> pd.Series:
     s = s.astype("string").fillna("NA")
     s_norm = s.str.strip().str.lower()
-    mask_other = s_norm.str.startswith(
-        ("others", "other neurodegenerative"),
-        na=False,
-    )
-    out = s.copy()
-    out.loc[mask_other] = "others"
+    dx_map = {
+        "cu": "CU",
+        "mci": "MCI",
+        "alzcs dem": "AlzCS dem",
+    }
+    out = s_norm.map(dx_map).fillna("Other").astype("string")
     return out
 
 
@@ -65,6 +65,7 @@ def fdr_bh(p_values: pd.Series) -> np.ndarray:
 def get_display_order(values: pd.Series, col: str):
     present = set(values.astype("string").fillna("NA"))
     preferred_orders = {
+        "dx_grouped": ["CU", "MCI", "AlzCS dem", "Other"],
         "gender": ["1", "2", "NA"],
         "amyloid_status": ["0.0", "1.0", "NA", "0", "1"],
         "apoe": ["0.0", "1.0", "NA", "0", "1"],
@@ -103,9 +104,6 @@ def finalize_figure(fig, *, rect=(0.0, 0.0, 0.97, 0.97)):
 
 
 def save_figure(fig, out_path: Path, **kwargs) -> bool:
-    if out_path.exists():
-        print(f"[skip] {out_path} exists")
-        return False
     fig.savefig(out_path, **kwargs)
     return True
 
@@ -169,22 +167,22 @@ def make_group_mae_boxstrip_plots(
         palette_map = get_category_palette(order)
 
         fig, ax = plt.subplots(figsize=(6.4, 6.4))
-        rotation = 25 if col == "dx_grouped" else 0
+        # Do not rotate x-tick labels (keep horizontal for readability)
+        rotation = 0
         col_display = "dx" if col == "dx_grouped" else col
-        if display_target:
-            title = f"{target_label} Absolute Error by {col_display}"
-        else:
-            title = f"Absolute Error by {col_display}"
-        if col_display == "dx":
-            x_label = "DX"
-        else:
-            label_map = {
-                "apoe": "APOE",
-                "amyloid_status": "Amyloid Status",
-                "cdr": "CDR",
-            }
-            key = col_display.lower()
-            x_label = label_map.get(key, col_display.replace("_", " ").title())
+        # Remove in-figure title for Nature-style minimal plots
+        title = ""
+        label_map = {
+            "dx": "Diagnosis group",
+            "site": "Acquisition site",
+            "age": "Age group",
+            "gender": "Sex",
+            "sex": "Sex",
+            "apoe": "APOE status",
+            "amyloid_status": "Amyloid status",
+            "cdr": "CDR",
+        }
+        x_label = label_map.get(col_display.lower(), col_display.replace("_", " ").title())
 
         sns.boxplot(
             data=g,
@@ -197,7 +195,7 @@ def make_group_mae_boxstrip_plots(
             palette=palette_map,
             dodge=False,
             fliersize=0,
-            width=0.46,
+            width=0.55,
             linewidth=1.3,
             showmeans=True,
             meanprops={
@@ -208,23 +206,30 @@ def make_group_mae_boxstrip_plots(
                 "markeredgewidth": 0.7,
                 "zorder": 6,
             },
+            medianprops={"color": "black", "linewidth": 1.35},
+            whiskerprops={"color": "black", "linewidth": 1.1},
+            capprops={"color": "black", "linewidth": 1.1},
         )
         sns.stripplot(
             data=g,
             x=col,
             y="abs_error",
+            order=order,
             hue=col,
             hue_order=order,
-            order=order,
             ax=ax,
-            palette=palette_map,
-            alpha=0.65,
-            jitter=0.14,
-            size=4.8,
+            dodge=False,
+            jitter=0.18,
+            size=3.2,
+            linewidth=0.25,
             edgecolor="white",
-            linewidth=0.5,
+            palette=palette_map,
+            alpha=0.75,
             legend=False,
+            zorder=5,
         )
+        if ax.legend_ is not None:
+            ax.legend_.remove()
         style_axes(
             ax,
             title,
@@ -232,10 +237,48 @@ def make_group_mae_boxstrip_plots(
             f"Absolute Error (SUVR)",
             xrotation=rotation,
         )
+        # Add sample size labels under each x-tick (e.g., "n=12").
+        try:
+            counts = [int((g[col] == val).sum()) for val in order]
+            xtick_labels = [f"{str(val)}\n(n={cnt})" for val, cnt in zip(order, counts)]
+            ax.set_xticklabels(xtick_labels, rotation=rotation, fontsize=TICK_SIZE)
+            # If this is the site plot, n= lines push ticklabels up — lower the x-axis label slightly.
+            if col == "site":
+                try:
+                    ax.xaxis.set_label_coords(0.5, -0.12)
+                except Exception:
+                    # Fallback: increase labelpad if direct coords adjustment fails
+                    try:
+                        ax.xaxis.labelpad = (ax.xaxis.labelpad if hasattr(ax.xaxis, "labelpad") else 4) + 6
+                    except Exception:
+                        pass
+        except Exception:
+            # Fallback: do nothing if labeling fails for unexpected dtypes
+            pass
+        whisker_max = np.nan
+        data_max = np.nan
+        for _, group_df in g.groupby(col):
+            values = group_df["abs_error"].to_numpy(dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                continue
+            group_max = float(np.nanmax(values))
+            data_max = group_max if not np.isfinite(data_max) else max(data_max, group_max)
+            q1, q3 = np.nanpercentile(values, [25, 75])
+            iqr = q3 - q1
+            group_whisker = q3 + 1.5 * iqr
+            if not np.isfinite(group_whisker) or group_whisker <= 0:
+                group_whisker = group_max
+            whisker_max = group_whisker if not np.isfinite(whisker_max) else max(whisker_max, group_whisker)
+
+        if np.isfinite(data_max) and data_max > 0:
+            ax.set_ylim(-0.05 * data_max, data_max * 1.08)
+        ax.set_box_aspect(1)
         ax.margins(x=0.03)
         ax.grid(axis="y", alpha=0.25)
-        finalize_figure(fig)
-        save_figure(fig, out_dir / f"mae_boxstrip_by_{col}.png", dpi=300)
+        # Use a slightly wider rect and larger pad to avoid right-side cropping
+        finalize_figure(fig, rect=(0.0, 0.0, 0.995, 0.985))
+        save_figure(fig, out_dir / f"mae_boxstrip_by_{col}.png", dpi=300, bbox_inches="tight", pad_inches=0.08)
         plt.close(fig)
 
 
@@ -311,20 +354,6 @@ def make_site_raw_value_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
         palette=[SEABORN_COLORS[0], SEABORN_COLORS[3]],
         fliersize=0,
         width=0.55,
-        ax=ax,
-    )
-    sns.stripplot(
-        data=long_df,
-        x="site",
-        y="value",
-        hue="value_type",
-        order=site_order,
-        dodge=True,
-        alpha=0.65,
-        size=5.0,
-        palette=[SEABORN_COLORS[0], SEABORN_COLORS[3]],
-        edgecolor="white",
-        linewidth=0.45,
         ax=ax,
     )
     handles, labels = ax.get_legend_handles_labels()
@@ -613,6 +642,25 @@ def make_training_curve(df_curve: pd.DataFrame, out_dir: Path):
     fig.suptitle("Training-Set Regression Metrics Per Epoch", y=0.995, fontsize=TITLE_SIZE)
     finalize_figure(fig)
     save_figure(fig, out_dir / "training_curves_regression.png", dpi=300)
+    plt.close(fig)
+
+
+def make_training_loss_curve(df_curve: pd.DataFrame, out_dir: Path):
+    if "train_loss" not in df_curve.columns:
+        return
+
+    fig, ax = plt.subplots(figsize=(8.2, 4.8))
+    ax.plot(
+        df_curve["epoch"],
+        df_curve["train_loss"],
+        label="train loss",
+        linewidth=2,
+        color=SEABORN_COLORS[0],
+    )
+    style_axes(ax, "Training Loss", "Epoch", "Loss")
+    style_legend(ax, loc="best")
+    finalize_figure(fig)
+    save_figure(fig, out_dir / "training_loss_curve.png", dpi=300)
     plt.close(fig)
 
 
@@ -911,6 +959,145 @@ def make_mae_by_bin_plot(summary: pd.DataFrame, out_dir: Path, target_name=None)
     plt.close(fig)
 
 
+def _draw_sig_bracket(ax, x1, x2, y, text, linewidth=1.0, fontsize=9):
+    # Draw a simple significance bracket between two x positions (in data coords: x indices).
+    ylim = ax.get_ylim()
+    span = ylim[1] - ylim[0] if ylim[1] > ylim[0] else 1.0
+    pad = span * 0.02
+    y_top = y
+    y_mid = y_top - pad
+    bracket_y = [y_mid - pad, y_top, y_top, y_mid - pad]
+    ax.plot([x1, x1, x2, x2], bracket_y, color="black", linewidth=linewidth, clip_on=False)
+    # Draw label slightly above the bracket with a white bbox for readability
+    ax.text((x1 + x2) / 2, y_top + pad, text, ha="center", va="bottom", fontsize=fontsize, clip_on=False, bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8})
+
+
+def make_dx_site_two_panel_mae(df_long: pd.DataFrame, out_dir: Path):
+    """Create a two-panel figure: (A) MAE by diagnosis group, (B) MAE by site.
+
+    Expects `df_long` to contain columns: `ID_ind` (or `ID`), `y`, `pred`, `dx_grouped`, `site`.
+    Computes per-subject MAE as the subject-wise mean absolute error across targets.
+    """
+    df = df_long.copy()
+    id_col = None
+    for candidate in ("ID_ind", "ID", "subject_id"):
+        if candidate in df.columns:
+            id_col = candidate
+            break
+    if id_col is None:
+        raise ValueError("No subject ID column found in dataframe (expected ID_ind or ID)")
+
+    # Compute per-subject MAE
+    df["abs_error"] = (pd.to_numeric(df.get("pred"), errors="coerce") - pd.to_numeric(df.get("y"), errors="coerce")).abs()
+    subj = (
+        df.groupby(id_col, observed=False)
+        .agg(mae=("abs_error", "mean"))
+        .reset_index()
+    )
+
+    # Attach demographics (take first non-null per subject)
+    demo_cols = ["dx_grouped", "site"]
+    for col in demo_cols:
+        if col in df.columns:
+            mapping = df.dropna(subset=[col]).drop_duplicates(subset=[id_col]).set_index(id_col)[col]
+            subj[col] = subj[id_col].map(mapping).astype("string").fillna("NA")
+        else:
+            subj[col] = "NA"
+
+    # Panel A: Diagnosis order by severity (exclude the catch-all 'Other')
+    dx_order = ["CU", "MCI", "AlzCS dem"]
+    present_dx = [d for d in dx_order if d in subj["dx_grouped"].unique()]
+
+    # Panel B: site order by median MAE ascending
+    site_medians = subj.groupby("site", observed=False)["mae"].median().sort_values()
+    site_order = list(site_medians.index)
+
+    # Create three columns: left plot, spacer, right plot. Spacer guarantees a visible gap.
+    # Make spacer even smaller per user request (~0.01)
+    fig, axes = plt.subplots(1, 3, figsize=(12.2, 5.2), gridspec_kw={"width_ratios": [1, 0.01, 1]})
+    # axes: [0]=dx, [1]=spacer, [2]=site
+    spacer_ax = axes[1]
+    spacer_ax.set_visible(False)
+    fig.subplots_adjust(wspace=0.01, hspace=0.02)
+
+    # Common styling
+    palette = get_category_palette(present_dx if present_dx else ["NA"]) if present_dx else {"NA": CUSTOM_PALETTE[0]}
+
+    # A: Diagnosis (left)
+    ax = axes[0]
+    plot_df = subj[subj["dx_grouped"] .isin(present_dx)].copy()
+    if not plot_df.empty:
+        sns.boxplot(data=plot_df, x="dx_grouped", y="mae", order=present_dx, ax=ax, palette=get_category_palette(present_dx), width=0.6, fliersize=0)
+        # Draw jittered points colored by group to match the box palette, with white edge
+        palette_map_dx = get_category_palette(present_dx)
+        for i, grp in enumerate(present_dx):
+            vals = plot_df.loc[plot_df["dx_grouped"] == grp, "mae"].dropna().to_numpy()
+            if vals.size == 0:
+                continue
+            rng = np.random.default_rng(seed=0)
+            jitter = rng.normal(0, 0.08, size=len(vals))
+            xs = np.full(len(vals), i) + jitter
+            ax.scatter(xs, vals, color=palette_map_dx[grp], edgecolor="white", linewidth=0.4, s=28, alpha=0.75, zorder=5)
+        # Add n counts under ticks
+        counts = [int((plot_df["dx_grouped"] == val).sum()) for val in present_dx]
+        xtick_labels = [f"{val}\n(n={c})" for val, c in zip(present_dx, counts)]
+        ax.set_xticklabels(xtick_labels, rotation=0, fontsize=TICK_SIZE)
+        ax.set_xlabel("")
+        ax.set_ylabel("MAE (SUVR)")
+        ax.grid(axis="y", alpha=0.25)
+
+        # Significance annotations removed per user request (no bracket or p-value markers)
+
+    else:
+        ax.set_visible(False)
+
+    # B: Site (right)
+    ax = axes[2]
+    plot_df = subj[subj["site"].isin(site_order)].copy()
+    if not plot_df.empty:
+        sns.boxplot(data=plot_df, x="site", y="mae", order=site_order, ax=ax, palette=get_category_palette(site_order), width=0.6, fliersize=0)
+        # Jittered colored points per site
+        palette_map_site = get_category_palette(site_order)
+        for i, grp in enumerate(site_order):
+            vals = plot_df.loc[plot_df["site"] == grp, "mae"].dropna().to_numpy()
+            if vals.size == 0:
+                continue
+            rng = np.random.default_rng(seed=1)
+            jitter = rng.normal(0, 0.08, size=len(vals))
+            xs = np.full(len(vals), i) + jitter
+            ax.scatter(xs, vals, color=palette_map_site[grp], edgecolor="white", linewidth=0.4, s=28, alpha=0.75, zorder=5)
+        counts = [int((plot_df["site"] == val).sum()) for val in site_order]
+        xtick_labels = [f"{val}\n(n={c})" for val, c in zip(site_order, counts)]
+        ax.set_xticklabels(xtick_labels, rotation=0, fontsize=TICK_SIZE)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.grid(axis="y", alpha=0.25)
+
+        # Significance annotations removed per user request (no bracket or p-value markers)
+    else:
+        ax.set_visible(False)
+
+    # Panel letters (A, B) only for the visible axes (left and right)
+    for ax_, label in zip([axes[0], axes[2]], ["A", "B"]):
+        if ax_.get_visible():
+            ax_.annotate(label, xy=(0, 1), xycoords="axes fraction", xytext=(-14, 8), textcoords="offset points", ha="right", va="bottom", fontsize=14, fontweight="bold", clip_on=False)
+    # Ensure y-axis covers the full observed per-subject MAE range (avoid unexpected autoscaling/clipping)
+    try:
+        y_max = float(np.nanmax(subj["mae"].to_numpy(dtype=float)))
+        if np.isfinite(y_max) and y_max > 0:
+            y_lim = (-0.05 * y_max, y_max * 1.08)
+            for ax_set in (axes[0], axes[2]):
+                if ax_set.get_visible():
+                    ax_set.set_ylim(y_lim)
+    except Exception:
+        # If something goes wrong, fall back to autoscaling
+        pass
+    # Finalize and save
+    finalize_figure(fig, rect=(0.0, 0.0, 0.995, 0.995))
+    save_figure(fig, out_dir / "mae_dx_site_panel.png", dpi=300)
+    plt.close(fig)
+
+
 def make_residual_trend_plot(df: pd.DataFrame, out_dir: Path, target_name: str):
     df = df.copy()
     df["error"] = df["pred"] - df["y"]
@@ -1200,7 +1387,7 @@ def main():
     bin_summary = summarize_error_by_bin(df_err)
     bin_summary.to_csv(error_out_dir / "global_error_by_true_bin.csv", index=False)
     make_mae_by_bin_plot(bin_summary, error_out_dir, args.target_name)
-    make_residual_trend_plot(df_err, error_out_dir, args.target_name)
+    # Intentionally disabled: residual_trend_vs_true.png
     save_subgroup_bin_summary(
         df_err,
         error_out_dir,
@@ -1211,7 +1398,7 @@ def main():
     group_cols = ["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex", "age"]
     make_group_mae_boxstrip_plots(df_for_error, error_out_dir, group_cols, args.target_name)
     run_group_significance_tests(df_for_error, error_out_dir, group_cols)
-    make_site_raw_value_plot(df_for_error, error_out_dir, args.target_name)
+    # Intentionally disabled: site_raw_value_distribution.png
     make_site_error_correlation_plot(df_for_error, error_out_dir, args.target_name)
     make_training_distribution_plot(run_dir, error_out_dir, args.target_name)
 

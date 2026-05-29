@@ -2,20 +2,21 @@
 
 ## Purpose
 
-This repository contains the code used for my project on predicting regional tau-PET SUVR values from PET images using a 3D CNN.  
+This repository contains the code used to develop and evaluate a 3D convolutional neural network for predicting regional tau-PET SUVR values from PET images. The analyses reported in this project comprise model development on the training cohort, final train/test evaluation, and external validation on the AVID unseen dataset.
+
 The main final outputs are:
 
 - results from 5-fold cross-validation on the training pool
 - final train/test model
 - zero-shot external validation on the AVID unseen dataset
-- journal-style summary plots for these results
+- summary plots for these results
 
 
 ## What This Project Does
 
 Input:
 
-- preprocessed tau-PET images
+- tau-PET images
 - demographic / label tables
 
 Prediction targets used in the final project:
@@ -40,7 +41,7 @@ Main external validation script:
 Main plotting scripts:
 
 - [results_plotting/plot_multi_regression_results.py](results_plotting/plot_multi_regression_results.py)
-- [results_plotting/plot_cv_summary.py](results_plotting/plot_cv_summary.py)
+- [results_plotting/plot_unseen_validation_results.py](results_plotting/plot_unseen_validation_results.py)
 
 ## Repository Structure
 
@@ -48,7 +49,6 @@ Main scripts:
 
 - [run.py](run.py): training, train/validation/test split, and k-fold CV
 - [run_val.py](run_val.py): external validation / zero-shot evaluation
-- [run_vis.py](run_vis.py): visualization script
 
 Core modules in [src/](src/):
 
@@ -79,7 +79,7 @@ Notebooks:
 
 ## Software Environment
 
-The project environment used on Berzelius is defined in:
+The project was run using NSC's Berzelius high performance computing environment. The environment used on Berzelius is defined in:
 
 - [environment_Berzelius.yml](environment_Berzelius.yml)
 
@@ -109,6 +109,10 @@ Important note:
 
 - the repository does **not** contain the original medical image data
 - to reproduce results, the original data must be available in the expected folder format
+- on Berzelius, the cached `tau_batch_*.pt` files were generated with [convert_tau_pkl_to_pt.py](../scripts/convert_tau_pkl_to_pt.py) so that the MONAI preprocessing step could be completed on CPU before training
+- this preprocessing step reduced the risk of GPU starvation caused by slow data loading, which can otherwise lead Berzelius to terminate a job while the GPU waits for input
+- the resulting `.pt` batches are already preprocessed; when `tau_batch_*.pt` files are present, the loader path in [src/data.py](src/data.py) bypasses MONAI transforms
+- if only raw images are available, the code can still apply MONAI preprocessing on the fly through the raw-image loading path rather than the cached `.pt` path
 
 By default, if `--input_path` is not given, the code uses:
 
@@ -247,15 +251,11 @@ python results_plotting/plot_multi_regression_results.py \
 python results_plotting/plot_cv_summary.py \
   --run_dir <path_to_cv_result_folder>
 
-# Plot other visualizations
-python results_plotting/plot_metatemporal_results.py \
-  --run_dir <path_to_result_folder>
-
-python results_plotting/plot_unseen_validation_scatter.py \
+# Plot unseen dataset results
+python results_plotting/plot_unseen_validation_results.py \
   --run_dir <path_to_external_validation_result_folder>
+```
 
-python results_plotting/plot_visual_read_results.py \
-  --run_dir <path_to_result_folder>
 ## Final Figures Produced
 
 The simplified plotting code generates:
@@ -279,30 +279,10 @@ CV plotting generates:
 
 ## Notes For Reproducibility
 
-- Set the random seed using `--seed` argument in the scripts. Default is `42`.
-- Keep the same target order when specifying `--targets`:
-  - `MetaTemporal`
-  - `MesialTemporal`
-  - `Frontal`
-  - `TemporoParietal`
 - Use the same train/test split settings as the example scripts in [sbatch_scripts/](sbatch_scripts/).
 - Result folder naming follows the convention defined in [src/params.py](src/params.py).
 - External validation requires the trained model folder from a previous run to be available.
 - The project was developed for Berzelius SLURM runs (use `sbatch sbatch_scripts/<script>.sh`), but commands can also be run manually if the environment and data are available.
-
-To reproduce the project:
-
-1. Create the conda environment from [environment_Berzelius.yml](environment_Berzelius.yml):
-   ```bash
-   conda env create -f environment_Berzelius.yml
-   conda activate ai-pet
-   ```
-2. Prepare tau-PET image data and demographics tables in the expected folder structure.
-3. Run the Gothenburg 5-fold CV training (see "Final Runs" section).
-4. Run the final Gothenburg train/test training.
-5. Run the AVID unseen external validation using the final Gothenburg model folder.
-6. Run the plotting scripts to generate visualizations.
-7. All results and figures are saved in the auto-generated `results/` folder.
 
 ## Short Summary
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import importlib.util
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -9,8 +8,10 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+import plot_metatemporal_results as mod
 
-PREFERRED_TARGET_ORDER = ["MetaTemporal", "TemporoParietal", "Frontal", "MesialTemporal"]
+
+PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
 
 
 def save_figure(fig: plt.Figure, out_path: Path, **kwargs) -> bool:
@@ -30,14 +31,6 @@ def order_targets(targets: list[str]) -> list[str]:
             ordered.append(target_map[key])
     remaining = [t for t in targets if t not in ordered]
     return ordered + remaining
-
-
-def load_plot_module():
-    script_path = Path(__file__).resolve().parent / "plot_metatemporal_results.py"
-    spec = importlib.util.spec_from_file_location("plot_metatemporal_results", script_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def parse_args():
@@ -125,6 +118,23 @@ def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
         axes[row_idx][col_idx].set_visible(False)
 
 
+def add_panel_labels(axes, labels: list[str]):
+    flat_axes = [ax for row in axes for ax in row]
+    for ax, label in zip(flat_axes, labels):
+        ax.annotate(
+            label,
+            xy=(0, 1),
+            xycoords="axes fraction",
+            xytext=(-14, 8),
+            textcoords="offset points",
+            ha="right",
+            va="bottom",
+            fontsize=14,
+            fontweight="bold",
+            clip_on=False,
+        )
+
+
 def compute_per_region_metrics(df: pd.DataFrame, targets: list[str]) -> pd.DataFrame:
     rows = []
     for target in targets:
@@ -168,9 +178,9 @@ def plot_scatter(ax, df: pd.DataFrame, target: str, mod):
     target_label = get_target_label(target, mod)
     mod.style_axes(
         ax,
-        target_label,
-        f"Reference {target_label}",
-        f"Predicted {target_label}",
+        mod.pretty_region_name(target),
+        "Reference SUVR",
+        "Predicted SUVR",
     )
     ax.text(
         0.96,
@@ -204,9 +214,9 @@ def save_individual_plots(df: pd.DataFrame, targets: list[str], run_dir: Path, m
         target_label = get_target_label(target, mod)
         mod.style_axes(
             ax,
-            f"{model_label}: Reference vs Predicted\n{target_label}",
-            f"Reference {target_label}",
-            f"Predicted {target_label}",
+            mod.pretty_region_name(target),
+            "Reference SUVR",
+            "Predicted SUVR",
         )
         corr = float(np.corrcoef(y_true, y_pred)[0, 1]) if len(y_true) > 1 else np.nan
         ax.text(
@@ -225,7 +235,6 @@ def save_individual_plots(df: pd.DataFrame, targets: list[str], run_dir: Path, m
 
 def main():
     args = parse_args()
-    mod = load_plot_module()
     mod.sns.set_theme(style="whitegrid", palette=mod.CUSTOM_PALETTE)
 
     runs = [(Path(args.final_run_dir).resolve(), "Final")]
@@ -272,10 +281,9 @@ def main():
             c = idx % n_cols
             ax = axes[r][c]
             plot_scatter(ax, df, target, mod)
-            target_label = get_target_label(target, mod)
-            ax.set_title(mod.wrap_plot_title(target_label), fontsize=mod.TITLE_SIZE, pad=10)
 
         hide_unused_axes(axes, len(common_targets), n_rows * n_cols, n_cols)
+        add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(common_targets))])
     else:
         n_rows = len(tables)
         n_cols = len(common_targets)
@@ -286,8 +294,7 @@ def main():
                 ax = axes[row_idx][col_idx]
                 plot_scatter(ax, df, target, mod)
                 if row_idx == 0:
-                    target_label = get_target_label(target, mod)
-                    ax.set_title(mod.wrap_plot_title(target_label), fontsize=mod.TITLE_SIZE, pad=10)
+                    ax.set_title(mod.wrap_plot_title(mod.pretty_region_name(target)), fontsize=mod.TITLE_SIZE, pad=10)
 
             axes[row_idx][0].text(
                 -0.18,
@@ -300,13 +307,9 @@ def main():
                 fontsize=mod.TITLE_SIZE,
                 fontweight="bold",
             )
+        add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(common_targets))])
 
-    fig.suptitle(
-        f"AVID Unseen Test Set: Reference vs Predicted {mod.format_suvr_label()}",
-        y=0.995,
-        fontsize=mod.TITLE_SIZE,
-    )
-    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.97))
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     combined_name = "true_vs_predicted_final_vs_4x.png" if len(runs) > 1 else "true_vs_predicted_final.png"
     combined_path = out_dir / combined_name
     save_figure(fig, combined_path, dpi=300)

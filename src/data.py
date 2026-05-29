@@ -201,16 +201,16 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
         p = Path(args.input_path) / "data.pt"
         if p.exists():
             data_file = torch.load(p, map_location="cpu", weights_only=True) # torch tensor with shape [S, D, H, W]
-            print(f"Reconstructed loaders from data.pt with shape [S, D, H, W].")
+            # Note: don't print here — loader-specific messages are emitted in `get_loader`.
         else:
             data_file = Path(args.input_path) / "data" / args.data_type
+            # Defer logging to `get_loader` so messages indicate which split (train/val/test) is being created.
             if any(Path(data_file).glob("tau_batch_*.pt")):
-                print("Reconstructed loaders from preprocessed tau_batch_*.pt batches. Skipping MONAI preprocessing.")
+                pass
             elif any(Path(data_file).glob("data_*.pt")):
-                print("Reconstructed loaders from data_idx.pt for each scan.")
+                pass
             else:
                 tfm = get_transforms(tuple(args.image_shape))
-                print("Reconstructed imgs from tau_batch_x.pkl for batched images.")
     else:
         tfm = get_transforms(tuple(args.image_shape))
         data_file = None
@@ -227,6 +227,22 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
 def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=False, train_test='train'):
     g = torch.Generator()
     g.manual_seed(args.seed)
+
+    # Informative logging about how this loader is constructed (train/val/test)
+    try:
+        dfpath = Path(data_file) if data_file is not None else None
+    except Exception:
+        dfpath = None
+    if dfpath is not None:
+        if any(dfpath.glob("tau_batch_*.pt")):
+            print(f"Reconstructed {train_test} loader from preprocessed tau_batch_*.pt batches. Skipping MONAI preprocessing.")
+        elif any(dfpath.glob("data_*.pt")):
+            print(f"Reconstructed {train_test} loader from data_*.pt per-scan files.")
+        elif dfpath.name == 'data.pt':
+            print(f"Reconstructed {train_test} loader from data.pt (in-memory tensor).")
+        else:
+            # No preprocessed pt batches found; images will be loaded with MONAI transforms
+            print(f"Creating {train_test} loader using MONAI transforms (from raw images).")
 
     dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats, augment=augment)
 

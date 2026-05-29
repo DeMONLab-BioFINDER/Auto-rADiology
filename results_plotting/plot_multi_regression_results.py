@@ -2,28 +2,18 @@
 
 import argparse
 from pathlib import Path
-import importlib.util
 import math
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 
+import plot_metatemporal_results as mod
+
 
 def save_figure(fig, out_path: Path, **kwargs) -> bool:
-    if out_path.exists():
-        print(f"[skip] {out_path} exists")
-        return False
     fig.savefig(out_path, **kwargs)
     return True
-
-
-def load_single_target_plot_module():
-    script_path = Path(__file__).resolve().parent / "plot_metatemporal_results.py"
-    spec = importlib.util.spec_from_file_location("plot_metatemporal_results", script_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def parse_args():
@@ -84,7 +74,7 @@ def compute_metrics(df: pd.DataFrame) -> dict:
     }
 
 
-PREFERRED_TARGET_ORDER = ["MetaTemporal", "TemporoParietal", "Frontal", "MesialTemporal"]
+PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
 
 
 def order_targets(targets: list[str]) -> list[str]:
@@ -132,6 +122,23 @@ def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
         axes[row_idx][col_idx].set_visible(False)
 
 
+def add_panel_labels(axes, labels: list[str], *, xytext=(-14, 8), fontsize=14):
+    flat_axes = [ax for row in axes for ax in row]
+    for ax, label in zip(flat_axes, labels):
+        ax.annotate(
+            label,
+            xy=(0, 1),
+            xycoords="axes fraction",
+            xytext=xytext,
+            textcoords="offset points",
+            ha="right",
+            va="bottom",
+            fontsize=fontsize,
+            fontweight="bold",
+            clip_on=False,
+        )
+
+
 def make_true_vs_predicted_panel(
     df_preds_wide: pd.DataFrame,
     out_dir: Path,
@@ -177,12 +184,12 @@ def make_true_vs_predicted_panel(
         else:
             corr = np.nan
 
-        target_label = get_target_label(target, mod)
+        display_target = mod.pretty_region_name(target)
         mod.style_axes(
             ax,
-            f"Reference vs Predicted\n{target_label}",
-            f"Reference {target_label}",
-            f"Predicted {target_label}",
+            display_target,
+            "Reference SUVR",
+            "Predicted SUVR",
         )
         ax.text(
             0.96,
@@ -194,9 +201,9 @@ def make_true_vs_predicted_panel(
             bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
         )
     hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))])
 
-    fig.suptitle(mod.wrap_plot_title(title), y=0.94, fontsize=mod.TITLE_SIZE)
-    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / filename, dpi=300)
     mod.plt.close(fig)
 
@@ -232,15 +239,15 @@ def make_suvr_distribution_panel(
         target_label = get_target_label(target, mod)
         mod.style_axes(
             ax,
-            f"Distribution of {target_label}",
-            target_label,
+            target_label.replace(" SUVR", ""),
+            "SUVR",
             "Count",
         )
 
     hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))], xytext=(-3, 2), fontsize=13)
 
-    fig.suptitle(mod.wrap_plot_title(title), y=0.99, fontsize=mod.TITLE_SIZE)
-    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / filename, dpi=300)
     mod.plt.close(fig)
 
@@ -259,7 +266,8 @@ def make_mae_boxstrip_panel(
 
     n_cols = 2 if len(targets) > 1 else 1
     n_rows = math.ceil(len(targets) / n_cols)
-    fig, axes = mod.plt.subplots(n_rows, n_cols, figsize=(6.2 * n_cols, 6.2 * n_rows), squeeze=False)
+    fig, axes = mod.plt.subplots(n_rows, n_cols, figsize=(5.4 * n_cols, 5.4 * n_rows), squeeze=False)
+    fig.subplots_adjust(wspace=0.01, hspace=0.02)
 
     for idx, target in enumerate(targets):
         r = idx // n_cols
@@ -276,8 +284,8 @@ def make_mae_boxstrip_panel(
 
     hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
 
-    fig.suptitle(mod.wrap_plot_title(title), y=0.99, fontsize=mod.TITLE_SIZE)
-    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.98, 0.95))
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))])
+    mod.finalize_figure(fig, rect=(0.0, 0.0, 0.995, 0.995))
     save_figure(fig, base_dir / filename, dpi=300)
     mod.plt.close(fig)
 
@@ -310,7 +318,6 @@ def main():
         "test split csv",
     )
 
-    mod = load_single_target_plot_module()
     mod.sns.set_theme(style="whitegrid", palette=mod.CUSTOM_PALETTE)
 
     df_preds_wide = pd.read_csv(preds_path)
@@ -339,6 +346,7 @@ def main():
     shared_panel_title = "Validation Set" if has_validation_run else "Test Set"
 
     mod.make_training_curve(df_curve, shared_fig_dir)
+    mod.make_training_loss_curve(df_curve, shared_fig_dir)
 
     make_true_vs_predicted_panel(
         df_preds_wide,
@@ -351,16 +359,69 @@ def main():
 
     demo_path = find_demo_csv()
     if demo_path is not None:
-        make_suvr_distribution_panel(
-            demo_path,
-            shared_fig_dir,
-            targets,
-            mod,
-            title=f"Reference {mod.format_suvr_label()} Distributions (demo.csv)",
-            filename="suvr_distribution_panel.png",
-        )
+        try:
+            make_suvr_distribution_panel(
+                demo_path,
+                shared_fig_dir,
+                targets,
+                mod,
+                title=f"Reference {mod.format_suvr_label()} Distributions",
+                filename="suvr_distribution_panel.png",
+            )
+        except Exception as e:
+            print(f"[WARNING] Could not create SUVR distribution panel from demo script: {e}")
+            # Fallback to local implementation to avoid breaking existing output.
+            make_suvr_distribution_panel(
+                demo_path,
+                shared_fig_dir,
+                targets,
+                mod,
+                title=f"Reference {mod.format_suvr_label()} Distributions",
+                filename="suvr_distribution_panel.png",
+            )
     else:
         print("[WARNING] Could not find demo.csv for SUVR distribution panel.")
+
+    # Create a shared (aggregate across targets) long-form dataframe to produce
+    # combined MAE boxstrip plots for each demographic group.
+    try:
+        df_demo_for_merge = pd.read_csv(test_split_path).copy()
+        if "ID" not in df_demo_for_merge.columns and "Unnamed: 0" in df_demo_for_merge.columns:
+            df_demo_for_merge = df_demo_for_merge.rename(columns={"Unnamed: 0": "ID"})
+        df_demo_for_merge = df_demo_for_merge.loc[:, ~df_demo_for_merge.columns.str.contains(r"^Unnamed")]
+        if args.dedup:
+            df_demo_for_merge = df_demo_for_merge.drop_duplicates().reset_index(drop=True)
+    except Exception:
+        df_demo_for_merge = pd.DataFrame()
+
+    rows = []
+    for target in targets:
+        if f"{target}_y" not in df_preds_wide.columns or f"{target}_pred" not in df_preds_wide.columns:
+            continue
+        tmp = df_preds_wide[["ID_ind", f"{target}_y", f"{target}_pred"]].copy()
+        tmp = tmp.rename(columns={f"{target}_y": "y", f"{target}_pred": "pred"})
+        tmp["target"] = target
+        if "ID_ind" in tmp.columns and "ID" in df_demo_for_merge.columns:
+            merged = pd.merge(tmp, df_demo_for_merge, left_on="ID_ind", right_on="ID", how="left")
+        else:
+            merged = tmp.copy()
+        rows.append(merged)
+
+    if rows:
+        df_all_long = pd.concat(rows, ignore_index=True)
+        if "dx" in df_all_long.columns:
+            df_all_long["dx_grouped"] = mod.combine_dx_groups(df_all_long["dx"])
+        # Shared group columns to plot (same as per-target)
+        shared_group_cols = ["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex", "age"]
+        # Generate shared MAE boxstrip plots in the shared figures directory
+        # Use default title inside the plotting function ("Absolute Error") instead of "All targets"
+        mod.make_group_mae_boxstrip_plots(df_all_long, shared_fig_dir, shared_group_cols, target_name=None)
+        # Also create a concise two-panel figure (A: DX, B: Site) for main text
+        try:
+            mod.make_dx_site_two_panel_mae(df_all_long, shared_fig_dir)
+        except Exception as e:
+            print(f"[warning] could not create two-panel MAE figure: {e}")
+        print(f"[done] shared MAE boxstrip plots saved to {shared_fig_dir}")
 
     for target in targets:
         display_target = mod.pretty_region_name(target)
@@ -481,7 +542,7 @@ def main():
         bin_summary = mod.summarize_error_by_bin(df_err)
         bin_summary.to_csv(error_out_dir / "global_error_by_true_bin.csv", index=False)
         mod.make_mae_by_bin_plot(bin_summary, error_out_dir, target)
-        mod.make_residual_trend_plot(df_err, error_out_dir, target)
+        # Intentionally disabled: residual_trend_vs_true.png
         mod.save_subgroup_bin_summary(
             df_err,
             error_out_dir,
@@ -490,7 +551,7 @@ def main():
         group_cols = ["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex", "age"]
         mod.make_group_mae_boxstrip_plots(df_merged, error_out_dir, group_cols, target)
         mod.run_group_significance_tests(df_merged, error_out_dir, group_cols)
-        mod.make_site_raw_value_plot(df_merged, error_out_dir, target)
+        # Intentionally disabled: site_raw_value_distribution.png
         mod.make_site_error_correlation_plot(df_merged, error_out_dir, target)
         mod.make_training_distribution_plot(run_dir, error_out_dir, target)
 
@@ -498,6 +559,14 @@ def main():
         print(f"[done] {target}: saved demographic plots to {demo_fig_dir} (count: {n_demo_plots})")
         print(f"[done] {target}: saved error analysis to {error_out_dir}")
 
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="dx_grouped",
+        title=f"{mod.format_suvr_label()} Absolute Error by DX",
+        filename="mae_boxstrip_by_dx_panel.png",
+    )
     make_mae_boxstrip_panel(
         run_dir / "figures_multi",
         targets,
@@ -513,6 +582,14 @@ def main():
         group="site",
         title=f"{mod.format_suvr_label()} Absolute Error by Site",
         filename="mae_boxstrip_by_site_panel.png",
+    )
+    make_mae_boxstrip_panel(
+        run_dir / "figures_multi",
+        targets,
+        mod,
+        group="age",
+        title=f"{mod.format_suvr_label()} Absolute Error by Age",
+        filename="mae_boxstrip_by_age_panel.png",
     )
     make_mae_boxstrip_panel(
         run_dir / "figures_multi",
