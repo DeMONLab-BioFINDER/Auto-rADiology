@@ -12,7 +12,7 @@ The main final outputs are:
 - summary plots for these results
 
 
-## What This Project Does
+## Project Overview
 
 Input:
 
@@ -40,7 +40,7 @@ Main external validation script:
 
 Main plotting scripts:
 
-- [results_plotting/plot_multi_regression_results.py](results_plotting/plot_multi_regression_results.py)
+- [results_plotting/plot_heldout_test_results.py](results_plotting/plot_heldout_test_results.py)
 - [results_plotting/plot_unseen_validation_results.py](results_plotting/plot_unseen_validation_results.py)
 
 ## Repository Structure
@@ -138,7 +138,7 @@ For this final project, the target columns also need to exist:
 - `Frontal`
 - `TemporoParietal`
 
-## Final Runs Used in This Project
+## Primary Workflows
 
 The final project includes three main training/evaluation workflows:
 
@@ -238,60 +238,44 @@ Typical saved outputs include:
 - Model checkpoints and per-epoch training metrics
 - Per-region performance summaries
 
-## How To Recreate The Plots
+## Plotting Workflow
 
 After generating result folders from the training/validation runs, use the plotting scripts in [results_plotting/](results_plotting/):
 
 ```bash
-# Plot a single regression run
-python results_plotting/plot_multi_regression_results.py \
-  --run_dir <path_to_result_folder>
+# Plot the main paper figures
+python results_plotting/plot_heldout_test_results.py \
+  <path_to_result_folder>
 
-# Plot CV summary
-python results_plotting/plot_cv_summary.py \
-  --run_dir <path_to_cv_result_folder>
-
-# Plot unseen dataset results
+# Plot held-out test results
 python results_plotting/plot_unseen_validation_results.py \
   --run_dir <path_to_external_validation_result_folder>
 ```
 
-## Final Figures Produced
+## Generated Figures
 
 The simplified plotting code generates:
 
-- `true_vs_predicted_panel.png`
-- `training_validation_loss.png` when per-epoch training curves exist
-- `metrics_summary.png`
-- `per_region_metrics.csv`
-- `residual_panel.png`
-- `error_histograms.png`
-- `mae_boxstrip_by_site_panel.png` when metadata are available
-- `mae_boxstrip_by_gender_panel.png` when metadata are available
-- `mae_boxstrip_by_apoe_panel.png` when metadata are available
+- `mae_dx_site_panel.png`
+- `suvr_distribution_panel.png`
+- `true_vs_predicted_panel_test.png`
+- `true_vs_predicted_final_unseen.png`
 
-CV plotting generates:
-
-- `cv_metrics_by_fold.png`
-- `cv_best_epoch_histogram.png`
-- `cv_mean_training_validation_loss.png`
-- `cv_metrics_table.csv`
-
-## Notes For Reproducibility
+## Reproducibility Notes
 
 - Use the same train/test split settings as the example scripts in [sbatch_scripts/](sbatch_scripts/).
 - Result folder naming follows the convention defined in [src/params.py](src/params.py).
 - External validation requires the trained model folder from a previous run to be available.
 - The project was developed for Berzelius SLURM runs (use `sbatch sbatch_scripts/<script>.sh`), but commands can also be run manually if the environment and data are available.
 
-## Short Summary
+## Summary
 
 This repository contains all code used to train, evaluate, and plot the final models in the project.  
 The main scripts needed for reproduction are:
 
 - [run.py](run.py)
 - [run_val.py](run_val.py)
-- [results_plotting/plot_multi_regression_results.py](results_plotting/plot_multi_regression_results.py)
-- [results_plotting/plot_cv_summary.py](results_plotting/plot_cv_summary.py)
+- [results_plotting/plot_heldout_test_results.py](results_plotting/plot_heldout_test_results.py)
+- [results_plotting/plot_unseen_validation_results.py](results_plotting/plot_unseen_validation_results.py)
 
 These scripts, together with the original data and the conda environment file, are sufficient to recreate the current final results.

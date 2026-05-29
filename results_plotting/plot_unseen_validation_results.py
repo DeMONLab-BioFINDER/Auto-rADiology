@@ -6,15 +6,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-import plot_metatemporal_results as mod
+import plot_heldout_test_results as mod
 
 
 PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
 
 
-def save_figure(fig: plt.Figure, out_path: Path, **kwargs) -> bool:
+def save_figure(fig, out_path: Path, **kwargs) -> bool:
     if out_path.exists():
         print(f"[skip] {out_path} exists")
         return False
@@ -81,36 +80,6 @@ def get_plot_limits(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, floa
     return lo, hi
 
 
-def draw_scatter(ax, y_true: np.ndarray, y_pred: np.ndarray, mod):
-    ax.scatter(
-        y_true,
-        y_pred,
-        alpha=0.85,
-        s=38,
-        edgecolor="white",
-        linewidth=0.45,
-        color=mod.SEABORN_COLORS[0],
-    )
-
-
-def draw_reference_and_fit_lines(ax, y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    lo, hi = get_plot_limits(y_true, y_pred)
-    ax.plot([lo, hi], [lo, hi], linestyle="--", color="gray", linewidth=1.2, alpha=0.5)
-
-    if len(y_true) > 1:
-        fit_coeffs = np.polyfit(y_true, y_pred, 1)
-        fit_fn = np.poly1d(fit_coeffs)
-        ax.plot([lo, hi], fit_fn([lo, hi]), linestyle="-", color="black", linewidth=1.8)
-        return float(np.corrcoef(y_true, y_pred)[0, 1])
-
-    return np.nan
-
-
-def get_target_label(target: str, mod) -> str:
-    display_target = mod.pretty_region_name(target)
-    return mod.format_suvr_label(display_target)
-
-
 def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
     for idx in range(start_idx, total_slots):
         row_idx = idx // n_cols
@@ -135,53 +104,28 @@ def add_panel_labels(axes, labels: list[str]):
         )
 
 
-def compute_per_region_metrics(df: pd.DataFrame, targets: list[str]) -> pd.DataFrame:
-    rows = []
-    for target in targets:
-        y_true, y_pred = get_valid_target_values(df, target)
-        if len(y_true) == 0:
-            rows.append(
-                {
-                    "target": target,
-                    "n": 0,
-                    "mae": np.nan,
-                    "rmse": np.nan,
-                    "r2": np.nan,
-                    "pearson_r": np.nan,
-                }
-            )
-            continue
-
-        mae = float(mean_absolute_error(y_true, y_pred))
-        rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
-        r2 = float(r2_score(y_true, y_pred)) if len(y_true) > 1 else np.nan
-        corr = float(np.corrcoef(y_true, y_pred)[0, 1]) if len(y_true) > 1 else np.nan
-        rows.append(
-            {
-                "target": target,
-                "n": int(len(y_true)),
-                "mae": mae,
-                "rmse": rmse,
-                "r2": r2,
-                "pearson_r": corr,
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-
 def plot_scatter(ax, df: pd.DataFrame, target: str, mod):
     y_true, y_pred = get_valid_target_values(df, target)
-    draw_scatter(ax, y_true, y_pred, mod)
-    corr = draw_reference_and_fit_lines(ax, y_true, y_pred)
-
-    target_label = get_target_label(target, mod)
-    mod.style_axes(
-        ax,
-        mod.pretty_region_name(target),
-        "Reference SUVR",
-        "Predicted SUVR",
+    ax.scatter(
+        y_true,
+        y_pred,
+        alpha=0.85,
+        s=38,
+        edgecolor="white",
+        linewidth=0.45,
+        color=mod.SEABORN_COLORS[0],
     )
+    lo, hi = get_plot_limits(y_true, y_pred)
+    ax.plot([lo, hi], [lo, hi], linestyle="--", color="gray", linewidth=1.2, alpha=0.5)
+    if len(y_true) > 1:
+        fit_coeffs = np.polyfit(y_true, y_pred, 1)
+        fit_fn = np.poly1d(fit_coeffs)
+        ax.plot([lo, hi], fit_fn([lo, hi]), linestyle="-", color="black", linewidth=1.8)
+        corr = float(np.corrcoef(y_true, y_pred)[0, 1])
+    else:
+        corr = np.nan
+
+    mod.style_axes(ax, mod.pretty_region_name(target), "Reference SUVR", "Predicted SUVR")
     ax.text(
         0.96,
         0.96,
@@ -191,46 +135,6 @@ def plot_scatter(ax, df: pd.DataFrame, target: str, mod):
         va="top",
         bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
     )
-
-
-def save_individual_plots(df: pd.DataFrame, targets: list[str], run_dir: Path, model_label: str, mod):
-    out_root = run_dir / "figures_unseen_scatter"
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    for target in targets:
-        out_dir = out_root / target
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        y_true, y_pred = get_valid_target_values(df, target)
-
-        fig, ax = plt.subplots(figsize=(6.4, 6.4))
-        draw_scatter(ax, y_true, y_pred, mod)
-        lo, hi = get_plot_limits(y_true, y_pred)
-        ax.plot([lo, hi], [lo, hi], linestyle="--", color="gray", linewidth=1.2, alpha=0.5, label="Perfect prediction")
-        fit_coeffs = np.polyfit(y_true, y_pred, 1)
-        fit_fn = np.poly1d(fit_coeffs)
-        ax.plot([lo, hi], fit_fn([lo, hi]), linestyle="-", color="black", linewidth=1.8, label="Fitted line")
-        mod.style_legend(ax, loc="upper left")
-        target_label = get_target_label(target, mod)
-        mod.style_axes(
-            ax,
-            mod.pretty_region_name(target),
-            "Reference SUVR",
-            "Predicted SUVR",
-        )
-        corr = float(np.corrcoef(y_true, y_pred)[0, 1]) if len(y_true) > 1 else np.nan
-        ax.text(
-            0.96,
-            0.96,
-            f"r = {corr:.3f}",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
-        )
-        mod.finalize_figure(fig)
-        save_figure(fig, out_dir / "true_vs_predicted.png", dpi=300)
-        plt.close(fig)
 
 
 def main():
@@ -267,62 +171,25 @@ def main():
         out_dir = runs[0][0] / "figures_unseen_scatter_panel"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for run_dir, model_label, df, _, targets in tables:
-        save_individual_plots(df, targets, run_dir, model_label, mod)
+    n_cols = 2 if len(common_targets) > 1 else 1
+    n_rows = int(np.ceil(len(common_targets) / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 5.2 * n_rows), squeeze=False)
 
-    if len(tables) == 1:
-        n_cols = 2 if len(common_targets) > 1 else 1
-        n_rows = int(np.ceil(len(common_targets) / n_cols))
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 5.2 * n_rows), squeeze=False)
-        _, model_label, df, _, _ = tables[0]
+    _, model_label, df, _, _ = tables[0]
+    for idx, target in enumerate(common_targets):
+        r = idx // n_cols
+        c = idx % n_cols
+        plot_scatter(axes[r][c], df, target, mod)
 
-        for idx, target in enumerate(common_targets):
-            r = idx // n_cols
-            c = idx % n_cols
-            ax = axes[r][c]
-            plot_scatter(ax, df, target, mod)
-
-        hide_unused_axes(axes, len(common_targets), n_rows * n_cols, n_cols)
-        add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(common_targets))])
-    else:
-        n_rows = len(tables)
-        n_cols = len(common_targets)
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 5.2 * n_rows), squeeze=False)
-
-        for row_idx, (_, model_label, df, _, _) in enumerate(tables):
-            for col_idx, target in enumerate(common_targets):
-                ax = axes[row_idx][col_idx]
-                plot_scatter(ax, df, target, mod)
-                if row_idx == 0:
-                    ax.set_title(mod.wrap_plot_title(mod.pretty_region_name(target)), fontsize=mod.TITLE_SIZE, pad=10)
-
-            axes[row_idx][0].text(
-                -0.18,
-                0.5,
-                model_label,
-                transform=axes[row_idx][0].transAxes,
-                rotation=90,
-                va="center",
-                ha="center",
-                fontsize=mod.TITLE_SIZE,
-                fontweight="bold",
-            )
-        add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(common_targets))])
+    hide_unused_axes(axes, len(common_targets), n_rows * n_cols, n_cols)
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(common_targets))])
 
     mod.finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
-    combined_name = "true_vs_predicted_final_vs_4x.png" if len(runs) > 1 else "true_vs_predicted_final.png"
-    combined_path = out_dir / combined_name
+    combined_path = out_dir / "true_vs_predicted_final_unseen.png"
     save_figure(fig, combined_path, dpi=300)
     plt.close(fig)
 
-    metrics_path = out_dir / "per_region_metrics.csv"
-    metrics_df = compute_per_region_metrics(tables[0][2], common_targets)
-    metrics_df.to_csv(metrics_path, index=False)
-    print(f"Saved per-region metrics to: {metrics_path}")
-
     print(f"Saved combined comparison figure to: {combined_path}")
-    for run_dir, model_label, _, csv_path, _ in tables:
-        print(f"Saved per-target figures for {model_label} using {csv_path} under {run_dir / 'figures_unseen_scatter'}")
 
 
 if __name__ == "__main__":

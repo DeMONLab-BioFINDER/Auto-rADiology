@@ -123,6 +123,246 @@ def style_legend(ax, **kwargs):
         legend.get_title().set_fontsize(LEGEND_SIZE)
     return legend
 
+def resolve_existing_path(candidates, label: str) -> Path:
+    for path in candidates:
+        if path.exists():
+            return path
+    searched = "\n".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Could not find {label}. Checked:\n{searched}")
+
+PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
+
+def order_targets(targets: list[str]) -> list[str]:
+    target_map = {t.lower(): t for t in targets}
+    ordered = []
+    for pref in PREFERRED_TARGET_ORDER:
+        key = pref.lower()
+        if key in target_map:
+            ordered.append(target_map[key])
+    remaining = [t for t in targets if t not in ordered]
+    return ordered + remaining
+
+def find_demo_csv() -> Path | None:
+    script_path = Path(__file__).resolve()
+    demo_candidates = [
+        script_path.parents[1] / "data" / "demo.csv",
+        script_path.parents[2] / "data" / "demo.csv",
+    ]
+    return next((p for p in demo_candidates if p.exists()), None)
+
+def infer_targets(df_preds: pd.DataFrame) -> list[str]:
+    targets = []
+    for col in df_preds.columns:
+        if col.endswith("_y"):
+            target = col[:-2]
+            pred_col = f"{target}_pred"
+            if pred_col in df_preds.columns:
+                targets.append(target)
+    return targets
+
+def get_valid_target_values(df: pd.DataFrame, target: str) -> tuple[np.ndarray, np.ndarray]:
+    y_true = pd.to_numeric(df[f"{target}_y"], errors="coerce").to_numpy()
+    y_pred = pd.to_numeric(df[f"{target}_pred"], errors="coerce").to_numpy()
+    valid = np.isfinite(y_true) & np.isfinite(y_pred)
+    return y_true[valid], y_pred[valid]
+
+def get_plot_limits(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
+    lo = float(np.nanmin([y_true.min(), y_pred.min()]))
+    hi = float(np.nanmax([y_true.max(), y_pred.max()]))
+    return lo, hi
+
+def add_panel_labels(axes, labels: list[str], *, xytext=(-14, 8), fontsize=14):
+    flat_axes = [ax for row in axes for ax in row]
+    for ax, label in zip(flat_axes, labels):
+        ax.annotate(
+            label,
+            xy=(0, 1),
+            xycoords="axes fraction",
+            xytext=xytext,
+            textcoords="offset points",
+            ha="right",
+            va="bottom",
+            fontsize=fontsize,
+            fontweight="bold",
+            clip_on=False,
+        )
+
+def hide_unused_axes(axes, start_idx: int, total_slots: int, n_cols: int):
+    for idx in range(start_idx, total_slots):
+        row_idx = idx // n_cols
+        col_idx = idx % n_cols
+        axes[row_idx][col_idx].set_visible(False)
+
+def make_true_vs_predicted_panel(
+    df_preds_wide: pd.DataFrame,
+    out_dir: Path,
+    targets: list[str],
+    title: str,
+    filename: str,
+):
+    targets = order_targets(targets)
+    if not targets:
+        return
+
+    n_cols = 2 if len(targets) > 1 else 1
+    n_rows = math.ceil(len(targets) / n_cols)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 5.2 * n_rows), squeeze=False)
+
+    for idx, target in enumerate(targets):
+        r = idx // n_cols
+        c = idx % n_cols
+        ax = axes[r][c]
+
+        y_true, y_pred = get_valid_target_values(df_preds_wide, target)
+        if len(y_true) == 0:
+            ax.set_visible(False)
+            continue
+
+        ax.scatter(
+            y_true,
+            y_pred,
+            alpha=0.85,
+            s=38,
+            edgecolor="white",
+            linewidth=0.45,
+            color=SEABORN_COLORS[0],
+        )
+        lo, hi = get_plot_limits(y_true, y_pred)
+        ax.plot([lo, hi], [lo, hi], linestyle="--", color="gray", linewidth=1.2, alpha=0.5)
+        if len(y_true) > 1:
+            fit_coeffs = np.polyfit(y_true, y_pred, 1)
+            fit_fn = np.poly1d(fit_coeffs)
+            ax.plot([lo, hi], fit_fn([lo, hi]), linestyle="-", color="black", linewidth=1.8)
+            corr = float(np.corrcoef(y_true, y_pred)[0, 1])
+        else:
+            corr = np.nan
+
+        display_target = pretty_region_name(target)
+        style_axes(
+            ax,
+            display_target,
+            "Reference SUVR",
+            "Predicted SUVR",
+        )
+        ax.text(
+            0.96,
+            0.96,
+            f"r = {corr:.3f}",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        )
+    hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))])
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+def make_suvr_distribution_panel(
+    demo_path: Path,
+    out_dir: Path,
+    targets: list[str],
+    title: str,
+    filename: str,
+):
+    df_demo = pd.read_csv(demo_path)
+    targets = [t for t in order_targets(targets) if t in df_demo.columns]
+    if not targets:
+        return
+
+    n_cols = 2 if len(targets) > 1 else 1
+    n_rows = math.ceil(len(targets) / n_cols)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 4.6 * n_rows), squeeze=False)
+
+    for idx, target in enumerate(targets):
+        r = idx // n_cols
+        c = idx % n_cols
+        ax = axes[r][c]
+
+        values = pd.to_numeric(df_demo[target], errors="coerce").dropna()
+        if values.empty:
+            ax.set_visible(False)
+            continue
+
+        sns.histplot(values, bins=22, kde=True, ax=ax, color=SEABORN_COLORS[0])
+        target_label = format_suvr_label(pretty_region_name(target))
+        style_axes(
+            ax,
+            target_label.replace(" SUVR", ""),
+            "SUVR",
+            "Count",
+        )
+
+    hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))], xytext=(-3, 2), fontsize=13)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+def run_multi_regression_figures(run_dir: Path, *, dedup: bool = True):
+    validation_dir = run_dir / "validation" / "Gothenburg"
+    evaluation_dir = run_dir / "evaluation" / "Gothenburg"
+    preds_path = resolve_existing_path(
+        [
+            validation_dir / "Test_Gothenburg_results.csv",
+            evaluation_dir / "Eval_Gothenburg_results.csv",
+        ],
+        "predictions csv",
+    )
+    test_split_path = resolve_existing_path(
+        [
+            run_dir / "train-test-split" / "train-test-split_testing-set.csv",
+            run_dir / "train-test-split" / "preds" / "train-test-split_testing-set.csv",
+            run_dir / "splits" / "Hold-out_testing-set.csv",
+        ],
+        "test split csv",
+    )
+
+    sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)
+
+    df_preds_wide = pd.read_csv(preds_path)
+    if dedup:
+        df_preds_wide = df_preds_wide.drop_duplicates().reset_index(drop=True)
+
+    df_demo = pd.read_csv(test_split_path).copy()
+    if "ID" not in df_demo.columns and "Unnamed: 0" in df_demo.columns:
+        df_demo = df_demo.rename(columns={"Unnamed: 0": "ID"})
+    df_demo = df_demo.loc[:, ~df_demo.columns.str.contains(r"^Unnamed")]
+    if dedup:
+        df_demo = df_demo.drop_duplicates().reset_index(drop=True)
+
+    targets = infer_targets(df_preds_wide)
+    if not targets:
+        raise ValueError("Could not infer target names from prediction csv columns.")
+
+    shared_fig_dir = run_dir / "figures_multi" / "_shared"
+    shared_fig_dir.mkdir(parents=True, exist_ok=True)
+
+    make_true_vs_predicted_panel(
+        df_preds_wide,
+        shared_fig_dir,
+        targets,
+        title=f"Test Set: Reference vs Predicted {format_suvr_label()}",
+        filename="true_vs_predicted_panel_test.png",
+    )
+
+    demo_path = find_demo_csv()
+    if demo_path is not None:
+        make_suvr_distribution_panel(
+            demo_path,
+            shared_fig_dir,
+            targets,
+            title=f"Reference {format_suvr_label()} Distributions",
+            filename="suvr_distribution_panel.png",
+        )
+    else:
+        print("[WARNING] Could not find demo.csv for SUVR distribution panel.")
+
+    print(f"[done] paper-only shared figures saved to {shared_fig_dir}")
+
 
 def make_group_mae_boxstrip_plots(
     df: pd.DataFrame,
@@ -1226,188 +1466,26 @@ def main():
     error_out_dir.mkdir(exist_ok=True)
 
     df_metrics, df_preds, df_curve = load_results(run_dir, args.dataset)
-    df_for_error = df_preds.copy()
+    demo_path = next((p for p in [
+        Path(__file__).resolve().parents[1] / "data" / "demo.csv",
+        Path(__file__).resolve().parents[2] / "data" / "demo.csv",
+    ] if p.exists()), None)
 
-    # Merge with demographics and plot true vs predicted colored by each demographic
-    script_path = Path(__file__).resolve()
-    demo_candidates = [
-        script_path.parents[1] / "data" / "demo.csv",  # Auto-rADiology/data/demo.csv
-        script_path.parents[2] / "data" / "demo.csv",  # ../data/demo.csv
-    ]
-    demo_path = next((p for p in demo_candidates if p.exists()), None)
+    if demo_path is None:
+        print("[WARNING] Could not find demographics csv for MAE panel.")
+        return
 
-    n_demo_plots = 0
-    if demo_path is not None:
-        df_demo = pd.read_csv(demo_path)
-        # Merge on ID_ind (preds) <-> ID (demo.csv)
-        if "ID_ind" in df_preds.columns and "ID" in df_demo.columns:
-            df_merged = pd.merge(df_preds, df_demo, left_on="ID_ind", right_on="ID", how="left")
-        else:
-            # Fallback: try index-based concat
-            df_merged = pd.concat([df_preds.reset_index(drop=True), df_demo.reset_index(drop=True)], axis=1)
-
-        if "dx" in df_merged.columns:
-            df_merged["dx_grouped"] = combine_dx_groups(df_merged["dx"])
-
-        df_for_error = df_merged.copy()
-
-        # Keep only biologically meaningful demographic columns.
-        preferred_demo_cols = [
-            "site",
-            "age",
-            "gender",
-            "sex",
-            "dx_grouped",
-            "apoe",
-            "amyloid_status",
-            "CDR",
-        ]
-        demo_cols = [col for col in preferred_demo_cols if col in df_merged.columns]
-        if not demo_cols:
-            print("[WARNING] No preferred demographic columns found in merged dataframe.")
-        else:
-            print(f"[INFO] Demographic plots will be generated for: {', '.join(demo_cols)}")
-
-        for col in demo_cols:
-            vals = df_merged[col]
-            # Skip if all values are nan or only one unique value
-            if vals.isnull().all() or vals.nunique() <= 1:
-                continue
-            fig, ax = plt.subplots(figsize=(6, 6))
-
-            # Keep age continuous (gradient), but treat other low-cardinality numerics as categorical.
-            is_categorical = (col != "age") and (
-                (not pd.api.types.is_numeric_dtype(vals)) or (vals.nunique(dropna=True) <= 12)
-            )
-            if is_categorical:
-                cat_vals = vals.astype("string").fillna("NA")
-                categories = get_display_order(cat_vals, col)
-                cat_to_code = {cat: i for i, cat in enumerate(categories)}
-                color_codes = cat_vals.map(cat_to_code).astype(float)
-                palette_map = get_category_palette(categories)
-                palette = [palette_map[cat] for cat in categories]
-                cmap = ListedColormap(palette)
-
-                scatter = ax.scatter(
-                    df_merged["y"],
-                    df_merged["pred"],
-                    c=color_codes,
-                    cmap=cmap,
-                    alpha=0.82,
-                    s=36,
-                    edgecolor="white",
-                    linewidth=0.3,
-                    label=None,
-                )
-            else:
-                num_vals = pd.to_numeric(vals, errors="coerce")
-                if num_vals.isnull().all():
-                    plt.close(fig)
-                    continue
-                scatter = ax.scatter(
-                    df_merged["y"],
-                    df_merged["pred"],
-                    c=num_vals,
-                    cmap=SEABORN_CMAP,
-                    alpha=0.84,
-                    s=36,
-                    edgecolor="white",
-                    linewidth=0.3,
-                    label=None,
-                )
-            lo = np.nanmin([df_merged["y"].min(), df_merged["pred"].min()])
-            hi = np.nanmax([df_merged["y"].max(), df_merged["pred"].max()])
-            # x=y reference line (faint)
-            ax.plot([lo, hi], [lo, hi], linestyle="--", color="gray", linewidth=1.2, alpha=0.5, label="Perfect prediction")
-            # Fitted regression line
-            z = np.polyfit(df_merged["y"].dropna(), df_merged["pred"].dropna(), 1)
-            p = np.poly1d(z)
-            ax.plot([lo, hi], p([lo, hi]), linestyle="-", color="black", linewidth=1.8, label="Fitted line")
-            col_display = "dx" if col == "dx_grouped" else col
-            target_label = format_suvr_label(pretty_region_name(args.target_name))
-            style_axes(
-                ax,
-                f"Reference vs Predicted {target_label}\nColored by {col_display}",
-                f"Reference {target_label}",
-                f"Predicted {target_label}",
-            )
-
-            # Add legend for categorical, colorbar for numeric
-            if is_categorical:
-                handles = [
-                    plt.Line2D(
-                        [0],
-                        [0],
-                        marker="o",
-                        color="w",
-                        label=str(cat),
-                        markerfacecolor=palette[i],
-                        markersize=8,
-                    )
-                    for i, cat in enumerate(categories)
-                ]
-                ncol = 2 if len(categories) > 4 else 1
-                ax.legend(
-                    handles=handles,
-                    title=None,
-                    loc="upper left" if col == "dx_grouped" else "lower right",
-                    ncol=ncol,
-                    frameon=True,
-                    facecolor="white",
-                    framealpha=0.88,
-                    fontsize=9 if col == "dx_grouped" else LEGEND_SIZE,
-                    borderpad=0.4,
-                    labelspacing=0.35,
-                    handletextpad=0.5,
-                    columnspacing=1.0,
-                )
-            else:
-                cbar = fig.colorbar(scatter, ax=ax, label=col)
-                cbar.ax.tick_params(labelsize=TICK_SIZE)
-                cbar.set_label(col, fontsize=LABEL_SIZE)
-            finalize_figure(fig)
-            fname = f"true_vs_predicted_by_{col}.png"
-            save_figure(fig, demo_fig_dir / fname, dpi=300)
-            plt.close(fig)
-            n_demo_plots += 1
+    df_demo = pd.read_csv(demo_path)
+    if "ID_ind" in df_preds.columns and "ID" in df_demo.columns:
+        df_merged = pd.merge(df_preds, df_demo, left_on="ID_ind", right_on="ID", how="left")
     else:
-        searched = "\n".join(str(p) for p in demo_candidates)
-        print(f"[WARNING] Could not find demographics csv. Checked:\n{searched}")
+        df_merged = pd.concat([df_preds.reset_index(drop=True), df_demo.reset_index(drop=True)], axis=1)
 
-    make_training_curve(df_curve, out_dir)
-    make_training_curve_cut_first4(df_curve, out_dir)
-    make_training_curve_cut_first4_panel(df_curve, out_dir)
-    make_scatter_plot(df_preds, out_dir, args.target_name)
-    make_residual_plot(df_preds, out_dir, args.target_name)
-    make_residual_histogram(df_preds, out_dir)
-    make_true_value_histogram(df_preds, out_dir, args.target_name)
+    if "dx" in df_merged.columns:
+        df_merged["dx_grouped"] = combine_dx_groups(df_merged["dx"])
 
-    # Conditioned error analysis: global and subgroup performance by true-value bin.
-    df_err = add_error_bins(df_for_error)
-    bin_summary = summarize_error_by_bin(df_err)
-    bin_summary.to_csv(error_out_dir / "global_error_by_true_bin.csv", index=False)
-    make_mae_by_bin_plot(bin_summary, error_out_dir, args.target_name)
-    # Intentionally disabled: residual_trend_vs_true.png
-    save_subgroup_bin_summary(
-        df_err,
-        error_out_dir,
-        subgroup_cols=["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex"],
-    )
-
-    # New group-level diagnostics using MAE (subject-level absolute error).
-    group_cols = ["dx_grouped", "amyloid_status", "apoe", "CDR", "site", "gender", "sex", "age"]
-    make_group_mae_boxstrip_plots(df_for_error, error_out_dir, group_cols, args.target_name)
-    run_group_significance_tests(df_for_error, error_out_dir, group_cols)
-    # Intentionally disabled: site_raw_value_distribution.png
-    make_site_error_correlation_plot(df_for_error, error_out_dir, args.target_name)
-    make_training_distribution_plot(run_dir, error_out_dir, args.target_name)
-
-    print_summary(df_metrics, df_preds, args.target_name)
-
-    print(f"\nSaved figures to: {out_dir}")
-
-    print(f"Saved demographic plots to: {demo_fig_dir} (count: {n_demo_plots})")
-    print(f"Saved conditioned error analysis to: {error_out_dir}")
+    make_dx_site_two_panel_mae(df_merged, out_dir)
+    print(f"[done] paper-only MAE panel saved to {out_dir}")
 
 
 if __name__ == "__main__":
