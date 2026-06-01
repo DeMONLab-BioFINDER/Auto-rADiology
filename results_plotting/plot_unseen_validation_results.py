@@ -35,7 +35,6 @@ def order_targets(targets: list[str]) -> list[str]:
 def parse_args():
     parser = argparse.ArgumentParser(description="Create true-vs-predicted scatter plots for AVID unseen validation runs.")
     parser.add_argument("--final_run_dir", required=True, help="Run directory for the final model.")
-    parser.add_argument("--four_x_run_dir", default=None, help="Run directory for the 4x model (optional).")
     parser.add_argument(
         "--out_dir",
         default=None,
@@ -142,8 +141,6 @@ def main():
     mod.sns.set_theme(style="whitegrid", palette=mod.CUSTOM_PALETTE)
 
     runs = [(Path(args.final_run_dir).resolve(), "Final")]
-    if args.four_x_run_dir:
-        runs.append((Path(args.four_x_run_dir).resolve(), "4x"))
 
     tables = []
     target_sets = []
@@ -165,8 +162,6 @@ def main():
 
     if args.out_dir:
         out_dir = Path(args.out_dir).resolve()
-    elif len(runs) > 1:
-        out_dir = runs[0][0] / "figures_unseen_scatter_compare"
     else:
         out_dir = runs[0][0] / "figures_unseen_scatter_panel"
     out_dir.mkdir(parents=True, exist_ok=True)
