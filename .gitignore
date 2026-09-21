@@ -24,3 +24,11 @@ results/**/checkpoints/
 # PyTorch/torchscript artifacts
 *.pt
 *.pth
+
+# Local dev/test environment and synthetic smoke-test data
+.venv/
+/data/
+/results/
+
+# Personal Claude Code project notes (not for the team)
+CLAUDE.md
