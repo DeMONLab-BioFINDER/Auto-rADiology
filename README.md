@@ -251,28 +251,40 @@ python results_plotting/plot_unseen_validation_results.py \
 # Regional SUVR model: ground-truth SUVR distributions (discovery + AVID, Universal + per-region)
 python results_plotting/plot_suvr_distributions.py
 
+# Regional SUVR model: per-fold metric spread from a --run_kfold_cv run (e.g. submit_mse-cv5.sh)
+python results_plotting/plot_cv_summary.py \
+  <path_to_result_folder>
+
 # Visual-read model: class balance + agreement with the expert clinical read
 python results_plotting/plot_visual_read_results.py \
   <path_to_result_folder>
 ```
 
-Shared plotting helpers (styling, formatting, figure builders, stats) live in [results_plotting/plot_utils.py](results_plotting/plot_utils.py) and are imported by all four scripts above.
+All figures land in `<path_to_result_folder>/figures/` (AVID validation figures land in `<path_to_result_folder>/validation/figures/`, since `--final_run_dir` there is the validation subfolder). Shared plotting helpers (styling, formatting, figure builders, stats) live in [results_plotting/plot_utils.py](results_plotting/plot_utils.py) and are imported by all five scripts above.
+
+`submit_mse-final-47.sh`, `submit_mse-cv5.sh`, and `submit_visual-read-subset-test.sh` already call the matching plotting script automatically right after training, as a separate non-fatal step (a plotting bug won't mark the training job itself as failed) — you only need to run these by hand for AVID validation, ground-truth distributions, or to regenerate a run's figures later.
 
 ## Generated Figures
 
 Regional SUVR model, from `plot_heldout_test_results.py` (held-out test set):
 
-- `true_vs_predicted_panel_test.png` — 4-panel per-region scatter, annotated with Pearson r, MAE, RMSE, R²
-- `true_vs_predicted_panel_test_stats.csv` — the same per-region stats as a table
-- `bland_altman_panel_test.png` — per-region mean-vs-difference agreement plot with bias and 95% limits of agreement
-- `mae_subgroup_panel_test.png` — per-subject MAE boxplots by diagnosis, site, sex, APOE, amyloid status, and age group (whichever are present in the demographics table)
+- `suvr_true_vs_predicted_test.png` — 4-panel per-region scatter, annotated with Pearson r, MAE, RMSE, R²
+- `suvr_true_vs_predicted_test_stats.csv` — the same per-region stats as a table
+- `suvr_bland_altman_test.png` — per-region mean-vs-difference agreement plot with bias and 95% limits of agreement
+- `suvr_mae_subgroup_test.png` — per-subject MAE boxplots by diagnosis, site, sex, APOE, amyloid status, and age group (whichever are present in the demographics table)
 
-From `plot_unseen_validation_results.py` (AVID external validation) — the same three: `true_vs_predicted_final_unseen.png`, `true_vs_predicted_final_unseen_stats.csv`, `bland_altman_panel_unseen.png`.
+From `plot_unseen_validation_results.py` (AVID external validation) — the same pattern: `suvr_true_vs_predicted_avid_unseen.png`, `suvr_true_vs_predicted_avid_unseen_stats.csv`, `suvr_bland_altman_avid_unseen.png`.
 
 From `plot_suvr_distributions.py` (dataset-level, not tied to one run — saved to `<proj_path>/results/suvr_distributions/` by default, i.e. alongside the run folders, never inside the git repo):
 
 - `suvr_distribution_universal_demo.png`, `suvr_distribution_universal_avid.png` — Universal SUVR distribution, discovery vs. AVID
 - `suvr_distribution_regions_demo.png`, `suvr_distribution_regions_avid.png` — same, broken out per region
+
+From `plot_cv_summary.py` (a `--run_kfold_cv` run, e.g. `submit_mse-cv5.sh` — reads the fold-level `metrics.csv` that `src/cv.py`'s `kfold_cv()` writes; there's no single held-out test split in CV mode, so this is fold-to-fold spread rather than a scatter panel):
+
+- `suvr_cv_fold_metrics.png` — MAE/RMSE/R² per fold (regression targets)
+- `visual_read_cv_fold_metrics.png` — AUC/accuracy per fold (only if CV was run with a `visual_read` target)
+- `cv_summary_stats.csv` — mean ± std per metric across folds
 
 Visual-read model, from `plot_visual_read_results.py`:
 
