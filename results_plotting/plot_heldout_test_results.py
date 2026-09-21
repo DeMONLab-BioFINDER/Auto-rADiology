@@ -277,6 +277,7 @@ def make_suvr_distribution_panel(
     n_rows = math.ceil(len(targets) / n_cols)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.2 * n_cols, 4.6 * n_rows), squeeze=False)
 
+    single_plot = len(targets) == 1
     for idx, target in enumerate(targets):
         r = idx // n_cols
         c = idx % n_cols
@@ -288,16 +289,21 @@ def make_suvr_distribution_panel(
             continue
 
         sns.histplot(values, bins=22, kde=True, ax=ax, color=SEABORN_COLORS[0])
-        target_label = format_suvr_label(pretty_region_name(target))
+        if single_plot:
+            plot_title = title
+        else:
+            target_label = format_suvr_label(pretty_region_name(target))
+            plot_title = target_label.replace(" SUVR", "")
         style_axes(
             ax,
-            target_label.replace(" SUVR", ""),
+            plot_title,
             "SUVR",
             "Count",
         )
 
     hide_unused_axes(axes, len(targets), n_rows * n_cols, n_cols)
-    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))], xytext=(-3, 2), fontsize=13)
+    if not single_plot:
+        add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(targets))], xytext=(-3, 2), fontsize=13)
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / filename, dpi=300)

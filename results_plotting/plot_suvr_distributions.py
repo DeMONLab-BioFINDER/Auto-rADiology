@@ -17,7 +17,7 @@ def find_avid_demo_csv() -> Path | None:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Create SUVR distribution panels from demo.csv and AVID demo files."
+        description="Create Universal SUVR distribution plots from demo.csv and AVID demo files."
     )
     parser.add_argument(
         "--demo_csv",
@@ -59,9 +59,9 @@ def main():
         mod.make_suvr_distribution_panel(
             demo_path,
             out_dir,
-            mod.PREFERRED_TARGET_ORDER,
-            title=f"Reference {mod.format_suvr_label()} Distributions",
-            filename="suvr_distribution_panel_demo.png",
+            ["Universal"],
+            title="Ground truth SUVR distribution for discovery dataset",
+            filename="suvr_distribution_universal_demo.png",
         )
     else:
         print("[WARNING] Could not find demo.csv for SUVR distribution panel.")
@@ -71,9 +71,9 @@ def main():
         mod.make_suvr_distribution_panel(
             demo_unseen_path,
             out_dir,
-            mod.PREFERRED_TARGET_ORDER,
-            title=f"AVID Unseen: Reference {mod.format_suvr_label()} Distributions",
-            filename="suvr_distribution_panel_avid.png",
+            ["Universal"],
+            title="Ground truth SUVR distribution for AVID external test set",
+            filename="suvr_distribution_universal_avid.png",
         )
     else:
         print("[WARNING] Could not find demo_AVID_unseen.csv for SUVR distribution panel.")
