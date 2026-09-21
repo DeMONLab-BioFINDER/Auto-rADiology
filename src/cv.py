@@ -11,10 +11,10 @@ from src.data import get_train_val_loaders
 from src.early_stopping import EarlyStopper
 from src.train import train_one_epoch, validate_one_epoch, inference
 from src.vis import run_visualization
-from src.utils import (append_metrics_csv, save_checkpoint, build_model_from_args,
-                       load_best_checkpoint, plot_metrics_from_csv, save_train_test_subjects,
-                       random_assign_nan_labels, add_quantile_bins, is_continuous_numeric,
-                       collapse_dx_to_other)
+from src.checkpoints import save_checkpoint, load_best_checkpoint
+from src.model_factory import build_model_from_args
+from src.training_io import append_metrics_csv, plot_metrics_from_csv, save_train_test_subjects
+from src.splits import random_assign_nan_labels, add_quantile_bins, is_continuous_numeric, collapse_dx_to_other
 
 
 def kfold_cv(df_clean, stratify_labels, args):

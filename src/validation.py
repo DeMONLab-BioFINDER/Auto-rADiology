@@ -14,14 +14,17 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from src.data import build_master_table, get_transforms, get_loader
 from src.train import inference
 from src.cv import train_model
-from src.utils import compute_smooth_sigma_vox, build_model_from_args, load_best_checkpoint, add_quantile_bins
+from src.utils import compute_smooth_sigma_vox
+from src.model_factory import build_model_from_args
+from src.checkpoints import load_best_checkpoint
+from src.splits import add_quantile_bins
 
 import torch.multiprocessing as mp
 os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
 mp.set_sharing_strategy("file_system")
 
 
-def run_few_shots(args, df, tfm, base_model, targets_list):
+def run_few_shots(args, df, tfm, data_file, base_model, targets_list):
     finetune_path = os.path.join(args.output_path, f"fewshot-{args.few_shot}")
     os.makedirs(finetune_path, exist_ok=True)
 

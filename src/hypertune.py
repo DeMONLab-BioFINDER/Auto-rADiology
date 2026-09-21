@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 from src.cv import run_fold
 from src.hyperparam_spaces import suggest_common, suggest_model
-from src.utils import clone_args, combine_metrics_for_minimize
+from src.utils import clone_args
+from src.training_io import combine_metrics_for_minimize
 from src.hypertune_plot import optuna_plot
 
 def objective(trial, base_args, df_clean, splits, model_name):
