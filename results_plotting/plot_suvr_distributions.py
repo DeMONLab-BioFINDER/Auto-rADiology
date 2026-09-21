@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-import plot_heldout_test_results as mod
+import plot_utils as mod
 
 
 def find_avid_demo_csv() -> Path | None:
@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument(
         "--out_dir",
         default=None,
-        help="Output directory for the distribution panels.",
+        help="Output directory for the distribution panels (defaults to <proj_path>/results/suvr_distributions).",
     )
     return parser.parse_args()
 
@@ -51,8 +51,12 @@ def main():
     if args.out_dir:
         out_dir = Path(args.out_dir).expanduser().resolve()
     else:
-        out_dir = script_path.parents[1] / "figures" / "suvr_distributions"
+        # <proj_path>/results, matching where run.py/run_val.py write everything else —
+        # never inside the git repo itself.
+        out_dir = script_path.parents[2] / "results" / "suvr_distributions"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    region_targets = ["Universal", "MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
 
     demo_path = resolve_path(args.demo_csv, mod.find_demo_csv)
     if demo_path is not None:
@@ -62,6 +66,13 @@ def main():
             ["Universal"],
             title="Ground truth SUVR distribution for discovery dataset",
             filename="suvr_distribution_universal_demo.png",
+        )
+        mod.make_suvr_distribution_panel(
+            demo_path,
+            out_dir,
+            region_targets,
+            title="Ground truth regional SUVR distributions: discovery dataset",
+            filename="suvr_distribution_regions_demo.png",
         )
     else:
         print("[WARNING] Could not find demo.csv for SUVR distribution panel.")
@@ -74,6 +85,13 @@ def main():
             ["Universal"],
             title="Ground truth SUVR distribution for AVID external test set",
             filename="suvr_distribution_universal_avid.png",
+        )
+        mod.make_suvr_distribution_panel(
+            demo_unseen_path,
+            out_dir,
+            region_targets,
+            title="Ground truth regional SUVR distributions: AVID external test set",
+            filename="suvr_distribution_regions_avid.png",
         )
     else:
         print("[WARNING] Could not find demo_AVID_unseen.csv for SUVR distribution panel.")

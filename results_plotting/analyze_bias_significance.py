@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-import plot_metatemporal_results as mod
+import plot_utils as mod
 
 
 GROUP_COLUMNS = ["age", "site", "dx_grouped", "gender", "apoe"]
