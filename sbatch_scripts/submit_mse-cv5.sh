@@ -21,6 +21,7 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
+RUN_LOG=$(mktemp)
 python "./run.py" \
   --no-tune \
   --dataset Gothenburg \
@@ -35,4 +36,23 @@ python "./run.py" \
   --n_splits 5 \
   --es_patience 15 \
   --es_min_delta 0.001 \
-  --model_name_extra mse-cv5
+  --model_name_extra mse-cv5 \
+  2>&1 | tee "$RUN_LOG"
+RUN_STATUS=${PIPESTATUS[0]}
+
+# Figures are a separate, non-fatal step: a plotting bug shouldn't mark this (expensive,
+# GPU) training job as failed. See results_plotting/plot_cv_summary.py.
+RUN_DIR=$(grep -m1 '^Output directory created at: ' "$RUN_LOG" | sed 's/^Output directory created at: //')
+rm -f "$RUN_LOG"
+
+if [[ $RUN_STATUS -ne 0 ]]; then
+  echo "run.py exited with status $RUN_STATUS; skipping figure generation."
+elif [[ -z "$RUN_DIR" ]]; then
+  echo "WARNING: could not determine run output directory; skipping figure generation."
+else
+  echo "Generating figures for $RUN_DIR ..."
+  python results_plotting/plot_cv_summary.py "$RUN_DIR" \
+    || echo "WARNING: figure generation failed (training results are unaffected)."
+fi
+
+exit $RUN_STATUS
