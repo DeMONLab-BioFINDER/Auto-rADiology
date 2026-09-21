@@ -203,7 +203,7 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
             data_file = torch.load(p, map_location="cpu", weights_only=True) # torch tensor with shape [S, D, H, W]
             # Note: don't print here — loader-specific messages are emitted in `get_loader`.
         else:
-            data_file = Path(args.input_path) / "data" / args.data_type
+            data_file = Path(args.input_path) / args.data_type
             # Defer logging to `get_loader` so messages indicate which split (train/val/test) is being created.
             if any(Path(data_file).glob("tau_batch_*.pt")):
                 pass
@@ -287,9 +287,16 @@ def brain_outer_mask(x):
     mask = torch.from_numpy(filled).float().unsqueeze(0)
     return mask.to(x.device)
 
-def get_transforms(target_shape=(128, 128, 128), pct_lo: float = 1.0, pct_hi: float = 99.0,
-    crop_foreground: bool = True, ras: bool = True, interp: str = "trilinear", out_range: tuple = (0.0, 1.0),
-    smooth_sigma_vox: tuple | None = None, apply_brain_mask: bool = True, process: bool = True) -> Compose:
+def get_transforms(target_shape=(128, 128, 128), 
+                pct_lo: float = 1.0, 
+                pct_hi: float = 99.0,
+                crop_foreground: bool = True, 
+                ras: bool = True, 
+                interp: str = "trilinear", 
+                out_range: tuple = (0.0, 1.0),
+                smooth_sigma_vox: tuple | None = None, 
+                apply_brain_mask: bool = True, 
+                process: bool = True) -> Compose:
     """
     PET-optimized preprocessing pipeline using MONAI.
 
