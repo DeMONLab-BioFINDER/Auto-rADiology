@@ -136,7 +136,7 @@ def load_validation_data(args):
         tfm = get_transforms(smooth_sigma_vox = sigma_vox)
     elif 'IDEAS' in args.dataset: # Berzelius, load torch tensors
         print('Validate on IDEAS test set...')
-        test_set = os.path.join(args.best_model_folder, 'splits', 'Hold-out_testing-set.csv')
+        test_set = os.path.join(args.best_model_folder, 'splits', 'test_subjects.csv')
         print(test_set)
         df = pd.read_csv(test_set)
         tfm = args.input_path
@@ -197,8 +197,8 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
 
     model = build_model_from_args(args, device=args.device, n_classes=out_dim)
 
-    ckpt_last = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_last.pt")
-    ckpt_best = os.path.join(args.best_model_folder, "train-test-split/checkpoints/train-test-split_best.pt")
+    ckpt_last = os.path.join(args.best_model_folder, "final_model/checkpoints/final_model_last.pt")
+    ckpt_best = os.path.join(args.best_model_folder, "final_model/checkpoints/final_model_best.pt")
     ckpt = ckpt_last if os.path.exists(ckpt_last) else ckpt_best
     print(f"Loading pretrained model: {ckpt}")
     sd = torch.load(ckpt, map_location=args.device, weights_only=True)

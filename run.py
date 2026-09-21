@@ -7,7 +7,7 @@ import pandas as pd
 from src.params import parse_arguments
 from src.utils import set_seed, clone_args
 from src.splits import train_val_test_split, hold_out_set, make_splits, save_split_audit
-from src.training_io import save_train_test_subjects
+from src.training_io import save_train_test_subjects, write_run_info
 from src.data import build_master_table
 from src.cv import get_stratify_labels, run_fold, cv_median_best_epoch, kfold_cv, print_cv_summary
 from src.hypertune import create_study_from_args, run_optuna, objective, print_best, get_best_args
@@ -16,6 +16,7 @@ from src.hypertune import create_study_from_args, run_optuna, objective, print_b
 def main(args):
     print(f"Early stopping: patience={args.es_patience}, min_delta={args.es_min_delta}.")
     print(f"Split fractions: train={args.train_size}, val={args.val_size}, test={args.test_size}.")
+    write_run_info(args.output_path, args)
 
     # 1) data
     df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
@@ -68,9 +69,9 @@ def main(args):
     # Save the splits
     split_dir = os.path.join(args.output_path, 'splits')
     os.makedirs(split_dir, exist_ok=True)
-    save_train_test_subjects(df_train, df_test, split_dir, 'Hold-out')
+    save_train_test_subjects(df_train, df_test, split_dir)
     if use_validation_split:
-        df_val.to_csv(os.path.join(split_dir, 'Hold-out_validation-set.csv'), index=False)
+        df_val.to_csv(os.path.join(split_dir, 'val_subjects.csv'), index=False)
         save_split_audit(
             df_clean,
             {"training": tr_idx, "validation": va_idx, "testing": te_idx},

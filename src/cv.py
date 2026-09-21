@@ -16,6 +16,10 @@ from src.model_factory import build_model_from_args
 from src.training_io import append_metrics_csv, plot_metrics_from_csv, save_train_test_subjects
 from src.splits import random_assign_nan_labels, add_quantile_bins, is_continuous_numeric, collapse_dx_to_other
 
+# fold_name values that represent "the one trained model for this run" (as opposed to a
+# per-fold CV diagnostic run) - these are grouped under a single final_model/ output folder.
+FINAL_MODEL_FOLD_NAMES = {"train-test-split", "train-val-test", "nestedcv-outer-test"}
+
 
 def kfold_cv(df_clean, stratify_labels, args):
     skf = StratifiedKFold(n_splits=args.n_splits, shuffle=True, random_state=args.seed)
@@ -75,10 +79,16 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     
     train_only = (fold_name == "nestedcv-outer-test")
     no_validation = (val_df is None) or (len(val_df) == 0)
-    output_fold_dir, path_list = _make_outfolder_fold(args.output_path, fold_name) # path_list: csv_path, csv_loss_path, ckpt_path
-    save_train_test_subjects(train_df, eval_df, path_list["preds_dir"], fold_name)
-    if not no_validation:
-        val_df.to_csv(os.path.join(path_list["preds_dir"], f'{fold_name}_validation-set.csv'))
+    is_final_model = fold_name in FINAL_MODEL_FOLD_NAMES
+    output_fold_dir, path_list = _make_outfolder_fold(args.output_path, fold_name, no_validation) # path_list: csv_path, csv_loss_path, ckpt_path
+
+    # For the one final trained model, train/val/test membership is already recorded once
+    # in <output_path>/splits/ (see run.py) - no need to duplicate it per-fold. Real CV folds
+    # (kfold-N) have distinct membership per fold, so those are still recorded here.
+    if not is_final_model:
+        save_train_test_subjects(train_df, eval_df, path_list["preds_dir"])
+        if not no_validation:
+            val_df.to_csv(os.path.join(path_list["preds_dir"], 'val_subjects.csv'), index=False)
 
     if no_validation:
         dl_tr, _ = get_train_val_loaders(train_df, train_df.iloc[:0].copy(), args)
@@ -87,13 +97,14 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         dl_tr, dl_va = get_train_val_loaders(train_df, val_df, args)
     _, dl_eval = get_train_val_loaders(eval_df, eval_df, args, repeat_train=False)
 
-    # Determine output dimension from targets.
+    # Determine output dimension from targets, and which metric families apply.
     # classification -> 2 classes, single regression -> 1, multi-regression -> number of regression targets
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     regression_targets = [t for t in targets_list if t != "visual_read"]
+    class_present = "visual_read" in targets_list
     if regression_targets:
         out_dim = len(regression_targets)
-    elif 'visual_read' in targets_list:
+    elif class_present:
         out_dim = int(train_df["visual_read"].dropna().nunique())
     else:
         out_dim = 1
@@ -107,11 +118,12 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     else:
         print('Train (fixed epochs, no validation)' if no_validation else 'Train (early stop on validation set)')
         model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name, path_list=path_list)
-    
+
     plot_metrics_from_csv(
         path_list["train_eval_csv"],
-        path_list["train_eval_png"],
-        path_list["val_eval_png"],
+        path_list["metrics_dir"],
+        class_present=class_present,
+        reg_present=bool(regression_targets),
     )
 
     # ---- Test (inference) ----
@@ -177,7 +189,15 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
         if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, eval_metric)
 
         # ---- save training loss and evaluation metrics (used to early stop) ----
-        append_metrics_csv(path_list['train_loss_csv'], {"epoch": epoch, **tr_loss_all}, mode='row')
+        batch_losses = np.fromiter(tr_loss_all.values(), dtype=float) if tr_loss_all else np.array([])
+        append_metrics_csv(path_list['train_loss_csv'], {
+            "epoch": epoch,
+            "n_batches": batch_losses.size,
+            "batch_loss_mean": float(batch_losses.mean()) if batch_losses.size else float("nan"),
+            "batch_loss_std": float(batch_losses.std()) if batch_losses.size else float("nan"),
+            "batch_loss_min": float(batch_losses.min()) if batch_losses.size else float("nan"),
+            "batch_loss_max": float(batch_losses.max()) if batch_losses.size else float("nan"),
+        }, mode='row')
         append_metrics_csv(
             path_list["train_eval_csv"],
             {"epoch": epoch, "train_loss": tr_loss_mean, "val_loss": va_loss_mean, **metrics},
@@ -211,8 +231,13 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     return model, best_epoch
 
 
-def _make_outfolder_fold(output_path, fold_name):
-    output_fold_dir = os.path.join(output_path, fold_name)
+def _make_outfolder_fold(output_path, fold_name, no_validation=False):
+    # The single trained model for this run (direct train/test, train/val/test, or the
+    # hypertune outer retrain) is grouped under one "final_model" folder regardless of
+    # which of those three modes produced it, instead of a mode-specific fold_name -
+    # this is what src/validation.py / run_vis.py look for.
+    folder_name = "final_model" if fold_name in FINAL_MODEL_FOLD_NAMES else fold_name
+    output_fold_dir = os.path.join(output_path, folder_name)
     weights_dir = os.path.join(output_fold_dir, "checkpoints")
     metrics_dir = os.path.join(output_fold_dir, "metrics")
     preds_dir = os.path.join(output_fold_dir, "preds")
@@ -220,15 +245,15 @@ def _make_outfolder_fold(output_path, fold_name):
     os.makedirs(metrics_dir, exist_ok=True)
     os.makedirs(preds_dir, exist_ok=True)
 
-    train_eval_csv_path = os.path.join(metrics_dir, "trainning_metrics_per_epoch.csv")
-    train_loss_csv_path = os.path.join(metrics_dir, "trainning_loss_allsubjects_per_epoch.csv")
-    train_eval_png_path = os.path.join(metrics_dir, "trainning_metrics_per_epoch.png")
-    val_eval_png_path = os.path.join(metrics_dir, "validation_metrics_per_epoch.png")
-    test_eval_pkl_path = os.path.join(preds_dir, "train-test_preds-metrics_thisfold.pkl")
+    train_eval_csv_path = os.path.join(metrics_dir, "epoch_eval_metrics.csv")
+    train_loss_csv_path = os.path.join(metrics_dir, "epoch_batch_loss_stats.csv")
+    test_eval_pkl_path = os.path.join(preds_dir, "test_predictions.pkl")
 
-    ckpt_filename = f"{fold_name}_last.pt" if fold_name == "train-test-split" else f"{fold_name}_best.pt"
+    # Without a validation set there's no val-loss-based "best" checkpoint - the model
+    # is saved every epoch and what's kept is simply the last one.
+    ckpt_filename = f"{folder_name}_last.pt" if no_validation else f"{folder_name}_best.pt"
     path_list = {'train_eval_csv': train_eval_csv_path, 'train_loss_csv': train_loss_csv_path,
-                 'train_eval_png': train_eval_png_path, 'val_eval_png': val_eval_png_path,
+                 'metrics_dir': metrics_dir,
                  'train-test_eval_pkl': test_eval_pkl_path,
                  'ckpt': os.path.join(weights_dir, ckpt_filename),
                  'preds_dir': preds_dir}

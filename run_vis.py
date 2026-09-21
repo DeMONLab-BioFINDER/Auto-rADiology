@@ -16,8 +16,8 @@ os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
 mp.set_sharing_strategy("file_system")
 
 def main(args):
-    df_train = pd.read_csv(args.best_model_folder + '/train-test-split/preds/train-test-split_training-set.csv')
-    df_test = pd.read_csv(args.best_model_folder + '/train-test-split/preds/train-test-split_testing-set.csv')
+    df_train = pd.read_csv(args.best_model_folder + '/splits/train_subjects.csv')
+    df_test = pd.read_csv(args.best_model_folder + '/splits/test_subjects.csv')
     df = pd.concat([df_train, df_test], ignore_index=True)
     if args.vis_img_list:
         subject_id_list = [int(t.strip()) for t in args.vis_img_list.split(',') if t.strip()]
@@ -30,9 +30,9 @@ def main(args):
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     n_classes = int(df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
     model = build_model_from_args(args, device=args.device, n_classes=n_classes)
-    ckpt_dir = os.path.join(args.best_model_folder, 'train-test-split', 'checkpoints')
-    ckpt_last = os.path.join(ckpt_dir, 'train-test-split_last.pt')
-    ckpt_best = os.path.join(ckpt_dir, 'train-test-split_best.pt')
+    ckpt_dir = os.path.join(args.best_model_folder, 'final_model', 'checkpoints')
+    ckpt_last = os.path.join(ckpt_dir, 'final_model_last.pt')
+    ckpt_best = os.path.join(ckpt_dir, 'final_model_best.pt')
     ckpt = ckpt_last if os.path.exists(ckpt_last) else ckpt_best
     sd = torch.load(ckpt, map_location=args.device, weights_only=True)
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
