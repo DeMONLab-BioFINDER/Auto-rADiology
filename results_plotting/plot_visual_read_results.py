@@ -34,15 +34,14 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_predictions(run_dir: Path, dataset: str) -> pd.DataFrame:
-    evaluation_dir = run_dir / "evaluation" / dataset
-    preds_path = resolve_existing_path(
-        [
-            run_dir / "validation" / dataset / f"Test_{dataset}_results.csv",
-            evaluation_dir / f"Eval_{dataset}_results.csv",
-        ],
-        "predictions csv",
-    )
+def find_zeroshot_results_csv(run_dir: Path, dataset: str) -> Path | None:
+    """Results from a run_val.py --few_shot 0 external validation (e.g. reusing
+    test_subset as a stand-in unseen dataset), saved under <run_dir>/validation/."""
+    matches = sorted((run_dir / "validation").glob(f"External_validation_{dataset}__*_zeroshot_results.csv"))
+    return matches[0] if matches else None
+
+
+def load_predictions(preds_path: Path) -> pd.DataFrame:
     df = pd.read_csv(preds_path)
     required_cols = {"y", "prob"}
     missing = required_cols - set(df.columns)
@@ -59,8 +58,25 @@ def main():
 
     args = parse_args()
     run_dir = Path(args.run_dir).resolve()
-    out_dir = run_dir / "figures"
-    out_dir.mkdir(exist_ok=True)
+
+    # A zero-shot external validation result (run_val.py) takes priority if present -
+    # its figures live under validation/figures/, separate from the run's own held-out
+    # test figures in figures/, so the two never overwrite each other.
+    zeroshot_path = find_zeroshot_results_csv(run_dir, args.dataset)
+    if zeroshot_path is not None:
+        preds_path = zeroshot_path
+        out_dir = run_dir / "validation" / "figures"
+    else:
+        evaluation_dir = run_dir / "evaluation" / args.dataset
+        preds_path = resolve_existing_path(
+            [
+                run_dir / "validation" / args.dataset / f"Test_{args.dataset}_results.csv",
+                evaluation_dir / f"Eval_{args.dataset}_results.csv",
+            ],
+            "predictions csv",
+        )
+        out_dir = run_dir / "figures"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     demo_path = resolve_path(args.demo_csv, find_demo_csv)
     if demo_path is not None:
@@ -69,7 +85,7 @@ def main():
     else:
         print("[WARNING] Could not find demographics csv for class balance panel.")
 
-    df_preds = load_predictions(run_dir, args.dataset)
+    df_preds = load_predictions(preds_path)
     make_roc_confusion_panel(
         df_preds["y"].to_numpy(),
         df_preds["prob"].to_numpy(),

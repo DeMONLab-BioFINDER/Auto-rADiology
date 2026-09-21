@@ -12,6 +12,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Create true-vs-predicted scatter plots for AVID unseen validation runs.")
     parser.add_argument("--final_run_dir", required=True, help="Run directory for the final model.")
     parser.add_argument(
+        "--dataset",
+        default="AVID_unseen",
+        help="Dataset name passed to run_val.py's --dataset, used to find its results csv "
+             "(External_validation_<dataset>__*_zeroshot_results.csv).",
+    )
+    parser.add_argument(
         "--out_dir",
         default=None,
         help="Directory for the combined comparison figure. Defaults to a folder under the final run directory.",
@@ -19,8 +25,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def find_results_csv(run_dir: Path) -> Path:
-    matches = sorted(run_dir.glob("External_validation_AVID_unseen__*_zeroshot_results.csv"))
+def find_results_csv(run_dir: Path, dataset: str) -> Path:
+    matches = sorted(run_dir.glob(f"External_validation_{dataset}__*_zeroshot_results.csv"))
     if not matches:
         raise FileNotFoundError(f"Could not find validation results CSV in {run_dir}")
     return matches[0]
