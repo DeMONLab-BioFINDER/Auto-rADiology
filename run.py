@@ -21,41 +21,19 @@ def main(args):
     df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
     df_clean, stratify_labels = get_stratify_labels(df, args.stratifycvby, args.seed)
 
-    # Determine whether regression targets are actually present (non-binary numeric)
+    # 'visual_read' is the only classification target; everything else is a regression
+    # target (matches PETDataset/compute_total_loss, which key on this same split).
     targets = [t.strip() for t in args.targets.split(",") if t.strip()]
-    reg_targets_present = False
-    if args.loss_w_reg > 0 and len(targets) > 0:
-        for t in targets:
-            if t in df_clean.columns:
-                col = df_clean[t]
-                # consider regression if numeric and has more than two distinct finite values
-                if pd.api.types.is_numeric_dtype(col):
-                    vals = pd.to_numeric(col, errors="coerce").dropna().unique()
-                    if vals.size > 2:
-                        reg_targets_present = True
-                        break
+    regression_targets = [t for t in targets if t != "visual_read"]
 
+    reg_targets_present = bool(regression_targets) and args.loss_w_reg > 0
     if reg_targets_present and args.reg_loss == "smoothl1":
         print(f"Using SmoothL1 regression loss with beta={args.smoothl1_beta} target units.")
 
-    # Determine whether classification targets are present and their type
-    class_targets_present = False
-    class_type = None
-    if args.loss_w_cls > 0 and len(targets) > 0:
-        max_unique = 0
-        for t in targets:
-            if t in df_clean.columns:
-                col = df_clean[t]
-                col_num = pd.to_numeric(col, errors="coerce")
-                unique_vals = col_num.dropna().unique()
-                if unique_vals.size > max_unique:
-                    max_unique = unique_vals.size
-        if max_unique > 0:
-            class_targets_present = True
-            class_type = 'binary' if max_unique <= 2 else 'multiclass'
-
+    class_targets_present = "visual_read" in targets and args.loss_w_cls > 0 and "visual_read" in df_clean.columns
     if class_targets_present:
-        if class_type == 'binary':
+        n_unique = df_clean["visual_read"].dropna().nunique()
+        if n_unique <= 2:
             print("Using classification loss: BCEWithLogitsLoss (binary targets).")
         else:
             print("Using classification loss: CrossEntropyLoss (multiclass targets).")
