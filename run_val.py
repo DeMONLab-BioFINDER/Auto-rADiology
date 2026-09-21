@@ -25,7 +25,7 @@ def main(args):
         print("\n========== FEW-SHOT FINETUNING MODE ==========\n")
         print('set finetune epochs', args.epochs, '(orginal) to', args.finetune_epochs)
         args.epochs = args.finetune_epochs
-        df_metrics, df_results, df_ids = run_few_shots(args, df, tfm, model, targets_list)
+        df_metrics, df_results, df_ids = run_few_shots(args, df, tfm, data_file, model, targets_list)
         print("metrics:")
         print(df_metrics.describe())
         out_csv_prefix = os.path.join(args.output_path, f'External_validation_{args.dataset}_{args.data_suffix}_{args.targets}_unfreeze-{args.unfreeze_layers}_fewshot-{args.few_shot}_iter-{args.few_shot_iterations}')

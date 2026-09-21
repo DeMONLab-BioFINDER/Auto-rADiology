@@ -122,8 +122,9 @@ def make_output_dir(args, proj_path, script_path):
     if not args.input_path: args.input_path = os.path.join(proj_path, "data") # set input path to <proj_path>/data is not stated
 
     # Construct validation path
-    if args.best_model_folder and not os.path.isabs(args.best_model_folder):
-        args.best_model_folder = os.path.join(args.proj_path, "results", args.best_model_folder)
+    if args.best_model_folder:
+        if not os.path.isabs(args.best_model_folder):
+            args.best_model_folder = os.path.join(args.proj_path, "results", args.best_model_folder)
         args.output_path = os.path.join(args.best_model_folder, 'validation')
     else:
         # Construct output path'

@@ -29,6 +29,6 @@ python "./run_val.py" \
   --best_model_folder "/proj/berzelius-2024-156/users/x_nadpi/results/final-tau_raw_Gothenburg_CNN3D_MetaTemporal,MesialTemporal,Frontal,TemporoParietal_2split80-20_stratify-site,Universal_mse-final-47_20260512_222544" \
   --model CNN3D \
   --data_type tau_raw \
-  --input_path /proj/berzelius-2024-156/users/x_nadpi/data/data/tau_raw \
+  --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
   --targets MetaTemporal,MesialTemporal,Frontal,TemporoParietal \
   --few_shot 0

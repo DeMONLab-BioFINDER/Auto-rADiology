@@ -52,7 +52,7 @@ def run_few_shots(args, df, tfm, data_file, base_model, targets_list):
         df_ids = pd.DataFrame(all_fs_ids)
 
         # ----- FEW-SHOT -----
-        metrics, df_result = few_shots(base_model, df_fs, df_eval, tfm, args, it) # results on test set
+        metrics, df_result = few_shots(base_model, df_fs, df_eval, tfm, data_file, args, it) # results on test set
         print("metrics:", metrics)
 
         # ----- COLLECT -----
@@ -66,11 +66,11 @@ def run_few_shots(args, df, tfm, data_file, base_model, targets_list):
     return df_metrics, df_results, df_ids
 
 
-def few_shots(base_model, df_fs, df_eval, tfm, args, it):
+def few_shots(base_model, df_fs, df_eval, tfm, data_file, args, it):
     # loaders
-    dl_fs_tr = get_loader(df_fs, tfm, args, batch_size=args.batch_size, augment=True, shuffle=True)
-    dl_fs_va = get_loader(df_fs, tfm, args, batch_size=args.batch_size, augment=False, shuffle=False)
-    dl_eval  = get_loader(df_eval, tfm, args, batch_size=args.batch_size, augment=False, shuffle=False)
+    dl_fs_tr = get_loader(df_fs, tfm, data_file, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
+    dl_fs_va = get_loader(df_fs, tfm, data_file, args, batch_size=args.batch_size, augment=False, shuffle=False, train_test='test')
+    dl_eval  = get_loader(df_eval, tfm, data_file, args, batch_size=args.batch_size, augment=False, shuffle=False, train_test='test')
 
     model = copy.deepcopy(base_model) # clone model (important!)
     # freeze backbone
@@ -136,9 +136,9 @@ def load_validation_data(args):
         tfm = get_transforms(smooth_sigma_vox = sigma_vox)
     elif 'IDEAS' in args.dataset: # Berzelius, load torch tensors
         print('Validate on IDEAS test set...')
-        test_set = os.path.join(args.best_model_folder,'Hold-out_testing-set.csv')
+        test_set = os.path.join(args.best_model_folder, 'splits', 'Hold-out_testing-set.csv')
         print(test_set)
-        df = pd.read_csv(test_set, index_col=0)
+        df = pd.read_csv(test_set)
         tfm = args.input_path
     elif 'A4' in args.dataset: # Berzelius, load torch tensors
         print('Validate on A4 dataset...')
@@ -162,7 +162,7 @@ def load_validation_data(args):
             )
 
     if 'ADNI' not in args.dataset:
-        data_file = args.input_path
+        data_file = os.path.join(args.input_path, args.data_type)
     
     # remove nan
     print(df)
