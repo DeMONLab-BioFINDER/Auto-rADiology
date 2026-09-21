@@ -45,10 +45,10 @@ def main():
     if not targets:
         raise ValueError(f"Could not infer target columns from {csv_path}")
 
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else run_dir / "figures_unseen_scatter_panel"
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else run_dir / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    combined_path = out_dir / "true_vs_predicted_final_unseen.png"
+    combined_path = out_dir / "suvr_true_vs_predicted_avid_unseen.png"
     if combined_path.exists():
         print(f"[skip] {combined_path} exists")
         return
@@ -59,9 +59,9 @@ def main():
         targets,
         title="AVID Unseen Validation: Reference vs Predicted SUVR",
         filename=combined_path.name,
-        stats_csv_path=out_dir / "true_vs_predicted_final_unseen_stats.csv",
+        stats_csv_path=out_dir / "suvr_true_vs_predicted_avid_unseen_stats.csv",
     )
-    mod.make_bland_altman_panel(df, out_dir, targets, filename="bland_altman_panel_unseen.png")
+    mod.make_bland_altman_panel(df, out_dir, targets, filename="suvr_bland_altman_avid_unseen.png")
     print(f"Saved combined comparison figure to: {combined_path}")
 
 

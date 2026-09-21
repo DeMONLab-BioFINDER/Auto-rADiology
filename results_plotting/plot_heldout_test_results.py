@@ -16,6 +16,7 @@ from plot_utils import (
     make_subgroup_mae_panel,
     make_true_vs_predicted_panel,
     resolve_existing_path,
+    resolve_path,
 )
 
 DEFAULT_RESULTS_ROOT = Path("../../results")
@@ -40,6 +41,12 @@ def parse_args():
         "--target-name",
         default="MetaTemporal",
         help="Display name for axis labels and titles.",
+    )
+    parser.add_argument(
+        "--demo_csv",
+        default=None,
+        help="Path to the demographics csv (defaults to data/demo.csv if found). Set this "
+             "explicitly for a dataset with its own demo file, e.g. demo_test_subset_tau_raw.csv.",
     )
     return parser.parse_args()
 
@@ -123,7 +130,7 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     _, df_preds = load_results(run_dir, args.dataset)
-    demo_path = find_demo_csv()
+    demo_path = resolve_path(args.demo_csv, find_demo_csv)
 
     if demo_path is None:
         print("[WARNING] Could not find demographics csv for MAE panel.")
@@ -146,16 +153,16 @@ def main():
             out_dir,
             targets,
             title=f"Test Set: Reference vs Predicted {format_suvr_label()}",
-            filename="true_vs_predicted_panel_test.png",
-            stats_csv_path=out_dir / "true_vs_predicted_panel_test_stats.csv",
+            filename="suvr_true_vs_predicted_test.png",
+            stats_csv_path=out_dir / "suvr_true_vs_predicted_test_stats.csv",
         )
-        make_bland_altman_panel(df_merged, out_dir, targets, filename="bland_altman_panel_test.png")
+        make_bland_altman_panel(df_merged, out_dir, targets, filename="suvr_bland_altman_test.png")
         df_long = wide_to_long_predictions(df_merged, targets)
     else:
         # Legacy single-target runs already have plain y/pred columns.
         df_long = df_merged
 
-    make_subgroup_mae_panel(df_long, out_dir, filename="mae_subgroup_panel_test.png")
+    make_subgroup_mae_panel(df_long, out_dir, filename="suvr_mae_subgroup_test.png")
     print(f"[done] figures saved to {out_dir}")
 
 

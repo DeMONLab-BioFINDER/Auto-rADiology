@@ -37,12 +37,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def resolve_path(path_value: str | None, fallback_fn) -> Path | None:
-    if path_value:
-        return Path(path_value).expanduser().resolve()
-    return fallback_fn()
-
-
 def main():
     args = parse_args()
     mod.sns.set_theme(style="whitegrid", palette=mod.CUSTOM_PALETTE)
@@ -58,7 +52,7 @@ def main():
 
     region_targets = ["Universal", "MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
 
-    demo_path = resolve_path(args.demo_csv, mod.find_demo_csv)
+    demo_path = mod.resolve_path(args.demo_csv, mod.find_demo_csv)
     if demo_path is not None:
         mod.make_suvr_distribution_panel(
             demo_path,
@@ -77,7 +71,7 @@ def main():
     else:
         print("[WARNING] Could not find demo.csv for SUVR distribution panel.")
 
-    demo_unseen_path = resolve_path(args.demo_unseen_csv, find_avid_demo_csv)
+    demo_unseen_path = mod.resolve_path(args.demo_unseen_csv, find_avid_demo_csv)
     if demo_unseen_path is not None:
         mod.make_suvr_distribution_panel(
             demo_unseen_path,

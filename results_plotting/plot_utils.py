@@ -170,6 +170,15 @@ def find_demo_csv() -> Path | None:
     return next((p for p in demo_candidates if p.exists()), None)
 
 
+def resolve_path(path_value: str | None, fallback_fn) -> Path | None:
+    """A CLI-supplied path wins; otherwise fall back to auto-detection (e.g. find_demo_csv).
+    Used for demographics CSVs that don't live at the default data/demo.csv (e.g. a
+    dataset-specific file like demo_test_subset_tau_raw.csv on the cluster)."""
+    if path_value:
+        return Path(path_value).expanduser().resolve()
+    return fallback_fn()
+
+
 def resolve_existing_path(candidates, label: str) -> Path:
     for path in candidates:
         if path.exists():

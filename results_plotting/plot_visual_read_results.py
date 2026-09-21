@@ -14,6 +14,7 @@ from plot_utils import (
     make_class_balance_panel,
     make_roc_confusion_panel,
     resolve_existing_path,
+    resolve_path,
 )
 
 
@@ -24,6 +25,12 @@ def parse_args():
     parser.add_argument("run_dir", help="Path to a results run directory trained with --targets visual_read.")
     parser.add_argument("--dataset", default="Gothenburg", help="Dataset name used in the result filenames.")
     parser.add_argument("--group_col", default="site", help="Demographic column to break class balance down by.")
+    parser.add_argument(
+        "--demo_csv",
+        default=None,
+        help="Path to the demographics csv (defaults to data/demo.csv if found). Set this "
+             "explicitly for a dataset with its own demo file, e.g. demo_test_subset_tau_raw.csv.",
+    )
     return parser.parse_args()
 
 
@@ -55,7 +62,7 @@ def main():
     out_dir = run_dir / "figures"
     out_dir.mkdir(exist_ok=True)
 
-    demo_path = find_demo_csv()
+    demo_path = resolve_path(args.demo_csv, find_demo_csv)
     if demo_path is not None:
         df_demo = pd.read_csv(demo_path)
         make_class_balance_panel(df_demo, out_dir, group_col=args.group_col)
