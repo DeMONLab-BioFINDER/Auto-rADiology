@@ -43,6 +43,7 @@ Main plotting scripts:
 
 - [results_plotting/plot_heldout_test_results.py](results_plotting/plot_heldout_test_results.py)
 - [results_plotting/plot_unseen_validation_results.py](results_plotting/plot_unseen_validation_results.py)
+- [results_plotting/plot_visual_read_results.py](results_plotting/plot_visual_read_results.py)
 
 ## Repository Structure
 
@@ -68,15 +69,10 @@ Plotting and utilities:
 - [sbatch_scripts/](sbatch_scripts/): SLURM scripts used on Berzelius
 - [environment_Berzelius.yml](environment_Berzelius.yml): conda environment file
 
-Data utilities:
+Data utilities (onboarding new raw data into the cached tensor format the pipeline expects):
 
-- [convert_tau_pkl_to_pt.py](convert_tau_pkl_to_pt.py): convert pickle to PyTorch format
-- [transform.py](transform.py): data transformation utilities
-
-Notebooks:
-
-- [plot.ipynb](plot.ipynb): interactive plotting notebook
-- [visualize.ipynb](visualize.ipynb): visualization notebook
+- [scripts/convert_tau_pkl_to_pt.py](scripts/convert_tau_pkl_to_pt.py): convert intermediate pickle batches to PyTorch `.pt` batches
+- [scripts/transform.py](scripts/transform.py): preprocess raw BIDS PET images into per-scan `.pt` tensors, anonymizing subject IDs in the process (original ID → shuffled ID mapping saved alongside the output)
 
 ## Software Environment
 
@@ -110,7 +106,7 @@ Important note:
 
 - the repository does **not** contain the original medical image data
 - to reproduce results, the original data must be available in the expected folder format
-- on Berzelius, the cached `tau_batch_*.pt` files were generated with [convert_tau_pkl_to_pt.py](../scripts/convert_tau_pkl_to_pt.py) so that the MONAI preprocessing step could be completed on CPU before training
+- on Berzelius, the cached `tau_batch_*.pt` files were generated with [scripts/convert_tau_pkl_to_pt.py](scripts/convert_tau_pkl_to_pt.py) so that the MONAI preprocessing step could be completed on CPU before training
 - this preprocessing step reduced the risk of GPU starvation caused by slow data loading, which can otherwise lead Berzelius to terminate a job while the GPU waits for input
 - the resulting `.pt` batches are already preprocessed; when `tau_batch_*.pt` files are present, the loader path in [src/data.py](src/data.py) bypasses MONAI transforms
 - if only raw images are available, the code can still apply MONAI preprocessing on the fly through the raw-image loading path rather than the cached `.pt` path
@@ -244,23 +240,45 @@ Typical saved outputs include:
 After generating result folders from the training/validation runs, use the plotting scripts in [results_plotting/](results_plotting/):
 
 ```bash
-# Plot the main paper figures
+# Regional SUVR model: held-out test results (test-set scatter panel + agreement + subgroup MAE)
 python results_plotting/plot_heldout_test_results.py \
   <path_to_result_folder>
 
-# Plot held-out test results
+# Regional SUVR model: AVID unseen external validation results
 python results_plotting/plot_unseen_validation_results.py \
-  --run_dir <path_to_external_validation_result_folder>
+  --final_run_dir <path_to_external_validation_result_folder>
+
+# Regional SUVR model: ground-truth SUVR distributions (discovery + AVID, Universal + per-region)
+python results_plotting/plot_suvr_distributions.py
+
+# Visual-read model: class balance + agreement with the expert clinical read
+python results_plotting/plot_visual_read_results.py \
+  <path_to_result_folder>
 ```
+
+Shared plotting helpers (styling, formatting, figure builders, stats) live in [results_plotting/plot_utils.py](results_plotting/plot_utils.py) and are imported by all four scripts above.
 
 ## Generated Figures
 
-The simplified plotting code generates:
+Regional SUVR model, from `plot_heldout_test_results.py` (held-out test set):
 
-- `mae_dx_site_panel.png`
-- `suvr_distribution_panel.png`
-- `true_vs_predicted_panel_test.png`
-- `true_vs_predicted_final_unseen.png`
+- `true_vs_predicted_panel_test.png` — 4-panel per-region scatter, annotated with Pearson r, MAE, RMSE, R²
+- `true_vs_predicted_panel_test_stats.csv` — the same per-region stats as a table
+- `bland_altman_panel_test.png` — per-region mean-vs-difference agreement plot with bias and 95% limits of agreement
+- `mae_subgroup_panel_test.png` — per-subject MAE boxplots by diagnosis, site, sex, APOE, amyloid status, and age group (whichever are present in the demographics table)
+
+From `plot_unseen_validation_results.py` (AVID external validation) — the same three: `true_vs_predicted_final_unseen.png`, `true_vs_predicted_final_unseen_stats.csv`, `bland_altman_panel_unseen.png`.
+
+From `plot_suvr_distributions.py` (dataset-level, not tied to one run — saved to `<proj_path>/results/suvr_distributions/` by default, i.e. alongside the run folders, never inside the git repo):
+
+- `suvr_distribution_universal_demo.png`, `suvr_distribution_universal_avid.png` — Universal SUVR distribution, discovery vs. AVID
+- `suvr_distribution_regions_demo.png`, `suvr_distribution_regions_avid.png` — same, broken out per region
+
+Visual-read model, from `plot_visual_read_results.py`:
+
+- `visual_read_class_balance.png` — positive/negative counts, overall and by site
+- `visual_read_roc_confusion_panel.png` — ROC curve (AUC) and confusion matrix at the Youden-optimal threshold, i.e. agreement with the expert clinical read
+- `visual_read_performance_stats.csv` — accuracy, sensitivity, specificity, balanced accuracy, F1, MCC, AUC at both the 0.5 and optimal thresholds
 
 ## Reproducibility Notes
 
