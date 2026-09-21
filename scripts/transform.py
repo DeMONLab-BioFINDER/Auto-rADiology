@@ -1,14 +1,23 @@
 import os
+import sys
 import torch
 import argparse
 import numpy as np
+from pathlib import Path
 from torch.utils.data import DataLoader
 from monai.data import MetaTensor
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for `src.*` imports
 
 from src.data import build_master_table, get_transforms
 from src.cv import get_stratify_labels
 from src.utils import set_seed
-from others.utils import compare_preproc
+
+try:
+    from others.utils import compare_preproc
+except ImportError:
+    compare_preproc = None
+    print("[warn] 'others.utils.compare_preproc' not found — preprocessing comparison diagnostics will be skipped.")
 
 def main(args):
     out_dir = args.input_path + f'/transformed_{args.dataset}'
@@ -51,7 +60,8 @@ def main(args):
         torch.save(x, out_dir + f'/data/data_{idx}.pt')
 
         # compare preprocessing steps
-        compare_preproc(tfm, path, f'{out_dir}/compare_preproc/tensorID{idx}_origID{orig_idx}',verbose=False)
+        if compare_preproc is not None:
+            compare_preproc(tfm, path, f'{out_dir}/compare_preproc/tensorID{idx}_origID{orig_idx}', verbose=False)
 
     df_shuf['pet_path'] = 0
     print(df_shuf)
