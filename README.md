@@ -224,16 +224,15 @@ python run_val.py \
 
 Replace `<best_model_folder_name>` with the folder name from the final Gothenburg run.
 
-Training and evaluation runs automatically create timestamped folders in a `results/` directory (created at runtime). 
+Training and evaluation runs automatically create timestamped folders in a `results/` directory (created at runtime).
 
 Typical saved outputs include:
 
-- `metrics.csv`: overall performance metrics
-- `results.csv`: per-sample predictions and ground truth
-- `evaluation/<dataset>/` folder with per-dataset results
-- `splits/`: train/validation/test split indices
-- Model checkpoints and per-epoch training metrics
-- Per-region performance summaries
+- `RUN_INFO.txt`: dataset/targets/mode/split summary for the run
+- `splits/`: the overall train/val/test partition (subject-level CSVs) and a leakage audit
+- `final_model/`: checkpoints, per-epoch metrics/plots, and test predictions for the one trained model (direct train/test, train/val/test, or a hypertune outer retrain)
+- `evaluation/<dataset>/`: final held-out test predictions and summary metrics
+- `metrics.csv` and `oof_predictions.csv` (`--run_kfold_cv` runs only): per-fold summary metrics, and out-of-fold per-subject predictions tagged by fold; each `kfold-N/` folder has its own checkpoints/metrics/predictions
 
 ## Plotting Workflow
 
