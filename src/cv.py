@@ -13,7 +13,7 @@ from src.train import train_one_epoch, validate_one_epoch, inference
 from src.vis import run_visualization
 from src.checkpoints import save_checkpoint, load_best_checkpoint
 from src.model_factory import build_model_from_args
-from src.training_io import append_metrics_csv, plot_metrics_from_csv, save_train_test_subjects
+from src.training_io import append_metrics_csv, plot_metrics_from_csv
 from src.splits import random_assign_nan_labels, add_quantile_bins, is_continuous_numeric, collapse_dx_to_other
 
 # fold_name values that represent "the one trained model for this run" (as opposed to a
@@ -24,11 +24,19 @@ FINAL_MODEL_FOLD_NAMES = {"train-test-split", "train-val-test", "nestedcv-outer-
 def kfold_cv(df_clean, stratify_labels, args):
     skf = StratifiedKFold(n_splits=args.n_splits, shuffle=True, random_state=args.seed)
     metrics_path = os.path.join(args.output_path, "metrics.csv")
-    results_path = os.path.join(args.output_path, "results.csv")
+    oof_preds_path = os.path.join(args.output_path, "oof_predictions.csv")
+
+    # Only log the metric family that's actually relevant to --targets (classification:
+    # auc/acc, regression: mae/rmse/r2) - the other family is always NaN and just noise.
+    targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
+    class_present = "visual_read" in targets_list
+    reg_present = bool([t for t in targets_list if t != "visual_read"])
+    metric_keys = (["auc", "acc"] if class_present else []) + (["mae", "rmse", "r2"] if reg_present else [])
 
     pbar = tqdm(enumerate(skf.split(df_clean, stratify_labels), start=1),
                 total=args.n_splits, desc="Stratified K-Fold", position=0, leave=True)
 
+    oof_preds = []
     for i, (tr_idx, va_idx) in pbar:
         fold_name = f"kfold-{i}"
         train_df = df_clean.iloc[tr_idx].reset_index(drop=True)
@@ -36,14 +44,27 @@ def kfold_cv(df_clean, stratify_labels, args):
         pbar.set_postfix(train=len(train_df), val=len(val_df))
 
         m, r = run_fold(train_df, val_df, args=args, fold_name=fold_name)
-        
-        # Log results
-        append_metrics_csv(metrics_path, {"fold": i, **m}, mode='row')
-        append_metrics_csv(results_path, {"fold": i, "n_eval": int(len(r))}, mode='row')
+
+        # Log per-fold summary metrics
+        append_metrics_csv(metrics_path, {
+            "fold": i,
+            **{k: m.get(k) for k in metric_keys},
+            "eval_metric": m.get("eval_metric"),
+            "best_epoch": m.get("best_epoch"),
+        }, mode='row')
+
+        # Out-of-fold predictions: this fold's per-subject predictions, tagged by fold,
+        # concatenated across folds - lets pooled analysis (e.g. an ROC/scatter across the
+        # whole CV pool) without unpickling each fold's preds/test_predictions.pkl.
+        r = r.copy()
+        r["fold"] = i
+        oof_preds.append(r)
 
         tqdm.write(f"[{fold_name}] AUC={m.get('auc'):.3f} ACC={m.get('acc'):.3f} "
                    f"MAE={m.get('mae'):.2f} RMSE={m.get('rmse'):.2f} R2={m.get('r2'):.3f}"
                f"eval_metric={m.get('eval_metric'):.2f}")
+
+    pd.concat(oof_preds, ignore_index=True).to_csv(oof_preds_path, index=False)
 
     try:
         df_metrics = pd.read_csv(metrics_path)
@@ -84,11 +105,12 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
 
     # For the one final trained model, train/val/test membership is already recorded once
     # in <output_path>/splits/ (see run.py) - no need to duplicate it per-fold. Real CV folds
-    # (kfold-N) have distinct membership per fold, so those are still recorded here.
+    # (kfold-N) have distinct membership per fold, so those are still recorded here. There's
+    # no genuine "test" set within a CV fold - eval_df here is always just this fold's held-out
+    # validation subjects (see the docstring above), so it's saved once as val_subjects.csv.
     if not is_final_model:
-        save_train_test_subjects(train_df, eval_df, path_list["preds_dir"])
-        if not no_validation:
-            val_df.to_csv(os.path.join(path_list["preds_dir"], 'val_subjects.csv'), index=False)
+        train_df.to_csv(os.path.join(path_list["preds_dir"], 'train_subjects.csv'), index=False)
+        eval_df.to_csv(os.path.join(path_list["preds_dir"], 'val_subjects.csv'), index=False)
 
     if no_validation:
         dl_tr, _ = get_train_val_loaders(train_df, train_df.iloc[:0].copy(), args)

@@ -71,7 +71,10 @@ def main():
                                "Classification metrics across CV folds"):
         made_any = True
 
-    metric_cols = [k for k, _ in REGRESSION_METRICS + CLASSIFICATION_METRICS if k in df.columns]
+    # metrics.csv only has the columns relevant to --targets going forward, but stay
+    # defensive (e.g. reading an older metrics.csv) by also dropping any all-NaN column.
+    metric_cols = [k for k, _ in REGRESSION_METRICS + CLASSIFICATION_METRICS
+                   if k in df.columns and df[k].notna().any()]
     stats = df[metric_cols].agg(["mean", "std"]).T.reset_index().rename(columns={"index": "metric"})
     stats.to_csv(out_dir / "cv_summary_stats.csv", index=False)
 
