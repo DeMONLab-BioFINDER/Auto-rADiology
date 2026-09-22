@@ -1,5 +1,5 @@
 # src/cv.py
-import os, torch, pickle
+import os, torch
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -54,8 +54,8 @@ def kfold_cv(df_clean, stratify_labels, args):
         }, mode='row')
 
         # Out-of-fold predictions: this fold's per-subject predictions, tagged by fold,
-        # concatenated across folds - lets pooled analysis (e.g. an ROC/scatter across the
-        # whole CV pool) without unpickling each fold's preds/test_predictions.pkl.
+        # concatenated across folds for pooled analysis (e.g. an ROC/scatter across the
+        # whole CV pool).
         r = r.copy()
         r["fold"] = i
         oof_preds.append(r)
@@ -156,7 +156,6 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     # inference and save resutls
     metrics_te, df_result_te = inference(model, dl_eval, args.device)
     metrics_te["best_epoch"] = int(best_epoch)
-    pickle.dump({'test':{'metric': metrics_te, 'preds': df_result_te}}, open(path_list['train-test_eval_pkl'],'wb'))
 
     # ---- Interpretation: grad-CAM or ... ----
     # run_visualization(model, dl_eval, args.device, args.output_path, vis_name=args.visualization_name)
@@ -269,14 +268,12 @@ def _make_outfolder_fold(output_path, fold_name, no_validation=False):
 
     train_eval_csv_path = os.path.join(metrics_dir, "epoch_eval_metrics.csv")
     train_loss_csv_path = os.path.join(metrics_dir, "epoch_batch_loss_stats.csv")
-    test_eval_pkl_path = os.path.join(preds_dir, "test_predictions.pkl")
 
     # Without a validation set there's no val-loss-based "best" checkpoint - the model
     # is saved every epoch and what's kept is simply the last one.
     ckpt_filename = f"{folder_name}_last.pt" if no_validation else f"{folder_name}_best.pt"
     path_list = {'train_eval_csv': train_eval_csv_path, 'train_loss_csv': train_loss_csv_path,
                  'metrics_dir': metrics_dir,
-                 'train-test_eval_pkl': test_eval_pkl_path,
                  'ckpt': os.path.join(weights_dir, ckpt_filename),
                  'preds_dir': preds_dir}
 
