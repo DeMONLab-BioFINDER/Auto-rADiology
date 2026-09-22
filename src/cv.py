@@ -109,8 +109,8 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     # no genuine "test" set within a CV fold - eval_df here is always just this fold's held-out
     # validation subjects (see the docstring above), so it's saved once as val_subjects.csv.
     if not is_final_model:
-        train_df.to_csv(os.path.join(path_list["preds_dir"], 'train_subjects.csv'), index=False)
-        eval_df.to_csv(os.path.join(path_list["preds_dir"], 'val_subjects.csv'), index=False)
+        train_df.to_csv(os.path.join(path_list["subjects_dir"], 'train_subjects.csv'), index=False)
+        eval_df.to_csv(os.path.join(path_list["subjects_dir"], 'val_subjects.csv'), index=False)
 
     if no_validation:
         dl_tr, _ = get_train_val_loaders(train_df, train_df.iloc[:0].copy(), args)
@@ -261,10 +261,10 @@ def _make_outfolder_fold(output_path, fold_name, no_validation=False):
     output_fold_dir = os.path.join(output_path, folder_name)
     weights_dir = os.path.join(output_fold_dir, "checkpoints")
     metrics_dir = os.path.join(output_fold_dir, "metrics")
-    preds_dir = os.path.join(output_fold_dir, "preds")
+    subjects_dir = os.path.join(output_fold_dir, "subjects")
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(metrics_dir, exist_ok=True)
-    os.makedirs(preds_dir, exist_ok=True)
+    os.makedirs(subjects_dir, exist_ok=True)
 
     train_eval_csv_path = os.path.join(metrics_dir, "epoch_eval_metrics.csv")
     train_loss_csv_path = os.path.join(metrics_dir, "epoch_batch_loss_stats.csv")
@@ -275,7 +275,7 @@ def _make_outfolder_fold(output_path, fold_name, no_validation=False):
     path_list = {'train_eval_csv': train_eval_csv_path, 'train_loss_csv': train_loss_csv_path,
                  'metrics_dir': metrics_dir,
                  'ckpt': os.path.join(weights_dir, ckpt_filename),
-                 'preds_dir': preds_dir}
+                 'subjects_dir': subjects_dir}
 
     return output_fold_dir, path_list
 
