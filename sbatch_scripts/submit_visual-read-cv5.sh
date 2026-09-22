@@ -5,7 +5,7 @@
 # regional-SUVR CV5 workflow), swapping --targets/--stratifycvby for the
 # classification head.
 
-#SBATCH -A berzelius-2026-31
+#SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH -t 12:00:00
 #SBATCH -J visual-read-cv5

@@ -15,7 +15,7 @@
 # demo-csv lookup - demo_{dataset}.csv - doesn't collide with the real AVID dataset name):
 #   ln -s demo_test_subset.csv /proj/berzelius-2024-156/users/x_nadpi/data/demo_AVID_test_subset.csv
 
-#SBATCH -A berzelius-2026-31
+#SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH -t 01:00:00
 #SBATCH -J visual-read-subset-unseen-test
