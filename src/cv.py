@@ -257,14 +257,21 @@ def _make_outfolder_fold(output_path, fold_name, no_validation=False):
     # hypertune outer retrain) is grouped under one "final_model" folder regardless of
     # which of those three modes produced it, instead of a mode-specific fold_name -
     # this is what src/validation.py / run_vis.py look for.
-    folder_name = "final_model" if fold_name in FINAL_MODEL_FOLD_NAMES else fold_name
+    is_final_model = fold_name in FINAL_MODEL_FOLD_NAMES
+    folder_name = "final_model" if is_final_model else fold_name
     output_fold_dir = os.path.join(output_path, folder_name)
     weights_dir = os.path.join(output_fold_dir, "checkpoints")
     metrics_dir = os.path.join(output_fold_dir, "metrics")
-    subjects_dir = os.path.join(output_fold_dir, "subjects")
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(metrics_dir, exist_ok=True)
-    os.makedirs(subjects_dir, exist_ok=True)
+
+    # The final model doesn't get its own subjects/ - train/test membership is already
+    # recorded once in <output_path>/splits/ (see run.py); only real CV folds have
+    # distinct per-fold membership worth recording here.
+    subjects_dir = None
+    if not is_final_model:
+        subjects_dir = os.path.join(output_fold_dir, "subjects")
+        os.makedirs(subjects_dir, exist_ok=True)
 
     train_eval_csv_path = os.path.join(metrics_dir, "epoch_eval_metrics.csv")
     train_loss_csv_path = os.path.join(metrics_dir, "epoch_batch_loss_stats.csv")
