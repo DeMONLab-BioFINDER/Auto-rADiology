@@ -30,13 +30,6 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
-EPOCHS="$1"
-if [[ -z "$EPOCHS" ]]; then
-  echo "Usage: sbatch submit_visual-read-final.sh <epochs>"
-  echo "(median best_epoch from the submit_visual-read-cv5.sh run)"
-  exit 1
-fi
-
 DATASET=Gothenburg
 
 RUN_LOG=$(mktemp)
@@ -50,8 +43,8 @@ python ./run.py \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs "$EPOCHS" \
-  --model_name_extra "visual-read-final-${EPOCHS}" \
+  --epochs 60 \
+  --model_name_extra "visual-read-final-60" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
