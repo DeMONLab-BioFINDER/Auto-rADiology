@@ -7,7 +7,7 @@
 # Usage:
 #   sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name>
 
-#SBATCH -A berzelius-2026-31
+#SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH -t 06:00:00
 #SBATCH -J AVID-unseen-visual-read

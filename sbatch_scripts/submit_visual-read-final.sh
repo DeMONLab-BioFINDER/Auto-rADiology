@@ -11,7 +11,7 @@
 # Usage:
 #   sbatch submit_visual-read-final.sh <epochs>
 
-#SBATCH -A berzelius-2026-31
+#SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH -t 6:00:00
 #SBATCH -J visual-read-final
