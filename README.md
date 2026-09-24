@@ -257,9 +257,12 @@ python results_plotting/plot_cv_summary.py \
 # Visual-read model: class balance + agreement with the expert clinical read
 python results_plotting/plot_visual_read_results.py \
   <path_to_result_folder>
+
+# Visual-read model: ground-truth class balance (discovery + AVID)
+python results_plotting/plot_visual_read_distributions.py
 ```
 
-All figures land in `<path_to_result_folder>/figures/` (AVID validation figures land in `<path_to_result_folder>/validation/figures/`, since `--final_run_dir` there is the validation subfolder). Shared plotting helpers (styling, formatting, figure builders, stats) live in [results_plotting/plot_utils.py](results_plotting/plot_utils.py) and are imported by all five scripts above.
+All figures land in `<path_to_result_folder>/figures/` (AVID validation figures land in `<path_to_result_folder>/validation/figures/`, since `--final_run_dir` there is the validation subfolder). Shared plotting helpers (styling, formatting, figure builders, stats) live in [results_plotting/plot_utils.py](results_plotting/plot_utils.py) and are imported by all six scripts above.
 
 `submit_mse-final-47.sh`, `submit_mse-cv5.sh`, and `submit_visual-read-subset-test.sh` already call the matching plotting script automatically right after training, as a separate non-fatal step (a plotting bug won't mark the training job itself as failed) — you only need to run these by hand for AVID validation, ground-truth distributions, or to regenerate a run's figures later.
 
@@ -287,9 +290,13 @@ From `plot_cv_summary.py` (a `--run_kfold_cv` run, e.g. `submit_mse-cv5.sh` — 
 
 Visual-read model, from `plot_visual_read_results.py`:
 
-- `visual_read_class_balance.png` — positive/negative counts, overall and by site
+- `visual_read_class_balance.png` — positive/negative counts, overall and by site, for this run's own dataset (whatever `demo.csv` `find_demo_csv()` resolves to — not scoped to the train/val/test split)
 - `visual_read_roc_confusion_panel.png` — ROC curve (AUC) and confusion matrix at the Youden-optimal threshold, i.e. agreement with the expert clinical read
 - `visual_read_performance_stats.csv` — accuracy, sensitivity, specificity, balanced accuracy, F1, MCC, AUC at both the 0.5 and optimal thresholds
+
+From `plot_visual_read_distributions.py` (dataset-level, not tied to one run — saved to `<proj_path>/results/visual_read_distributions/` by default, i.e. alongside the run folders, never inside the git repo):
+
+- `visual_read_class_balance_demo.png`, `visual_read_class_balance_avid.png` — visual_read positive/negative counts, discovery vs. AVID, overall and by site
 
 ## Reproducibility Notes
 

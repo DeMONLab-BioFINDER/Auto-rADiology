@@ -555,6 +555,7 @@ def make_class_balance_panel(
     filename: str = "visual_read_class_balance.png",
     target_col: str = "visual_read",
     group_col: str = "site",
+    title: str = "Visual read distribution",
 ):
     """Overall positive/negative counts, plus a breakdown by `group_col` if present."""
     df = df_demo.copy()
@@ -576,7 +577,7 @@ def make_class_balance_panel(
                 palette=[CLASS_PALETTE[o] for o in order], ax=ax, legend=False)
     for i, v in enumerate(counts.to_numpy()):
         ax.text(i, v, f"n={int(v)}", ha="center", va="bottom", fontsize=TICK_SIZE)
-    style_axes(ax, "Visual read distribution", "Visual read", "Count")
+    style_axes(ax, title, "Visual read", "Count")
 
     if has_group:
         ax = axes[1]
@@ -585,7 +586,7 @@ def make_class_balance_panel(
         group_order = get_display_order(tmp[group_col], group_col)
         sns.countplot(data=tmp, x=group_col, hue="_label", order=group_order, hue_order=order,
                       palette=[CLASS_PALETTE[o] for o in order], ax=ax)
-        style_axes(ax, f"Visual read by {group_col}", group_col, "Count", xrotation=20)
+        style_axes(ax, f"{title} by {group_col}", group_col, "Count", xrotation=20)
         style_legend(ax, title="Visual read", loc="best")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
