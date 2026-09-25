@@ -290,9 +290,10 @@ From `plot_cv_summary.py` (a `--run_kfold_cv` run, e.g. `submit_mse-cv5.sh` — 
 
 Visual-read model, from `plot_visual_read_results.py`:
 
-- `visual_read_class_balance.png` — positive/negative counts, overall and by site, for this run's own dataset (whatever `demo.csv` `find_demo_csv()` resolves to — not scoped to the train/val/test split)
+- `visual_read_class_balance.png` — positive/negative counts, overall and by site, for this run's own dataset (`demo_<dataset>.csv` if it exists, e.g. `demo_AVID_unseen.csv`, else the generic `demo.csv` — not scoped to the train/val/test split)
 - `visual_read_roc_confusion_panel.png` — ROC curve (AUC) and confusion matrix at the Youden-optimal threshold, i.e. agreement with the expert clinical read
 - `visual_read_performance_stats.csv` — accuracy, sensitivity, specificity, balanced accuracy, F1, MCC, AUC at both the 0.5 and optimal thresholds
+- `visual_read_universal_suvr_by_outcome.png` — Universal tau SUVR density, one line per confusion-matrix category (true/false positive/negative, at the same Youden-optimal threshold as the confusion matrix) — shows whether discordant cases (false positives/negatives) sit near the decision boundary rather than being clear-cut model errors
 
 From `plot_visual_read_distributions.py` (dataset-level, not tied to one run — saved to `<proj_path>/results/visual_read_distributions/` by default, i.e. alongside the run folders, never inside the git repo):
 

@@ -673,3 +673,77 @@ def make_roc_confusion_panel(
             {"threshold_type": "youden_optimal", "auc": auc, **compute_classification_stats(y_true, y_prob, best_thr)},
         ]
         pd.DataFrame(rows).to_csv(stats_csv_path, index=False)
+
+
+CONFUSION_CATEGORY_LABELS = {
+    (0, 0): "True Negative",
+    (1, 1): "True Positive",
+    (0, 1): "False Positive",
+    (1, 0): "False Negative",
+}
+CONFUSION_CATEGORY_ORDER = ["True Negative", "True Positive", "False Positive", "False Negative"]
+CONFUSION_CATEGORY_PALETTE = {
+    "True Negative": CUSTOM_PALETTE[0],   # blue
+    "True Positive": CUSTOM_PALETTE[3],   # green
+    "False Positive": CUSTOM_PALETTE[1],  # red
+    "False Negative": CUSTOM_PALETTE[4],  # yellow
+}
+
+
+def make_confusion_category_distribution_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    value_col: str = "Universal",
+    value_label: str | None = None,
+    filename: str = "visual_read_universal_suvr_by_outcome.png",
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Density (KDE) of a continuous variable (e.g. the Universal tau SUVR composite),
+    one line per confusion-matrix category (TP/TN/FP/FN) at the same Youden-optimal
+    threshold used in the ROC/confusion panel - shows whether discordant cases
+    (FP/FN) sit near the decision boundary rather than being clear-cut model errors."""
+    if value_col not in df_demo.columns:
+        print(f"[WARNING] '{value_col}' not found in demographics table; skipping confusion-category distribution panel.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "prob"]],
+        df_demo[[id_col_demo, value_col]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df = df.dropna(subset=["y", "prob", value_col])
+    if df.empty or df["y"].nunique() < 2:
+        return
+
+    # Same Youden-optimal threshold as make_roc_confusion_panel, so categories here
+    # match exactly what that figure's confusion matrix counts.
+    y_true = df["y"].astype(int).to_numpy()
+    y_prob = df["prob"].to_numpy()
+    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    best_thr = float(thresholds[int(np.argmax(tpr - fpr))])
+    y_pred = (y_prob >= best_thr).astype(int)
+
+    df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_true, y_pred)]
+
+    order = [c for c in CONFUSION_CATEGORY_ORDER if (df["_category"] == c).sum() >= 2]
+    if not order:
+        return
+
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    for category in order:
+        vals = df.loc[df["_category"] == category, value_col]
+        sns.kdeplot(vals, ax=ax, color=CONFUSION_CATEGORY_PALETTE[category], linewidth=2.2,
+                    label=f"{category} (n={len(vals)})")
+
+    label = value_label or value_col
+    style_axes(ax, f"{label} by classification outcome (thr={best_thr:.2f})", label, "Density")
+    style_legend(ax, loc="best")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)

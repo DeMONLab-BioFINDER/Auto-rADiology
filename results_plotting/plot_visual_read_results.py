@@ -12,6 +12,7 @@ from plot_utils import (
     CUSTOM_PALETTE,
     find_demo_csv,
     make_class_balance_panel,
+    make_confusion_category_distribution_panel,
     make_roc_confusion_panel,
     resolve_existing_path,
     resolve_path,
@@ -39,6 +40,20 @@ def find_zeroshot_results_csv(run_dir: Path, dataset: str) -> Path | None:
     test_subset as a stand-in unseen dataset), saved under <run_dir>/validation/."""
     matches = sorted((run_dir / "validation").glob(f"External_validation_{dataset}__*_zeroshot_results.csv"))
     return matches[0] if matches else None
+
+
+def find_dataset_demo_csv(dataset: str) -> Path | None:
+    """demo_{dataset}.csv, the same naming convention run_val.py's load_validation_data
+    uses (e.g. demo_AVID_unseen.csv) - checked before falling back to the generic
+    data/demo.csv, since a run on a non-Gothenburg dataset (AVID, a subset smoke test,
+    ...) needs its own demographics for the confusion-category merge to find any
+    matching IDs at all."""
+    script_path = Path(__file__).resolve()
+    demo_candidates = [
+        script_path.parents[1] / "data" / f"demo_{dataset}.csv",
+        script_path.parents[2] / "data" / f"demo_{dataset}.csv",
+    ]
+    return next((p for p in demo_candidates if p.exists()), None)
 
 
 def load_predictions(preds_path: Path) -> pd.DataFrame:
@@ -78,7 +93,8 @@ def main():
         out_dir = run_dir / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    demo_path = resolve_path(args.demo_csv, find_demo_csv)
+    demo_path = resolve_path(args.demo_csv, lambda: find_dataset_demo_csv(args.dataset) or find_demo_csv())
+    df_demo = None
     if demo_path is not None:
         df_demo = pd.read_csv(demo_path)
         make_class_balance_panel(df_demo, out_dir, group_col=args.group_col)
@@ -92,6 +108,13 @@ def main():
         out_dir,
         stats_csv_path=out_dir / "visual_read_performance_stats.csv",
     )
+
+    if df_demo is not None:
+        make_confusion_category_distribution_panel(
+            df_preds, df_demo, out_dir,
+            value_col="Universal", value_label="Universal tau SUVR",
+        )
+
     print(f"[done] figures saved to {out_dir}")
 
 
