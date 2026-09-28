@@ -183,7 +183,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     epoch_bar = tqdm(range(1, args.epochs + 1), desc=f"{fold_name} epochs", position=1, leave=False, dynamic_ncols=True)
     for epoch in epoch_bar:
         tr_loss_mean, tr_loss_all = train_one_epoch(model=model, loader=dl_tr, opt=optimizer, scaler=scaler,
-                                                    device=args.device, loss_w_cls=args.loss_w_cls, loss_w_reg=args.loss_w_reg,
+                                                    device=args.device, loss_w_cls=args.loss_weight_cls, loss_w_reg=args.loss_weight_reg,
                                                     reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta)
         if no_validation:
             va_loss_mean = np.nan
@@ -195,8 +195,8 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
                 model=model,
                 loader=dl_va,
                 device=args.device,
-                loss_w_cls=args.loss_w_cls,
-                loss_w_reg=args.loss_w_reg,
+                loss_w_cls=args.loss_weight_cls,
+                loss_w_reg=args.loss_weight_reg,
                 reg_loss=args.reg_loss,
                 smoothl1_beta=args.smoothl1_beta,
                 desc="Val",

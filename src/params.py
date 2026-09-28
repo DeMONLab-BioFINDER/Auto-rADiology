@@ -35,8 +35,8 @@ def parse_arguments():
     
     # Training
     parser.add_argument("--epochs", type=int, default=200) # true model should start with 30 
-    parser.add_argument("--loss_w_cls", type=float, default=1.0)
-    parser.add_argument("--loss_w_reg", type=float, default=1.0)
+    parser.add_argument("--loss_weight_cls", type=float, default=1.0, help="Weight applied to the classification loss (visual_read) in the combined multi-task loss.")
+    parser.add_argument("--loss_weight_reg", type=float, default=1.0, help="Weight applied to the regression loss (regional SUVR targets) in the combined multi-task loss.")
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")
     parser.add_argument("--smoothl1_beta", type=float, default=0.2, help="Regression SmoothL1 beta in target units.")
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac

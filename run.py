@@ -27,11 +27,11 @@ def main(args):
     targets = [t.strip() for t in args.targets.split(",") if t.strip()]
     regression_targets = [t for t in targets if t != "visual_read"]
 
-    reg_targets_present = bool(regression_targets) and args.loss_w_reg > 0
+    reg_targets_present = bool(regression_targets) and args.loss_weight_reg > 0
     if reg_targets_present and args.reg_loss == "smoothl1":
         print(f"Using SmoothL1 regression loss with beta={args.smoothl1_beta} target units.")
 
-    class_targets_present = "visual_read" in targets and args.loss_w_cls > 0 and "visual_read" in df_clean.columns
+    class_targets_present = "visual_read" in targets and args.loss_weight_cls > 0 and "visual_read" in df_clean.columns
     if class_targets_present:
         n_unique = df_clean["visual_read"].dropna().nunique()
         if n_unique <= 2:
