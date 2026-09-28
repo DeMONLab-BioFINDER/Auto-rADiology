@@ -28,8 +28,13 @@ def main(args):
     regression_targets = [t for t in targets if t != "visual_read"]
 
     reg_targets_present = bool(regression_targets) and args.loss_weight_reg > 0
-    if reg_targets_present and args.reg_loss == "smoothl1":
-        print(f"Using SmoothL1 regression loss with beta={args.smoothl1_beta} target units.")
+    if reg_targets_present:
+        if args.reg_loss == "smoothl1":
+            print(f"Using SmoothL1 regression loss with beta={args.smoothl1_beta} target units.")
+        elif args.reg_loss == "mse":
+            print("Using MSE regression loss.")
+        else:
+            print(f"Using {args.reg_loss.upper()} regression loss.")
 
     class_targets_present = "visual_read" in targets and args.loss_weight_cls > 0 and "visual_read" in df_clean.columns
     if class_targets_present:
