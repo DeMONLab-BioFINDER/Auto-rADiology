@@ -9,7 +9,7 @@ from typing import Any, Tuple, Optional
 from sklearn.metrics import roc_auc_score, accuracy_score, r2_score, mean_absolute_error, root_mean_squared_error, roc_curve, balanced_accuracy_score, f1_score, matthews_corrcoef
 
 
-def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta):
+def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta, class_weight=None):
     model.train()
     loss_sum = 0.0
     sample_count = 0
@@ -31,13 +31,13 @@ def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, 
         if scaler is not None:
             with torch.cuda.amp.autocast():
                 loss, _ = compute_total_loss(model, x, y_cls, y_reg, extra=extra,
-                    loss_w_cls=loss_w_cls, loss_w_reg=loss_w_reg, reg_loss=reg_loss, smoothl1_beta=smoothl1_beta, domain_weights=domain_weights)
+                    loss_w_cls=loss_w_cls, loss_w_reg=loss_w_reg, reg_loss=reg_loss, smoothl1_beta=smoothl1_beta, domain_weights=domain_weights, class_weight=class_weight)
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
         else:
             loss, _ = compute_total_loss(model, x, y_cls, y_reg, extra=extra,
-                loss_w_cls=loss_w_cls, loss_w_reg=loss_w_reg, reg_loss=reg_loss, smoothl1_beta=smoothl1_beta, domain_weights=domain_weights)
+                loss_w_cls=loss_w_cls, loss_w_reg=loss_w_reg, reg_loss=reg_loss, smoothl1_beta=smoothl1_beta, domain_weights=domain_weights, class_weight=class_weight)
             loss.backward()
             opt.step()
 
@@ -63,7 +63,7 @@ def inference(model, loader, device):
 
 
 @torch.no_grad()
-def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, reg_loss=None, smoothl1_beta=None, desc="Val"):
+def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, reg_loss=None, smoothl1_beta=None, class_weight=None, desc="Val"):
     model.eval()
 
     probs, ycls, preds = [], [], []
@@ -95,6 +95,7 @@ def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, 
                 reg_loss=reg_loss,
                 smoothl1_beta=smoothl1_beta,
                 domain_weights=domain_weights,
+                class_weight=class_weight,
                 out=out,
             )
             batch_size = x.shape[0]
@@ -236,6 +237,7 @@ def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Ten
                        y_reg: torch.Tensor, extra: torch.Tensor,
                        loss_w_cls: float, loss_w_reg: float,
                        reg_loss: str, smoothl1_beta: float, domain_weights: torch.Tensor,
+                       class_weight: Optional[torch.Tensor] = None,
                        out: Any = None): # "mse" or "smoothl1" # CL units
     """
     Forward + weighted loss.
@@ -264,7 +266,8 @@ def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Ten
         else:
             yl = y_cls.squeeze(1).long()
             assert yl.min() >= 0 and yl.max() < logit.shape[1], "CE: target out of range" # CE path: targets must be long in [0..C-1]
-            loss_cls = F.cross_entropy(logit, yl, reduction="none")
+            w = class_weight.to(logit.device) if class_weight is not None else None
+            loss_cls = F.cross_entropy(logit, yl, weight=w, reduction="none")
         total = total + loss_w_cls * (domain_weights * loss_cls).mean()
         used_head = True
     # ---- regression loss ----

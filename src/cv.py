@@ -133,13 +133,27 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
 
     model = build_model_from_args(args, device=args.device, n_classes=out_dim)
 
+    # ---- Class weighting (opt-in): counteract class imbalance in the training fold
+    # by weighting the classification loss inversely by class frequency. ----
+    class_weight = None
+    if class_present and getattr(args, "class_weight_cls", False):
+        counts = train_df["visual_read"].dropna().value_counts().sort_index()
+        if len(counts) == out_dim:
+            weights = counts.sum() / (out_dim * counts)
+            class_weight = torch.tensor(weights.to_numpy(), dtype=torch.float32)
+            print(f"[{fold_name}] Using class-balanced classification weights: "
+                  f"{dict(zip(counts.index.tolist(), weights.round(3).tolist()))}")
+        else:
+            print(f"[{fold_name}] [WARNING] --class_weight_cls set but train fold has {len(counts)} "
+                  f"visual_read classes (expected {out_dim}); skipping class weighting.")
+
     # ---- Train ----
     if args.tune:
         model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name,
-                                        path_list=path_list, optuna_report=optuna_report)
+                                        path_list=path_list, optuna_report=optuna_report, class_weight=class_weight)
     else:
         print('Train (fixed epochs, no validation)' if no_validation else 'Train (early stop on validation set)')
-        model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name, path_list=path_list)
+        model, best_epoch = train_model(model, dl_tr, dl_va, args=args, fold_name=fold_name, path_list=path_list, class_weight=class_weight)
 
     plot_metrics_from_csv(
         path_list["train_eval_csv"],
@@ -163,7 +177,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     return metrics_test, df_result_test
 
 
-def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_report=None):
+def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_report=None, class_weight=None):
     """
     Unified training loop.
     dl_tr and dl_va should be the same if not doing hyperparameter tunning CV training
@@ -184,7 +198,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
     for epoch in epoch_bar:
         tr_loss_mean, tr_loss_all = train_one_epoch(model=model, loader=dl_tr, opt=optimizer, scaler=scaler,
                                                     device=args.device, loss_w_cls=args.loss_weight_cls, loss_w_reg=args.loss_weight_reg,
-                                                    reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta)
+                                                    reg_loss=args.reg_loss, smoothl1_beta=args.smoothl1_beta, class_weight=class_weight)
         if no_validation:
             va_loss_mean = np.nan
             metrics = {"auc": np.nan, "acc": np.nan, "mae": np.nan, "rmse": np.nan, "r2": np.nan, "eval_metric": np.nan}
@@ -199,6 +213,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
                 loss_w_reg=args.loss_weight_reg,
                 reg_loss=args.reg_loss,
                 smoothl1_beta=args.smoothl1_beta,
+                class_weight=class_weight,
                 desc="Val",
             )
             eval_metric = metrics.get("eval_metric", float("nan"))
