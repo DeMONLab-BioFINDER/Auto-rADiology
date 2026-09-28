@@ -596,6 +596,10 @@ def make_class_balance_panel(
 
 def compute_classification_stats(y_true: np.ndarray, y_prob: np.ndarray, threshold: float) -> dict:
     y_pred = (y_prob >= threshold).astype(int)
+    return {"threshold": threshold, **compute_classification_stats_from_preds(y_true, y_pred)}
+
+
+def compute_classification_stats_from_preds(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     n = len(y_true)
     tp = int(np.sum((y_pred == 1) & (y_true == 1)))
     tn = int(np.sum((y_pred == 0) & (y_true == 0)))
@@ -613,7 +617,7 @@ def compute_classification_stats(y_true: np.ndarray, y_prob: np.ndarray, thresho
     mcc = ((tp * tn) - (fp * fn)) / mcc_denom if mcc_denom > 0 else np.nan
 
     return {
-        "threshold": threshold, "n": n, "tp": tp, "tn": tn, "fp": fp, "fn": fn,
+        "n": n, "tp": tp, "tn": tn, "fp": fp, "fn": fn,
         "accuracy": accuracy, "sensitivity": sensitivity, "specificity": specificity,
         "balanced_accuracy": balanced_accuracy, "f1": f1, "mcc": mcc,
     }
@@ -622,36 +626,36 @@ def compute_classification_stats(y_true: np.ndarray, y_prob: np.ndarray, thresho
 def make_roc_confusion_panel(
     y_true: np.ndarray,
     y_prob: np.ndarray,
+    y_pred: np.ndarray,
     out_dir: Path,
     filename: str = "visual_read_roc_confusion_panel.png",
     stats_csv_path: Path | None = None,
 ):
-    """Two-panel figure: (A) ROC curve with AUC, (B) confusion matrix at the Youden-optimal threshold."""
+    """Two-panel figure: (A) ROC curve with AUC, (B) confusion matrix from the model's
+    actual predicted visual_read (0/1, already decided at inference time), not a
+    threshold searched post-hoc on this same set."""
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob, dtype=float)
-    mask = np.isfinite(y_true) & np.isfinite(y_prob)
-    y_true, y_prob = y_true[mask].astype(int), y_prob[mask]
+    y_pred = np.asarray(y_pred)
+    mask = np.isfinite(y_true) & np.isfinite(y_prob) & np.isfinite(y_pred)
+    y_true, y_prob, y_pred = y_true[mask].astype(int), y_prob[mask], y_pred[mask].astype(int)
     if len(y_true) == 0 or len(np.unique(y_true)) < 2:
         return
 
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     auc = float(roc_auc_score(y_true, y_prob))
-    best_idx = int(np.argmax(tpr - fpr))
-    best_thr = float(thresholds[best_idx])
 
     fig, axes = plt.subplots(1, 2, figsize=(11.4, 5.2), squeeze=False)
 
     ax = axes[0][0]
     ax.plot(fpr, tpr, color=SEABORN_COLORS[0], linewidth=2.2, label=f"AUC = {auc:.3f}")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
-    ax.scatter([fpr[best_idx]], [tpr[best_idx]], color=SEABORN_COLORS[1], zorder=5, s=55,
-               label=f"Best threshold = {best_thr:.2f}")
     style_axes(ax, "ROC curve: agreement with clinical read", "False positive rate", "True positive rate")
     style_legend(ax, loc="lower right")
 
     ax = axes[0][1]
-    stats_best = compute_classification_stats(y_true, y_prob, best_thr)
-    cm = np.array([[stats_best["tn"], stats_best["fp"]], [stats_best["fn"], stats_best["tp"]]])
+    stats_pred = compute_classification_stats_from_preds(y_true, y_pred)
+    cm = np.array([[stats_pred["tn"], stats_pred["fp"]], [stats_pred["fn"], stats_pred["tp"]]])
     ax.imshow(cm, cmap="Blues")
     ax.set_xticks([0, 1]); ax.set_xticklabels(["Negative", "Positive"])
     ax.set_yticks([0, 1]); ax.set_yticklabels(["Negative", "Positive"])
@@ -659,7 +663,7 @@ def make_roc_confusion_panel(
         for j in range(2):
             ax.text(j, i, str(cm[i, j]), ha="center", va="center", fontsize=LABEL_SIZE,
                     color="white" if cm[i, j] > cm.max() / 2 else "black")
-    style_axes(ax, f"Confusion matrix (thr={best_thr:.2f})", "Predicted", "Reference (clinical read)")
+    style_axes(ax, "Confusion matrix (model prediction)", "Predicted", "Reference (clinical read)")
     ax.grid(False)
 
     add_panel_labels(axes, ["A", "B"])
@@ -668,10 +672,7 @@ def make_roc_confusion_panel(
     plt.close(fig)
 
     if stats_csv_path is not None:
-        rows = [
-            {"threshold_type": "0.5", "auc": auc, **compute_classification_stats(y_true, y_prob, 0.5)},
-            {"threshold_type": "youden_optimal", "auc": auc, **compute_classification_stats(y_true, y_prob, best_thr)},
-        ]
+        rows = [{"auc": auc, **stats_pred}]
         pd.DataFrame(rows).to_csv(stats_csv_path, index=False)
 
 
@@ -701,32 +702,27 @@ def make_confusion_category_distribution_panel(
     id_col_demo: str = "ID",
 ):
     """Density (KDE) of a continuous variable (e.g. the Universal tau SUVR composite),
-    one line per confusion-matrix category (TP/TN/FP/FN) at the same Youden-optimal
-    threshold used in the ROC/confusion panel - shows whether discordant cases
-    (FP/FN) sit near the decision boundary rather than being clear-cut model errors."""
+    one line per confusion-matrix category (TP/TN/FP/FN) using the model's actual
+    predicted visual_read - shows whether discordant cases (FP/FN) sit near the
+    decision boundary rather than being clear-cut model errors."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping confusion-category distribution panel.")
         return
 
     df = pd.merge(
-        df_preds[[id_col_preds, "y", "prob"]],
+        df_preds[[id_col_preds, "y", "pred"]],
         df_demo[[id_col_demo, value_col]],
         left_on=id_col_preds, right_on=id_col_demo, how="left",
     )
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
-    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
-    df = df.dropna(subset=["y", "prob", value_col])
+    df = df.dropna(subset=["y", "pred", value_col])
     if df.empty or df["y"].nunique() < 2:
         return
 
-    # Same Youden-optimal threshold as make_roc_confusion_panel, so categories here
-    # match exactly what that figure's confusion matrix counts.
     y_true = df["y"].astype(int).to_numpy()
-    y_prob = df["prob"].to_numpy()
-    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
-    best_thr = float(thresholds[int(np.argmax(tpr - fpr))])
-    y_pred = (y_prob >= best_thr).astype(int)
+    y_pred = df["pred"].astype(int).to_numpy()
 
     df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_true, y_pred)]
 
@@ -741,7 +737,7 @@ def make_confusion_category_distribution_panel(
                     label=f"{category} (n={len(vals)})")
 
     label = value_label or value_col
-    style_axes(ax, f"{label} by classification outcome (thr={best_thr:.2f})", label, "Density")
+    style_axes(ax, f"{label} by classification outcome", label, "Density")
     style_legend(ax, loc="best")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))

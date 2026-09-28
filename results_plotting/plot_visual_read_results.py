@@ -58,7 +58,7 @@ def find_dataset_demo_csv(dataset: str) -> Path | None:
 
 def load_predictions(preds_path: Path) -> pd.DataFrame:
     df = pd.read_csv(preds_path)
-    required_cols = {"y", "prob"}
+    required_cols = {"y", "prob", "pred"}
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(
@@ -105,6 +105,7 @@ def main():
     make_roc_confusion_panel(
         df_preds["y"].to_numpy(),
         df_preds["prob"].to_numpy(),
+        df_preds["pred"].to_numpy(),
         out_dir,
         stats_csv_path=out_dir / "visual_read_performance_stats.csv",
     )
