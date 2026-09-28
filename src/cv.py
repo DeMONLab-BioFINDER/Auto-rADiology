@@ -37,10 +37,10 @@ def kfold_cv(df_clean, stratify_labels, args):
                 total=args.n_splits, desc="Stratified K-Fold", position=0, leave=True)
 
     oof_preds = []
-    for i, (tr_idx, va_idx) in pbar:
+    for i, (train_idx, val_idx) in pbar:
         fold_name = f"kfold-{i}"
-        train_df = df_clean.iloc[tr_idx].reset_index(drop=True)
-        val_df   = df_clean.iloc[va_idx].reset_index(drop=True)
+        train_df = df_clean.iloc[train_idx].reset_index(drop=True)
+        val_df   = df_clean.iloc[val_idx].reset_index(drop=True)
         pbar.set_postfix(train=len(train_df), val=len(val_df))
 
         m, r = run_fold(train_df, val_df, args=args, fold_name=fold_name)
@@ -154,13 +154,13 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
-    metrics_te, df_result_te = inference(model, dl_eval, args.device)
-    metrics_te["best_epoch"] = int(best_epoch)
+    metrics_test, df_result_test = inference(model, dl_eval, args.device)
+    metrics_test["best_epoch"] = int(best_epoch)
 
     # ---- Interpretation: grad-CAM or ... ----
     # run_visualization(model, dl_eval, args.device, args.output_path, vis_name=args.visualization_name)
 
-    return metrics_te, df_result_te
+    return metrics_test, df_result_test
 
 
 def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_report=None):
@@ -322,11 +322,11 @@ def cv_median_best_epoch(df_train, stratify_labels_train, args) -> int:
     skf = StratifiedKFold(n_splits=args.n_splits, shuffle=True, random_state=args.seed)
     best_epochs = []
 
-    for i, (tr_idx, va_idx) in enumerate(skf.split(df_train, stratify_labels_train), start=1):
+    for i, (train_idx, val_idx) in enumerate(skf.split(df_train, stratify_labels_train), start=1):
         fold_name = f"kfold-{i}"
-        tr_df = df_train.iloc[tr_idx].reset_index(drop=True)
-        va_df = df_train.iloc[va_idx].reset_index(drop=True)
-        m, _ = run_fold(tr_df, va_df, args=args, fold_name=fold_name)
+        train_df = df_train.iloc[train_idx].reset_index(drop=True)
+        val_df = df_train.iloc[val_idx].reset_index(drop=True)
+        m, _ = run_fold(train_df, val_df, args=args, fold_name=fold_name)
         be = int(m.get("best_epoch", 0))
         if be > 0:
             best_epochs.append(be)
