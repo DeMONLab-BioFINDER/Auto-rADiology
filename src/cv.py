@@ -51,6 +51,7 @@ def kfold_cv(df_clean, stratify_labels, args):
             **{k: m.get(k) for k in metric_keys},
             "eval_metric": m.get("eval_metric"),
             "best_epoch": m.get("best_epoch"),
+            "best_thr": m.get("best_thr"),
         }, mode='row')
 
         # Out-of-fold predictions: this fold's per-subject predictions, tagged by fold,
@@ -74,6 +75,11 @@ def kfold_cv(df_clean, stratify_labels, args):
             print(f"Median best_epoch across folds: {median_epoch}")
         else:
             print(f"\nDone. Metrics saved to: {metrics_path} (no best_epoch column present)")
+        if 'best_thr' in df_metrics.columns and not df_metrics['best_thr'].dropna().empty:
+            median_thr = float(df_metrics['best_thr'].dropna().median())
+            print(f"Median best_thr across folds: {median_thr:.4f}")
+            print("(pass this to the final run as --decision_threshold to use a class-imbalance-aware "
+                  "cutoff chosen from validation folds only, instead of the default 0.5)")
     except Exception:
         print(f"\nDone. Metrics saved to: {metrics_path} (failed to compute median best_epoch)")
 
@@ -168,7 +174,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
-    metrics_test, df_result_test = inference(model, dl_eval, args.device)
+    metrics_test, df_result_test = inference(model, dl_eval, args.device, decision_threshold=getattr(args, "decision_threshold", 0.5))
     metrics_test["best_epoch"] = int(best_epoch)
 
     # ---- Interpretation: grad-CAM or ... ----
@@ -372,7 +378,7 @@ def print_cv_summary(output_path):
         print(df.to_string(index=False))
         
         # Cross-fold statistics
-        metric_cols = [c for c in df.columns if c not in ["fold", "best_epoch"]]
+        metric_cols = [c for c in df.columns if c not in ["fold", "best_epoch", "best_thr"]]
         if metric_cols:
             print("\n" + "-"*80)
             print("Cross-fold statistics (mean ± std):")
@@ -382,16 +388,25 @@ def print_cv_summary(output_path):
                     mean = df[col].mean()
                     std = df[col].std()
                     print(f"  {col:15s}: {mean:7.3f} ± {std:7.3f}")
-        
+
         # Best epoch info
         if "best_epoch" in df.columns:
             best_epochs = df["best_epoch"].dropna().astype(int)
             if len(best_epochs) > 0:
                 print(f"\n  best_epoch:      median={int(np.median(best_epochs)):3d}, "
                       f"min={best_epochs.min()}, max={best_epochs.max()}")
-        
+
         # Median epoch for retrain is implied by the best_epoch column above.
-        
+
+        # Best (Youden-optimal) classification threshold info, from each fold's own
+        # validation predictions - a class-imbalance-aware alternative to the default 0.5.
+        if "best_thr" in df.columns:
+            best_thrs = df["best_thr"].dropna()
+            if len(best_thrs) > 0:
+                print(f"\n  best_thr:        median={best_thrs.median():.4f}, "
+                      f"min={best_thrs.min():.4f}, max={best_thrs.max():.4f}")
+                print("  (pass median as --decision_threshold to the final train/test run)")
+
         print("="*80 + "\n")
     except Exception as e:
         print(f"Warning: failed to print CV summary: {e}")

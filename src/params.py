@@ -39,6 +39,8 @@ def parse_arguments():
     parser.add_argument("--loss_weight_reg", type=float, default=1.0, help="Weight applied to the regression loss (regional SUVR targets) in the combined multi-task loss.")
     parser.add_argument("--class_weight_cls", action=argparse.BooleanOptionalAction, default=False,
                          help="Weight the visual_read classification loss inversely by class frequency in the training fold, to counteract class imbalance (rare class contributes more per-sample loss). Off by default.")
+    parser.add_argument("--decision_threshold", type=float, default=0.5,
+                         help="Probability cutoff used to turn visual_read predictions into 0/1 for final test-set evaluation/plots. Default 0.5. Set this from a prior CV run's printed 'Median best_thr across folds' for a class-imbalance-aware cutoff chosen from validation data only - never tune it against this run's own test set.")
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")
     parser.add_argument("--smoothl1_beta", type=float, default=0.2, help="Regression SmoothL1 beta in target units.")
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac

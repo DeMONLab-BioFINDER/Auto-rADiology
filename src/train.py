@@ -51,11 +51,12 @@ def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, 
 
 
 @torch.no_grad()
-def inference(model, loader, device):
+def inference(model, loader, device, decision_threshold=0.5):
     _, metrics, df_result = validate_one_epoch(
         model,
         loader,
         device,
+        decision_threshold=decision_threshold,
         desc="Eval",
     )
 
@@ -63,7 +64,7 @@ def inference(model, loader, device):
 
 
 @torch.no_grad()
-def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, reg_loss=None, smoothl1_beta=None, class_weight=None, desc="Val"):
+def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, reg_loss=None, smoothl1_beta=None, class_weight=None, decision_threshold=0.5, desc="Val"):
     model.eval()
 
     probs, ycls, preds = [], [], []
@@ -108,14 +109,14 @@ def validate_one_epoch(model, loader, device, loss_w_cls=None, loss_w_reg=None, 
             y_cls = y_cls.to(device)
             if logit.ndim == 2 and logit.shape[1] == 1:
                 p = torch.sigmoid(logit).detach().cpu().numpy().ravel()
-                preds.append((p > 0.5).astype(int)) 
+                preds.append((p > decision_threshold).astype(int))
                 probs.append(p)                    # 1D
                 ycls.append(y_cls.cpu().numpy().ravel().astype(int))
             elif logit.ndim == 2 and logit.shape[1] == 2:
                 # binary: two logits -> softmax, take prob of class 1
                 sm = F.softmax(logit, dim=1).detach().cpu().numpy()
                 p1 = sm[:, 1]
-                preds.append((p1 > 0.5).astype(int))
+                preds.append((p1 > decision_threshold).astype(int))
                 probs.append(p1)                   # 1D
                 ycls.append(y_cls.cpu().numpy().ravel().astype(int))
             else:
@@ -192,7 +193,10 @@ def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_re
 
         labels = np.unique(ycls).astype(int)
         if probs.ndim == 1:
-            metrics["auc"] = float(roc_auc_score(ycls, probs)) 
+            metrics["auc"] = float(roc_auc_score(ycls, probs))
+            if labels.size == 2:
+                pos = int(labels.max())
+                metrics["acc_opt"], metrics["bacc"], metrics["f1"], metrics["mcc"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
         else:
             if labels.size < 2:
                 metrics["auc"] = float("nan")
@@ -294,7 +298,9 @@ def opt_threshold(ycls, probs, pos):
     # roc_curve returns thresholds aligned with tpr/fpr; choose max(tpr - fpr)
     j = tpr - fpr
     best_ix = int(np.argmax(j))
-    best_thr = float(thr[best_ix])
+    # roc_curve's first threshold is a sentinel np.inf (not an achievable probability),
+    # included so the curve starts at (0,0); clip it to a real cutoff if it wins the argmax.
+    best_thr = float(np.clip(thr[best_ix], 0.0, 1.0))
 
     yhat_opt = (prob1 >= best_thr).astype(int)
 
