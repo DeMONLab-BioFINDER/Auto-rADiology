@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score, roc_curve, average_precision_score, precision_recall_curve
 
 CUSTOM_PALETTE = [
     "#1f77b4",  # blue
@@ -610,7 +610,8 @@ def compute_classification_stats_from_preds(y_true: np.ndarray, y_pred: np.ndarr
     specificity = tn / (tn + fp) if (tn + fp) > 0 else np.nan
     accuracy = (tp + tn) / n if n > 0 else np.nan
     balanced_accuracy = np.nanmean([sensitivity, specificity])
-    precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
+    precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan  # == PPV
+    npv = tn / (tn + fn) if (tn + fn) > 0 else np.nan
     f1 = (2 * precision * sensitivity / (precision + sensitivity)
           if precision and sensitivity and (precision + sensitivity) > 0 else np.nan)
     mcc_denom = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
@@ -619,6 +620,7 @@ def compute_classification_stats_from_preds(y_true: np.ndarray, y_pred: np.ndarr
     return {
         "n": n, "tp": tp, "tn": tn, "fp": fp, "fn": fn,
         "accuracy": accuracy, "sensitivity": sensitivity, "specificity": specificity,
+        "ppv": precision, "npv": npv,
         "balanced_accuracy": balanced_accuracy, "f1": f1, "mcc": mcc,
     }
 
@@ -644,6 +646,7 @@ def make_roc_confusion_panel(
 
     fpr, tpr, thresholds = roc_curve(y_true, y_prob)
     auc = float(roc_auc_score(y_true, y_prob))
+    auprc = float(average_precision_score(y_true, y_prob))
 
     fig, axes = plt.subplots(1, 2, figsize=(11.4, 5.2), squeeze=False)
 
@@ -672,8 +675,92 @@ def make_roc_confusion_panel(
     plt.close(fig)
 
     if stats_csv_path is not None:
-        rows = [{"auc": auc, **stats_pred}]
+        rows = [{"auc": auc, "auprc": auprc, **stats_pred}]
         pd.DataFrame(rows).to_csv(stats_csv_path, index=False)
+
+
+def make_pr_curve_panel(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    out_dir: Path,
+    filename: str = "visual_read_pr_curve.png",
+):
+    """Precision-recall curve with AUPRC, the threshold-free companion to the ROC panel.
+    Under class imbalance, ROC can look deceptively good (true-negative rate dominates),
+    while PR curves show the real operating-point tradeoffs. The no-skill baseline plotted
+    is the actual positive-class prevalence, not 0.5 - the correct PR chance level."""
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(y_prob)
+    y_true, y_prob = y_true[mask].astype(int), y_prob[mask]
+    if len(y_true) == 0 or len(np.unique(y_true)) < 2:
+        return
+
+    precision, recall, _ = precision_recall_curve(y_true, y_prob)
+    auprc = float(average_precision_score(y_true, y_prob))
+    prevalence = float(y_true.mean())  # correct PR no-skill baseline, not 0.5
+
+    fig, ax = plt.subplots(figsize=(6.2, 5.2))
+    ax.plot(recall, precision, color=SEABORN_COLORS[0], linewidth=2.2, label=f"AUPRC = {auprc:.3f}")
+    ax.axhline(prevalence, linestyle="--", color="gray", linewidth=1.2, alpha=0.6,
+               label=f"No-skill (prevalence) = {prevalence:.3f}")
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_xlim(-0.02, 1.02)
+    style_axes(ax, "Precision-recall curve: agreement with clinical read", "Recall (sensitivity)", "Precision (PPV)")
+    style_legend(ax, loc="best")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+def make_probability_by_class_panel(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    threshold: float,
+    out_dir: Path,
+    filename: str = "visual_read_probability_by_class.png",
+):
+    """KDE of predicted probability, split by true clinical-read class - a sanity check for
+    whether class reweighting (--class_weight_cls) is already doing most of the work of
+    separating the classes, and whether the chosen decision threshold sits in a sparse or
+    dense region of either distribution."""
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob, dtype=float)
+    mask = np.isfinite(y_true) & np.isfinite(y_prob)
+    y_true, y_prob = y_true[mask].astype(int), y_prob[mask]
+    if len(y_true) == 0:
+        return
+
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    labels = {0: "Negative (clinical read)", 1: "Positive (clinical read)"}
+    colors = {0: SEABORN_COLORS[0], 1: SEABORN_COLORS[1]}
+    kde_vals = {}
+    for cls in (0, 1):
+        vals = y_prob[y_true == cls]
+        if len(vals) >= 2:
+            sns.kdeplot(vals, ax=ax, color=colors[cls], linewidth=2.2, fill=True, alpha=0.15,
+                        label=f"{labels[cls]} (n={len(vals)})")
+            kde_vals[cls] = vals
+        elif len(vals) == 1:
+            ax.axvline(vals[0], color=colors[cls], linewidth=2.2, label=f"{labels[cls]} (n=1)")
+
+    # Rug ticks (actual values) drawn after all KDE curves - each kdeplot() call autoscales
+    # the y-axis, which would otherwise clip an earlier rugplot()'s bottom margin extension.
+    # A small/near-constant subgroup (e.g. a tiny imbalanced CV fold) can make the KDE
+    # degenerate into a razor-thin spike; the rug keeps the actual values legible regardless.
+    for cls, vals in kde_vals.items():
+        sns.rugplot(vals, ax=ax, color=colors[cls], height=0.05, linewidth=1.6, alpha=0.8)
+
+    ax.axvline(threshold, color="black", linestyle="--", linewidth=1.6,
+               label=f"Decision threshold = {threshold:.3f}")
+    ax.set_xlim(-0.02, 1.02)
+    style_axes(ax, "Predicted probability by true class", "Predicted probability", "Density")
+    style_legend(ax, loc="best")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
 
 
 CONFUSION_CATEGORY_LABELS = {

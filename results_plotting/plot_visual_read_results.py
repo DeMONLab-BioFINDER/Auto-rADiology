@@ -13,6 +13,8 @@ from plot_utils import (
     find_demo_csv,
     make_class_balance_panel,
     make_confusion_category_distribution_panel,
+    make_pr_curve_panel,
+    make_probability_by_class_panel,
     make_roc_confusion_panel,
     resolve_existing_path,
     resolve_path,
@@ -68,6 +70,20 @@ def load_predictions(preds_path: Path) -> pd.DataFrame:
     return df
 
 
+def load_decision_threshold(preds_path: Path) -> float:
+    """The results csv (y/prob/pred) doesn't carry the threshold used to build 'pred' -
+    it's saved in the sibling *_metrics.csv (see decision_threshold in src/cv.py's
+    run_fold / run_val.py). Falls back to 0.5 (argparse default) if not found, e.g. for
+    results from a run predating this field."""
+    metrics_path = preds_path.parent / preds_path.name.replace("_results.csv", "_metrics.csv")
+    if metrics_path.exists():
+        df_metrics = pd.read_csv(metrics_path)
+        if "decision_threshold" in df_metrics.columns and len(df_metrics) > 0:
+            return float(df_metrics["decision_threshold"].iloc[0])
+    print(f"[WARNING] Could not find decision_threshold in {metrics_path}; defaulting to 0.5.")
+    return 0.5
+
+
 def main():
     sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)
 
@@ -102,12 +118,24 @@ def main():
         print("[WARNING] Could not find demographics csv for class balance panel.")
 
     df_preds = load_predictions(preds_path)
+    decision_threshold = load_decision_threshold(preds_path)
     make_roc_confusion_panel(
         df_preds["y"].to_numpy(),
         df_preds["prob"].to_numpy(),
         df_preds["pred"].to_numpy(),
         out_dir,
         stats_csv_path=out_dir / "visual_read_performance_stats.csv",
+    )
+    make_pr_curve_panel(
+        df_preds["y"].to_numpy(),
+        df_preds["prob"].to_numpy(),
+        out_dir,
+    )
+    make_probability_by_class_panel(
+        df_preds["y"].to_numpy(),
+        df_preds["prob"].to_numpy(),
+        decision_threshold,
+        out_dir,
     )
 
     if df_demo is not None:

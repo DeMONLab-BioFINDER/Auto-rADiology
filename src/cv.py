@@ -75,11 +75,15 @@ def kfold_cv(df_clean, stratify_labels, args):
             print(f"Median best_epoch across folds: {median_epoch}")
         else:
             print(f"\nDone. Metrics saved to: {metrics_path} (no best_epoch column present)")
-        if 'best_thr' in df_metrics.columns and not df_metrics['best_thr'].dropna().empty:
-            median_thr = float(df_metrics['best_thr'].dropna().median())
-            print(f"Median best_thr across folds: {median_thr:.4f}")
-            print("(pass this to the final run as --decision_threshold to use a class-imbalance-aware "
-                  "cutoff chosen from validation folds only, instead of the default 0.5)")
+        thrs = df_metrics['best_thr'].dropna() if 'best_thr' in df_metrics.columns else pd.Series(dtype=float)
+        if not thrs.empty:
+            median_thr, p25, p75 = float(thrs.median()), float(thrs.quantile(0.25)), float(thrs.quantile(0.75))
+            print(f"Median best_thr across folds: {median_thr:.4f} "
+                  f"(spread across {len(thrs)} folds, IQR: [{p25:.4f}, {p75:.4f}])")
+            print("(pass the median to the final run as --decision_threshold to use a class-imbalance-aware "
+                  "cutoff chosen from validation folds only, instead of the default 0.5; the IQR is a "
+                  "descriptive spread across folds, not a formal confidence interval - n=5 folds is too "
+                  "small for that to mean anything)")
     except Exception:
         print(f"\nDone. Metrics saved to: {metrics_path} (failed to compute median best_epoch)")
 
@@ -186,8 +190,10 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         model = load_best_checkpoint(model, ckpt_path=path_list['ckpt'], device=args.device) # In final retrain, there is no val-based checkpoint; use LAST-EPOCH weights
     
     # inference and save resutls
-    metrics_test, df_result_test = inference(model, dl_eval, args.device, decision_threshold=getattr(args, "decision_threshold", 0.5))
+    decision_threshold = getattr(args, "decision_threshold", 0.5)
+    metrics_test, df_result_test = inference(model, dl_eval, args.device, decision_threshold=decision_threshold)
     metrics_test["best_epoch"] = int(best_epoch)
+    metrics_test["decision_threshold"] = decision_threshold
 
     # ---- Interpretation: grad-CAM or ... ----
     # run_visualization(model, dl_eval, args.device, args.output_path, vis_name=args.visualization_name)
@@ -412,11 +418,14 @@ def print_cv_summary(output_path):
 
         # Best (Youden-optimal) classification threshold info, from each fold's own
         # validation predictions - a class-imbalance-aware alternative to the default 0.5.
+        # Reported as median + IQR (a descriptive spread across folds), not a confidence
+        # interval - n=5 folds is too small for a formal CI to mean anything.
         if "best_thr" in df.columns:
             best_thrs = df["best_thr"].dropna()
             if len(best_thrs) > 0:
+                p25, p75 = best_thrs.quantile(0.25), best_thrs.quantile(0.75)
                 print(f"\n  best_thr:        median={best_thrs.median():.4f}, "
-                      f"min={best_thrs.min():.4f}, max={best_thrs.max():.4f}")
+                      f"IQR=[{p25:.4f}, {p75:.4f}] (spread across {len(best_thrs)} folds)")
                 print("  (pass median as --decision_threshold to the final train/test run)")
 
         print("="*80 + "\n")
