@@ -196,7 +196,10 @@ def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_re
             metrics["auc"] = float(roc_auc_score(ycls, probs))
             if labels.size == 2:
                 pos = int(labels.max())
-                metrics["acc_opt"], metrics["bacc"], metrics["f1"], metrics["mcc"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
+                # _opt suffix: these are computed at THIS eval set's own best-case (Youden)
+                # threshold, not the actual decision_threshold used for "preds"/"acc" below -
+                # diagnostic only, not the deployed operating point's performance.
+                metrics["acc_opt"], metrics["bacc_opt"], metrics["f1_opt"], metrics["mcc_opt"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
         else:
             if labels.size < 2:
                 metrics["auc"] = float("nan")
@@ -204,7 +207,7 @@ def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_re
                 # binary AUC: take the column for the chosen positive class
                 pos = int(labels.max())
                 metrics["auc"] = roc_auc_score((ycls == pos).astype(int), probs[:, pos])
-                metrics["acc_opt"], metrics["bacc"], metrics["f1"], metrics["mcc"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
+                metrics["acc_opt"], metrics["bacc_opt"], metrics["f1_opt"], metrics["mcc_opt"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
 
             else:
                 metrics["auc"] = float(roc_auc_score(ycls, probs, multi_class="ovr", average="macro", labels=labels))
