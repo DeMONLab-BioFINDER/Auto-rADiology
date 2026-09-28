@@ -126,14 +126,16 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     _, dl_eval = get_train_val_loaders(eval_df, eval_df, args, repeat_train=False)
 
     # Determine output dimension from targets, and which metric families apply.
-    # classification -> 2 classes, single regression -> 1, multi-regression -> number of regression targets
+    # classification -> 1 logit (binary, BCEWithLogitsLoss) or N>2 logits (multiclass, CrossEntropyLoss),
+    # single regression -> 1, multi-regression -> number of regression targets
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     regression_targets = [t for t in targets_list if t != "visual_read"]
     class_present = "visual_read" in targets_list
     if regression_targets:
         out_dim = len(regression_targets)
     elif class_present:
-        out_dim = int(train_df["visual_read"].dropna().nunique())
+        n_unique = int(train_df["visual_read"].dropna().nunique())
+        out_dim = 1 if n_unique <= 2 else n_unique
     else:
         out_dim = 1
 
@@ -144,7 +146,17 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     class_weight = None
     if class_present and getattr(args, "class_weight_cls", False):
         counts = train_df["visual_read"].dropna().value_counts().sort_index()
-        if len(counts) == out_dim:
+        if out_dim == 1:
+            # single-logit BCEWithLogitsLoss: pos_weight = n_negative / n_positive
+            if len(counts) == 2 and counts.get(1, 0) > 0:
+                pos_weight_val = float(counts.get(0, 0) / counts.get(1, 0))
+                class_weight = torch.tensor([pos_weight_val], dtype=torch.float32)
+                print(f"[{fold_name}] Using class-balanced pos_weight={pos_weight_val:.3f} "
+                      f"(counts: {dict(counts.sort_index())})")
+            else:
+                print(f"[{fold_name}] [WARNING] --class_weight_cls set but train fold has {len(counts)} "
+                      f"visual_read classes with counts {dict(counts)}; skipping class weighting.")
+        elif len(counts) == out_dim:
             weights = counts.sum() / (out_dim * counts)
             class_weight = torch.tensor(weights.to_numpy(), dtype=torch.float32)
             print(f"[{fold_name}] Using class-balanced classification weights: "

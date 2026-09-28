@@ -191,7 +191,8 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
     if regression_targets:
         out_dim = len(regression_targets)
     elif 'visual_read' in targets_list:
-        out_dim = int(df["visual_read"].dropna().nunique())
+        n_unique = int(df["visual_read"].dropna().nunique())
+        out_dim = 1 if n_unique <= 2 else n_unique
     else:
         out_dim = 1
 

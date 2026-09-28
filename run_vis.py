@@ -28,7 +28,11 @@ def main(args):
     _, dl_va = get_train_val_loaders(df_select, df_select, args, repeat_train=False)
 
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
-    n_classes = int(df["visual_read"].dropna().nunique()) if 'visual_read' in targets_list else None
+    if 'visual_read' in targets_list:
+        n_unique = int(df["visual_read"].dropna().nunique())
+        n_classes = 1 if n_unique <= 2 else n_unique
+    else:
+        n_classes = None
     model = build_model_from_args(args, device=args.device, n_classes=n_classes)
     ckpt_dir = os.path.join(args.best_model_folder, 'final_model', 'checkpoints')
     ckpt_last = os.path.join(ckpt_dir, 'final_model_last.pt')

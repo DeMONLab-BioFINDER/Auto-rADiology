@@ -266,7 +266,8 @@ def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Ten
     if (not y_cls.isnan().all()) and (loss_w_cls > 0) and (logit is not None):
         if logit.ndim == 2 and logit.shape[1] == 1:
             assert set(torch.unique(y_cls).tolist()) <= {0.0, 1.0}, "BCE requires binary {0,1} targets" # BCE path: targets must be float 0/1
-            loss_cls = nn.BCEWithLogitsLoss()(logit.squeeze(1), y_cls.squeeze(1).float(), reduction="none")
+            pos_weight = class_weight.to(logit.device) if class_weight is not None else None
+            loss_cls = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")(logit.squeeze(1), y_cls.squeeze(1).float())
         else:
             yl = y_cls.squeeze(1).long()
             assert yl.min() >= 0 and yl.max() < logit.shape[1], "CE: target out of range" # CE path: targets must be long in [0..C-1]
