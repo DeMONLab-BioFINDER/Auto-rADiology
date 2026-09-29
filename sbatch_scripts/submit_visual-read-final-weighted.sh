@@ -42,9 +42,9 @@ python ./run.py \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs 60 \
+  --epochs 69 \
   --class_weight_cls \
-  --model_name_extra "visual-read-final-weighted-60" \
+  --model_name_extra "visual-read-final-weighted-69" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
