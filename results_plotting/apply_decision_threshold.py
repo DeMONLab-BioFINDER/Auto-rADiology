@@ -51,14 +51,16 @@ def reclassify_at_threshold(results_csv: Path, threshold: float, out_dir: Path) 
     df.to_csv(new_results_csv, index=False)
 
     # Carry over threshold-independent diagnostics (auc, best_thr, best_epoch, ...) from the
-    # original metrics csv if present, but refresh 'acc'/'decision_threshold' - those are the
-    # two fields that actually depend on which threshold produced 'pred'.
+    # original metrics csv if present, but refresh 'acc'/'eval_metric'/'decision_threshold' -
+    # those are the fields that actually depend on which threshold produced 'pred'
+    # (eval_metric = auc + acc, matching compute_metrics()'s definition in src/train.py).
     metrics_row = {"decision_threshold": threshold}
     old_metrics_csv = results_csv.parent / results_csv.name.replace("_results.csv", "_metrics.csv")
     if old_metrics_csv.exists():
         metrics_row = pd.read_csv(old_metrics_csv).iloc[0].to_dict()
         metrics_row["decision_threshold"] = threshold
     metrics_row["acc"] = float((df["pred"] == df["y"]).mean())
+    metrics_row["eval_metric"] = float(pd.Series([metrics_row.get("auc"), metrics_row["acc"]]).sum(skipna=True))
     new_metrics_csv = out_dir / results_csv.name.replace("_results.csv", "_metrics.csv")
     pd.DataFrame([metrics_row]).to_csv(new_metrics_csv, index=False)
 
