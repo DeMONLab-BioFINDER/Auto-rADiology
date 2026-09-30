@@ -4,6 +4,10 @@
 # with an untouched 20% hold-out test split. Mirrors submit_mse-cv5.sh (the
 # regional-SUVR CV5 workflow), swapping --targets/--stratifycvby for the
 # classification head.
+# --cls_loss softmax pinned explicitly (matches run.py's current default, but
+# pinned so this script's own record of what ran doesn't drift if that default
+# changes again - see --class_weight_cls in submit_visual-read-cv5-weighted.sh
+# for the weighted comparison run).
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -39,7 +43,8 @@ python "./run.py" \
   --n_splits 5 \
   --es_patience 15 \
   --es_min_delta 0.001 \
-  --model_name_extra visual-read-cv5 \
+  --cls_loss softmax \
+  --model_name_extra visual-read-cv5-softmax \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

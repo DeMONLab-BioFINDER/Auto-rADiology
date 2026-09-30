@@ -2,8 +2,10 @@
 # SLURM batch job script for Berzelius
 # 5-fold CV for the visual_read classifier on the real Gothenburg training pool,
 # with an untouched 20% hold-out test split. Identical to submit_visual-read-cv5.sh
-# except for --class_weight_cls (pos_weight-based class balancing in the loss) -
-# run both to compare weighted vs unweighted training.
+# except for --class_weight_cls (per-class balancing in the loss - pos_weight for
+# bce, inverse-frequency class weights for softmax) - run both to compare weighted
+# vs unweighted training. --cls_loss softmax pinned explicitly, same as the
+# unweighted script.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -39,8 +41,9 @@ python "./run.py" \
   --n_splits 5 \
   --es_patience 15 \
   --es_min_delta 0.001 \
+  --cls_loss softmax \
   --class_weight_cls \
-  --model_name_extra visual-read-cv5-weighted \
+  --model_name_extra visual-read-cv5-weighted-softmax \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

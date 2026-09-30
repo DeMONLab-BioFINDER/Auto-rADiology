@@ -3,6 +3,13 @@
 # Zero-shot evaluation of the visual_read classifier on the real AVID unseen
 # test set, using the trained final model from submit_visual-read-final.sh.
 # Mirrors submit_val_AVID_unseen.sh (the regional-SUVR AVID validation workflow).
+#
+# --cls_loss softmax pinned to match the head shape (2 logits) the final model
+# was actually trained with - src/validation.py rebuilds the architecture from
+# this flag before loading the checkpoint, so a mismatch here means a shape
+# error (or worse, a silent strict=False partial load) rather than a real
+# evaluation. Keep in sync with whichever --cls_loss the source
+# submit_visual-read-final*.sh run used.
 
 # Usage:
 #   sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name>
@@ -42,6 +49,7 @@ python "./run_val.py" \
   --data_type tau_raw \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
   --targets visual_read \
+  --cls_loss softmax \
   --few_shot 0 \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}

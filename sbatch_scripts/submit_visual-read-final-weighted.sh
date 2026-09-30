@@ -3,12 +3,20 @@
 # Final visual_read model: retrain on the full 80% training pool for a fixed
 # number of epochs, then evaluate once on the untouched 20% hold-out test set.
 # Identical to submit_visual-read-final.sh except for --class_weight_cls
-# (pos_weight-based class balancing in the loss).
+# (per-class balancing in the loss).
 #
 # The epoch count isn't known until submit_visual-read-cv5-weighted.sh has
 # finished: take ITS "Median best_epoch across folds" value (not the unweighted
 # cv5 run's - weighted training can converge at a different epoch), same as how
 # mse-final-47's "47" was derived from mse-cv5. Edit --epochs below accordingly.
+#
+# --epochs 69 below was derived from submit_visual-read-cv5-weighted.sh back
+# when it defaulted to --cls_loss bce (pre-softmax-default change) - STALE now
+# that cv5-weighted defaults to softmax. Re-run submit_visual-read-cv5-weighted.sh
+# first, then update --epochs (and the "-69" in --model_name_extra / #SBATCH -J /
+# log paths) to the new median before submitting this. --cls_loss softmax pinned
+# explicitly so the head shape matches whatever cv5-weighted run you take the
+# epoch count from.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -43,6 +51,7 @@ python ./run.py \
   --val_size 0.00 \
   --test_size 0.20 \
   --epochs 69 \
+  --cls_loss softmax \
   --class_weight_cls \
   --model_name_extra "visual-read-final-weighted-69" \
   2>&1 | tee "$RUN_LOG"

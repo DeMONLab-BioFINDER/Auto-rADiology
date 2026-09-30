@@ -2,14 +2,18 @@
 # SLURM batch job script for Berzelius
 # Final visual_read model: retrain on the full 80% training pool for a fixed
 # number of epochs, then evaluate once on the untouched 20% hold-out test set.
-# Mirrors submit_mse-final-47.sh (the regional-SUVR final-model workflow).
+# Mirrors submit_mse-final-47.sh (the regional-SUVR final-model workflow):
+# --epochs is hand-edited below from a CV run's result, same as mse-final-47's
+# "47" was derived from mse-cv5 (this script takes no CLI args).
 #
-# The epoch count isn't known until submit_visual-read-cv5.sh has finished:
-# take the "Median best_epoch across folds" value it prints / metrics.csv,
-# same as how mse-final-47's "47" was derived from mse-cv5.
-#
-# Usage:
-#   sbatch submit_visual-read-final.sh <epochs>
+# --epochs 75 below was derived from submit_visual-read-cv5.sh's "Median
+# best_epoch across folds" back when that script defaulted to --cls_loss bce
+# (pre-softmax-default change) - STALE now that cv5 defaults to softmax.
+# Re-run submit_visual-read-cv5.sh first, then update --epochs (and the
+# "-75" in --model_name_extra / #SBATCH -J / log paths, matching mse-final-47's
+# naming) to the new median before submitting this. --cls_loss softmax pinned
+# explicitly so the head shape matches whatever cv5 run you take the epoch
+# count from.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -44,6 +48,7 @@ python ./run.py \
   --val_size 0.00 \
   --test_size 0.20 \
   --epochs 75 \
+  --cls_loss softmax \
   --model_name_extra "visual-read-final-75" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
