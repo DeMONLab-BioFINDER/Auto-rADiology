@@ -193,7 +193,7 @@ def load_participants_labels(input_path: str, dataset: Optional[str] = None) -> 
 # ------------------------------
 # Transforms & Dataset
 # ------------------------------
-def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
+def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True, eval_augment: bool = False):
     # Detect cached mode
     use_cache = (not args.data_suffix) or (str(args.data_suffix).strip() == "")
     if use_cache:
@@ -219,7 +219,7 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True):
         train_df = train_df.loc[train_df.index.repeat(args.train_repeat)].reset_index(drop=True)
 
     dl_tr = get_loader(train_df, tfm, data_file, args, batch_size=args.batch_size, augment=True, shuffle=True, train_test='train')
-    dl_va = get_loader(val_df, tfm, data_file, args, batch_size=args.batch_size, augment=False, shuffle=False, train_test='test')
+    dl_va = get_loader(val_df, tfm, data_file, args, batch_size=args.batch_size, augment=eval_augment, shuffle=False, train_test='test')
     
     return dl_tr, dl_va
 

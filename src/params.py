@@ -88,7 +88,17 @@ def parse_arguments():
     parser.add_argument("--few_shot", type=int, default=0, help="Number of few-shot samples to use for fine-tuning.")
     parser.add_argument("--few_shot_iterations", type=int, default=100, help="Number of few-shot iterations to run.")
     parser.add_argument("--unfreeze_layers", type=int, default=1, help="Number of last layers to unfreeze during few-shot finetuning. (e.g., 1 = final linear layer; 2 = dropout + linear).")
-    
+
+    # Ensemble / test-time augmentation (run_ensemble_eval.py)
+    parser.add_argument("--tta_passes", type=int, default=1,
+                         help="Number of augmented inference passes to average per model in run_ensemble_eval.py "
+                              "(test-time augmentation over the random-flip augmentation in PETDataset.__getitem__). "
+                              "1 (default) = no TTA, single deterministic pass. >1 reseeds torch's global RNG before "
+                              "each pass (torch.manual_seed(seed + 1000*pass_i)) so passes actually differ - note this "
+                              "reliably varies the per-item flips with --num_workers 0, and should in practice with "
+                              "--num_workers > 0 too (workers fork after the seed is set), but isn't a hard PyTorch "
+                              "guarantee across all versions/platforms.")
+
     # Visualization
     parser.add_argument("--visualization_name", type=str, default='gradcam', help="Interpretation method. e.g. 'gradcam' or 'occlusion'")
     parser.add_argument("--vis_img_list", type=str, default='0,1,2', help="visulize specific subject, ID seperate by comma")
