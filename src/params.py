@@ -44,6 +44,14 @@ def parse_arguments():
                               "Ignored (always softmax/CrossEntropyLoss) when visual_read has >2 classes.")
     parser.add_argument("--class_weight_cls", action=argparse.BooleanOptionalAction, default=False,
                          help="Weight the visual_read classification loss inversely by class frequency in the training fold, to counteract class imbalance (rare class contributes more per-sample loss). Off by default.")
+    parser.add_argument("--balance_sampling_by", type=str, default="",
+                         help="Column name to inverse-frequency balance the TRAINING sampler by (WeightedRandomSampler, "
+                              "with replacement); e.g. 'site' to balance across cohorts, or 'visual_read' to oversample "
+                              "the minority class as an alternative to --class_weight_cls's loss-level reweighting. "
+                              "Empty (default) = off, plain shuffling. Only affects the train split, not val/test. "
+                              "Not intended to be combined with --class_weight_cls or another --balance_sampling_by "
+                              "column in the same run - keep imbalance-handling experiments isolated to one variable "
+                              "at a time. No-ops with a warning if the named column isn't in the data.")
     parser.add_argument("--decision_threshold", type=float, default=0.5,
                          help="Probability cutoff used to turn visual_read predictions into 0/1 for final test-set evaluation/plots. Default 0.5. Set this from a prior CV run's printed 'Median best_thr across folds' for a class-imbalance-aware cutoff chosen from validation data only - never tune it against this run's own test set.")
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")

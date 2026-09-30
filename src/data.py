@@ -246,13 +246,17 @@ def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=Fals
 
     dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats, augment=augment)
 
-    if "dataset" in df.columns and train_test=='train': #### domain-balanced sampling
-        print('------ Balanced sampling ------')
+    balance_col = getattr(args, "balance_sampling_by", "") or None
+    if balance_col and balance_col in df.columns and train_test == 'train':
+        print(f'------ Balanced sampling by {balance_col} ------')
         # inverse-frequency weights
-        counts = df["dataset"].value_counts().to_dict()
-        weights = df["dataset"].map(lambda d: 1.0 / counts[d]).values
+        counts = df[balance_col].value_counts().to_dict()
+        weights = df[balance_col].map(lambda d: 1.0 / counts[d]).values
         sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
         shuffle = False
+    elif balance_col and train_test == 'train':
+        print(f"[WARNING] --balance_sampling_by {balance_col} set but '{balance_col}' not in dataframe columns; skipping balanced sampling.")
+        sampler = None
     else:
         sampler = None
 
