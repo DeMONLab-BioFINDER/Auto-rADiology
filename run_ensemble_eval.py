@@ -47,8 +47,26 @@ def main(args):
 
     device = args.device
     test_csv = os.path.join(args.best_model_folder, "splits", "test_subjects.csv")
+    train_csv = os.path.join(args.best_model_folder, "splits", "train_subjects.csv")
     df_test = pd.read_csv(test_csv)
     print(f"Held-out test set: {len(df_test)} subjects ({test_csv})")
+
+    # Defense in depth: run.py's save_split_audit() already hard-fails at split-creation
+    # time on any subject-level overlap between this test set and the 80% training pool
+    # every fold is carved from (so this should be structurally impossible for a run that
+    # completed) - but leakage into the ensemble's own held-out numbers would fail silently
+    # and only show up as suspiciously good metrics, so check again here directly against
+    # this run's own splits/ files rather than trusting that invariant blindly.
+    subject_col = args.samesubject_col or "ID"
+    df_train_pool = pd.read_csv(train_csv)
+    overlap = set(df_test[subject_col].astype(str)) & set(df_train_pool[subject_col].astype(str))
+    if overlap:
+        raise ValueError(
+            f"Subject leakage: {len(overlap)} subject(s) in both {test_csv} and {train_csv} "
+            f"(the pool every CV fold is drawn from) - examples: {sorted(overlap)[:10]}. "
+            "Every fold's train/val subset is carved from train_subjects.csv, so this means "
+            "the 'held-out' test set isn't actually held out from at least one fold model."
+        )
 
     n_unique = int(df_test["visual_read"].dropna().nunique())
     out_dim = classifier_out_dim(n_unique, args.cls_loss)
