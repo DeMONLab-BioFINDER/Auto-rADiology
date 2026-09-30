@@ -37,6 +37,11 @@ def parse_arguments():
     parser.add_argument("--epochs", type=int, default=200) # true model should start with 30 
     parser.add_argument("--loss_weight_cls", type=float, default=1.0, help="Weight applied to the classification loss (visual_read) in the combined multi-task loss.")
     parser.add_argument("--loss_weight_reg", type=float, default=1.0, help="Weight applied to the regression loss (regional SUVR targets) in the combined multi-task loss.")
+    parser.add_argument("--cls_loss", type=str, default="softmax", choices=["bce", "softmax"],
+                         help="Binary visual_read classification head: single-logit BCEWithLogitsLoss ('bce') or "
+                              "2-logit softmax+CrossEntropyLoss ('softmax'). CV shows 'softmax' converges to the "
+                              "same AUC/accuracy but with far more consistent early-stopping epochs across folds. "
+                              "Ignored (always softmax/CrossEntropyLoss) when visual_read has >2 classes.")
     parser.add_argument("--class_weight_cls", action=argparse.BooleanOptionalAction, default=False,
                          help="Weight the visual_read classification loss inversely by class frequency in the training fold, to counteract class imbalance (rare class contributes more per-sample loss). Off by default.")
     parser.add_argument("--decision_threshold", type=float, default=0.5,

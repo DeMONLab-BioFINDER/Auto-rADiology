@@ -6,6 +6,16 @@ import torch
 from src.models import *
 
 
+def classifier_out_dim(n_unique: int, cls_loss: str) -> int:
+    """Output dim for the visual_read classification head.
+    Binary (n_unique<=2): 1 logit for 'bce' (BCEWithLogitsLoss), 2 logits for 'softmax' (CrossEntropyLoss).
+    Multiclass (n_unique>2): always softmax/CrossEntropyLoss - out_dim=n_unique, cls_loss is ignored.
+    """
+    if n_unique <= 2:
+        return 1 if cls_loss == "bce" else 2
+    return n_unique
+
+
 def _resolve_model_class(name: str):
     """Return a model class by name from models.py; raise a helpful error if missing."""
     try:

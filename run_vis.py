@@ -7,7 +7,7 @@ import pandas as pd
 
 from src.params import parse_arguments
 from src.utils import get_device, set_seed
-from src.model_factory import build_model_from_args
+from src.model_factory import build_model_from_args, classifier_out_dim
 from src.data import get_train_val_loaders
 from src.vis import run_visualization
 
@@ -30,7 +30,7 @@ def main(args):
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     if 'visual_read' in targets_list:
         n_unique = int(df["visual_read"].dropna().nunique())
-        n_classes = 1 if n_unique <= 2 else n_unique
+        n_classes = classifier_out_dim(n_unique, args.cls_loss)
     else:
         n_classes = None
     model = build_model_from_args(args, device=args.device, n_classes=n_classes)

@@ -39,8 +39,10 @@ def main(args):
     class_targets_present = "visual_read" in targets and args.loss_weight_cls > 0 and "visual_read" in df_clean.columns
     if class_targets_present:
         n_unique = df_clean["visual_read"].dropna().nunique()
-        if n_unique <= 2:
-            print("Using classification loss: BCEWithLogitsLoss (binary targets).")
+        if n_unique <= 2 and args.cls_loss == "bce":
+            print("Using classification loss: BCEWithLogitsLoss (binary targets, single logit).")
+        elif n_unique <= 2:
+            print("Using classification loss: CrossEntropyLoss (binary targets, softmax over 2 logits).")
         else:
             print("Using classification loss: CrossEntropyLoss (multiclass targets).")
 

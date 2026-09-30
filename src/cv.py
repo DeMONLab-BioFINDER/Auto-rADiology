@@ -12,7 +12,7 @@ from src.early_stopping import EarlyStopper
 from src.train import train_one_epoch, validate_one_epoch, inference
 from src.vis import run_visualization
 from src.checkpoints import save_checkpoint, load_best_checkpoint
-from src.model_factory import build_model_from_args
+from src.model_factory import build_model_from_args, classifier_out_dim
 from src.training_io import append_metrics_csv, plot_metrics_from_csv
 from src.splits import random_assign_nan_labels, add_quantile_bins, is_continuous_numeric, collapse_dx_to_other
 
@@ -130,7 +130,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
     _, dl_eval = get_train_val_loaders(eval_df, eval_df, args, repeat_train=False)
 
     # Determine output dimension from targets, and which metric families apply.
-    # classification -> 1 logit (binary, BCEWithLogitsLoss) or N>2 logits (multiclass, CrossEntropyLoss),
+    # classification -> 1 logit (binary + bce) or 2/N logits (binary + softmax, or multiclass; CrossEntropyLoss),
     # single regression -> 1, multi-regression -> number of regression targets
     targets_list = [t.strip() for t in args.targets.split(",") if t.strip()]
     regression_targets = [t for t in targets_list if t != "visual_read"]
@@ -139,7 +139,7 @@ def run_fold(train_df, val_df, eval_df=None, args=None, fold_name: str = "", *, 
         out_dim = len(regression_targets)
     elif class_present:
         n_unique = int(train_df["visual_read"].dropna().nunique())
-        out_dim = 1 if n_unique <= 2 else n_unique
+        out_dim = classifier_out_dim(n_unique, args.cls_loss)
     else:
         out_dim = 1
 

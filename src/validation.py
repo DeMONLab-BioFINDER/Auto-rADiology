@@ -15,7 +15,7 @@ from src.data import build_master_table, get_transforms, get_loader
 from src.train import inference
 from src.cv import train_model
 from src.utils import compute_smooth_sigma_vox
-from src.model_factory import build_model_from_args
+from src.model_factory import build_model_from_args, classifier_out_dim
 from src.checkpoints import load_best_checkpoint
 from src.splits import add_quantile_bins
 
@@ -192,7 +192,7 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
         out_dim = len(regression_targets)
     elif 'visual_read' in targets_list:
         n_unique = int(df["visual_read"].dropna().nunique())
-        out_dim = 1 if n_unique <= 2 else n_unique
+        out_dim = classifier_out_dim(n_unique, args.cls_loss)
     else:
         out_dim = 1
 
