@@ -45,10 +45,10 @@ python ./run.py \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs 60 \
+  --epochs 40 \
   --cls_loss softmax \
   --balance_sampling_by visual_read \
-  --model_name_extra "visual-read-final-class-balanced-60" \
+  --model_name_extra "visual-read-final-class-balanced-40" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
