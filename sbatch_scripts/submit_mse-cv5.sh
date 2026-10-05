@@ -2,7 +2,7 @@
 # SLURM batch job script for Berzelius
 # 5-fold CV on the training pool with an untouched 20% hold-out test split
 
-#SBATCH -A berzelius-2026-31
+#SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH -t 12:00:00
 #SBATCH -J mse-cv5
