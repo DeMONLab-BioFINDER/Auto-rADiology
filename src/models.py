@@ -4,11 +4,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 from monai.networks.nets import UNet, BasicUNet, DenseNet121, resnet
 
+class AttentionPool3D(nn.Module):
+    """Gated attention pooling (Ilse et al., 2018, "Attention-based Deep Multiple
+    Instance Learning"), treating each spatial location of the final feature map as
+    an instance in a bag. Learns which locations actually drive the prediction
+    instead of averaging the whole volume uniformly - meant for focal pathology
+    that global average pooling can dilute.
+    """
+    def __init__(self, in_channels: int, hidden_dim: int = 128):
+        super().__init__()
+        self.V = nn.Linear(in_channels, hidden_dim)
+        self.U = nn.Linear(in_channels, hidden_dim)
+        self.w = nn.Linear(hidden_dim, 1)
+        self.last_attn_weights = None  # [B, N] after a forward pass (detached), for visualization
+
+    def forward(self, x):
+        # x: [B, C, D, H, W]
+        instances = x.flatten(2).transpose(1, 2)  # [B, N, C], N = D*H*W
+        gated = torch.tanh(self.V(instances)) * torch.sigmoid(self.U(instances))  # [B, N, hidden_dim]
+        scores = self.w(gated).squeeze(-1)  # [B, N]
+        weights = torch.softmax(scores, dim=1)  # [B, N], sums to 1 per sample
+        self.last_attn_weights = weights.detach()
+        pooled = torch.bmm(weights.unsqueeze(1), instances).squeeze(1)  # [B, C]
+        return pooled
+
+
 class CNN3D(nn.Module):
     """
     A small 3D CNN for scalar output.
     - Stack of Conv3d -> BN -> ReLU -> (optional MaxPool)
-    - Global average pool
+    - Global average pool (or attention/MIL pooling)
     - Linear head -> [B, 1]
 
     Args
@@ -26,14 +51,20 @@ class CNN3D(nn.Module):
     gn_groups : int
         Number of groups for GroupNorm (only used when norm="group"). Falls back to
         1 group for any conv stage whose channel count isn't divisible by gn_groups.
+    pool : str
+        "avg" (global average pooling, default) or "attention" (gated attention/MIL
+        pooling over spatial locations - see AttentionPool3D).
+    attn_hidden : int
+        Hidden dim of the attention scoring MLP (only used when pool="attention").
     """
     def __init__(self, in_channels: int = 1, widths=(16, 32, 64, 128), pool_every: int = 1,
                  dropout: float = 0.2, norm: str = "batch", num_classes=1, extra_dim=0,
-                 gn_groups: int = 8):
+                 gn_groups: int = 8, pool: str = "avg", attn_hidden: int = 128):
         super().__init__()
         assert pool_every >= 1
         assert norm in {"batch", "instance", "group"}
-        print(f'in_channels: {in_channels}, widths: {widths}, pool_every: {pool_every}, dropout: {dropout}, norm: {norm}, num_classes: {num_classes}')
+        assert pool in {"avg", "attention"}
+        print(f'in_channels: {in_channels}, widths: {widths}, pool_every: {pool_every}, dropout: {dropout}, norm: {norm}, num_classes: {num_classes}, pool: {pool}')
         def make_norm(c):
             if norm == "batch":
                 return nn.BatchNorm3d(c)  # ok if batch_size >= ~8
@@ -59,13 +90,17 @@ class CNN3D(nn.Module):
             c_in = c_out
 
         self.features = nn.Sequential(*layers)
-        self.gap = nn.AdaptiveAvgPool3d(1)
+        self._attention_pool = pool == "attention"
+        if self._attention_pool:
+            self.pool = AttentionPool3D(widths[-1], hidden_dim=attn_hidden)
+        else:
+            self.pool = nn.AdaptiveAvgPool3d(1)
         in_fc = widths[-1] + extra_dim
         self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_fc, num_classes))
 
     def forward(self, x, extra):
         x = self.features(x)       # [B, C, D, H, W]
-        x = self.gap(x).flatten(1) # [B, C]
+        x = self.pool(x) if self._attention_pool else self.pool(x).flatten(1)  # [B, C]
 
         if extra is not None and not torch.isnan(extra).all():
             if extra.ndim == 1: extra = extra.unsqueeze(0)
