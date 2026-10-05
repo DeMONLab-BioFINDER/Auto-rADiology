@@ -22,19 +22,26 @@ class CNN3D(nn.Module):
     dropout : float
         Dropout before the final linear head.
     norm : str
-        "batch" or "instance" normalization.
+        "batch", "instance", or "group" normalization.
+    gn_groups : int
+        Number of groups for GroupNorm (only used when norm="group"). Falls back to
+        1 group for any conv stage whose channel count isn't divisible by gn_groups.
     """
     def __init__(self, in_channels: int = 1, widths=(16, 32, 64, 128), pool_every: int = 1,
-                 dropout: float = 0.2, norm: str = "batch", num_classes=1, extra_dim=0):
+                 dropout: float = 0.2, norm: str = "batch", num_classes=1, extra_dim=0,
+                 gn_groups: int = 8):
         super().__init__()
         assert pool_every >= 1
-        assert norm in {"batch", "instance"}
+        assert norm in {"batch", "instance", "group"}
         print(f'in_channels: {in_channels}, widths: {widths}, pool_every: {pool_every}, dropout: {dropout}, norm: {norm}, num_classes: {num_classes}')
         def make_norm(c):
             if norm == "batch":
                 return nn.BatchNorm3d(c)  # ok if batch_size >= ~8
-            else:
+            elif norm == "instance":
                 return nn.InstanceNorm3d(c, affine=True, track_running_stats=False)
+            else:  # "group"
+                groups = gn_groups if c % gn_groups == 0 else 1
+                return nn.GroupNorm(groups, c)
 
         layers = []
         c_in = in_channels

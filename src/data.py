@@ -485,12 +485,14 @@ class PETDataset(Dataset):
         x = x.to(dtype=self.dtype)
         ndim = x.ndim
         
-        # Lightweight augmentation: random flips along spatial dims (D, H, W)
+        # Lightweight augmentation: random left-right flip only. After RAS
+        # reorientation, dim D is the Right-Left axis (flipping it mirrors the
+        # brain, anatomically valid); dims H (Anterior-Posterior) and W
+        # (Inferior-Superior) are NOT symmetric axes, so flipping them used to
+        # produce front-to-back or upside-down brains. Only D is flipped now.
         if self.augment:
-            r = torch.rand(3, device=x.device)  # one draw per spatial dim
-            if r[0] < 0.5: x = torch.flip(x, dims=[ndim-3])  # D
-            if r[1] < 0.5: x = torch.flip(x, dims=[ndim-2])  # H
-            if r[2] < 0.5: x = torch.flip(x, dims=[ndim-1])  # W
+            r = torch.rand(1, device=x.device)
+            if r[0] < 0.5: x = torch.flip(x, dims=[ndim-3])  # D (Right-Left)
 
         # Targets
         y_cls = torch.tensor([float('nan')], dtype=torch.float32)
