@@ -2,7 +2,7 @@
 # SLURM batch job script for Berzelius
 # Final retrain on the full 80% training pool for a fixed 47 epochs
 
-#SBATCH -A berzelius-2026-31
+#SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH -t 6:00:00
 #SBATCH -J mse-final-47
