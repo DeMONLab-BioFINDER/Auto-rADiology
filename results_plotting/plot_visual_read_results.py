@@ -206,10 +206,10 @@ def main():
             df_preds, df_demo, out_dir, cutoff=24.4,
             filename="visual_read_agreement_vs_cutoff_by_cl.png",
         )
-        if "Universal" in df_demo.columns:
+        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
             make_agreement_by_value_panel(
                 df_preds, df_demo, out_dir,
-                value_col="Universal", value_label="Universal tau SUVR",
+                value_col=value_col, value_label=value_label,
                 cutoff=1.5,
             )
     print(f"[done] figures saved to {out_dir}")
