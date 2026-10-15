@@ -13,10 +13,8 @@ from plot_utils import (
     find_demo_csv,
     make_agreement_by_centiloid_panel,
     make_agreement_by_value_panel,
-    make_class_balance_panel,
     make_classification_breakdown_panel,
     make_classification_breakdown_violin_panel,
-    make_confusion_category_categorical_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
     make_roc_confusion_panel,
@@ -62,11 +60,10 @@ REGIONAL_SUVR_BY_OUTCOME = [
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Create class-balance and clinical-read-agreement plots for a visual_read run."
+        description="Create clinical-read-agreement plots for a visual_read run."
     )
     parser.add_argument("run_dir", help="Path to a results run directory trained with --targets visual_read.")
     parser.add_argument("--dataset", default="Gothenburg", help="Dataset name used in the result filenames.")
-    parser.add_argument("--group_col", default="site", help="Demographic column to break class balance down by.")
     parser.add_argument(
         "--demo_csv",
         default=None,
@@ -152,9 +149,8 @@ def main():
     df_demo = None
     if demo_path is not None:
         df_demo = pd.read_csv(demo_path)
-        make_class_balance_panel(df_demo, out_dir, group_col=args.group_col)
     else:
-        print("[WARNING] Could not find demographics csv for class balance panel.")
+        print("[WARNING] Could not find demographics csv for demographics-based panels.")
 
     df_preds = load_predictions(preds_path)
     decision_threshold = load_decision_threshold(preds_path)
@@ -193,9 +189,6 @@ def main():
                 value_col=value_col, value_label=value_label,
                 discordant_only=True,
             )
-        make_confusion_category_categorical_panel(
-            df_preds, df_demo, out_dir, cat_col="apoe", cat_label="APOE e4 status",
-        )
         # Headline readability panel: binned agreement vs. Centiloid, styled after the
         # Moscoso et al. 2025 source figure (background histogram + agreement line) -
         # easier to read at a glance than the per-subject scatter/distribution panels above.
