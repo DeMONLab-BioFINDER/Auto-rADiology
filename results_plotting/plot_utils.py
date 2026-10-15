@@ -1125,13 +1125,21 @@ def _fixed_width_bin_labels(series: pd.Series, n_bins: int):
     return bin_edges, labels
 
 
+_SUVR_BIN_STEPS = [round(0.9 + 0.1 * i, 1) for i in range(20)]  # 0.9, 1.0, ..., 2.8
+SUVR_BIN_EDGES = [-np.inf] + _SUVR_BIN_STEPS + [np.inf]
+SUVR_BIN_LABELS = (
+    ["<0.9"]
+    + [f"{_SUVR_BIN_STEPS[i]:.1f}–{_SUVR_BIN_STEPS[i + 1]:.1f}" for i in range(len(_SUVR_BIN_STEPS) - 1)]
+    + [">2.8"]
+)
+
+
 def make_agreement_by_value_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
     out_dir: Path,
     value_col: str,
     value_label: str | None = None,
-    n_bins: int = 12,
     min_bin_n: int = 2,
     group_col: str | None = None,
     group_label: str | None = None,
@@ -1139,15 +1147,14 @@ def make_agreement_by_value_panel(
     id_col_preds: str = "ID_ind",
     id_col_demo: str = "ID",
 ):
-    """Same style as make_agreement_by_centiloid_panel (binned agreement line over a
-    background histogram of % of scans per bin) but for an arbitrary quantitative column
-    (e.g. a regional tau SUVR) using data-driven fixed-width bins instead of the
-    Centiloid-specific literature bins - there's no literature SUVR cutoff per region to
-    anchor fixed bins to, but fixed-width (not equal-count) still shows the real
-    distribution shape. Use this for the 5 CenTauR regions; use
-    make_agreement_by_centiloid_panel for Centiloid itself to keep the literature-matching
-    bins. Optional group_col draws one line per subgroup (e.g. site) instead of one overall
-    line, matching the source figure's multi-line comparison."""
+    """Same style as make_agreement_by_centiloid_panel (binned lines over a background
+    histogram of % of scans per bin) but for a regional tau SUVR column, using fixed
+    0.1-wide bins from 0.9 to 2.8 (SUVR_BIN_EDGES/LABELS) - there's no literature SUVR
+    cutoff per region to validate a different scheme against, but fixed real-value bins
+    (not data-range-based or equal-count) keep bin boundaries comparable across regions/runs
+    and show the true distribution shape. Use this for the 5 CenTauR regions; use
+    make_agreement_by_centiloid_panel for Centiloid itself to keep its own literature bins.
+    Optional group_col draws one line per subgroup (e.g. site) instead of one overall line."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1171,10 +1178,8 @@ def make_agreement_by_value_panel(
     if df.empty:
         return
 
-    bin_edges, bin_labels = _fixed_width_bin_labels(df[value_col], n_bins)
-    if bin_labels is None:
-        return
-    df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=bin_labels, include_lowest=True)
+    bin_edges, bin_labels = SUVR_BIN_EDGES, SUVR_BIN_LABELS
+    df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=bin_labels, right=False)
     df["_agree"] = (df["y"] == df["pred"]).astype(float)
 
     bin_counts = df["_bin"].value_counts().reindex(bin_labels, fill_value=0)
