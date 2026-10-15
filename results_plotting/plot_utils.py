@@ -237,15 +237,18 @@ def _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans):
         ax.add_patch(Rectangle((i - 0.325, y0), 0.65, f * (y1 - y0), alpha=0, zorder=-100))
 
 
-def _draw_checkmark(ax, cx: float, cy: float, size: float = 0.019, color: str = "#2E8B45"):
+def _draw_checkmark(ax, cx: float, cy: float, size_x: float = 0.011, size_y: float = 0.024, color: str = "#2E8B45"):
     """A hand-drawn checkmark (two line segments) instead of a text glyph - sidesteps font
     fallback entirely (no risk of a missing-glyph box) and, being an actual line like
     everything else on these charts, looks native rather than like a dropped-in symbol.
-    Short down-stroke then a longer up-stroke, the standard checkmark proportions."""
+    Short down-stroke then a longer up-stroke, the standard checkmark proportions.
+    size_x/size_y are independent because axes-fraction x/y units aren't physically equal
+    on a wide (width > height) figure - a symmetric size_x==size_y renders visibly flat
+    ("vertically squished"); size_y needs to be noticeably larger to look upright."""
     ax.plot(
-        [cx - size, cx - size * 0.25, cx + size * 1.2],
-        [cy, cy - size * 0.9, cy + size],
-        transform=ax.transAxes, color=color, linewidth=3.2,
+        [cx - size_x, cx - size_x * 0.25, cx + size_x * 1.2],
+        [cy, cy - size_y * 0.9, cy + size_y],
+        transform=ax.transAxes, color=color, linewidth=2.6,
         solid_capstyle="round", solid_joinstyle="round", zorder=11, clip_on=False,
     )
 
@@ -275,29 +278,38 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
         linewidth=1.0, alpha=0.92, zorder=10, clip_on=False,
     ))
 
-    # 5 equal vertical slots (title, header, 3 data rows) - guarantees everything stays
-    # inside the box regardless of box_h, instead of hand-tuned offsets that can overflow.
-    n_slots = 5
-    slot_h = box_h / n_slots
+    # 5 vertical slots (title, header, 3 data rows) sized off the content area, not the
+    # full box - top_margin/bottom_margin keep the content from crowding the box edges
+    # (bottom gets more room since the last row previously sat almost flush with it).
+    top_margin = 0.05 * box_h
+    bottom_margin = 0.16 * box_h
+    content_top = box_y0 + box_h - top_margin
+    slot_h = (box_h - top_margin - bottom_margin) / 5
 
     def slot_center(k):
-        return box_y0 + box_h - slot_h * (k + 0.5)
+        return content_top - slot_h * (k + 0.5)
 
     title_y = slot_center(0)
     header_y = slot_center(1)
     row_ys = [slot_center(2 + i) for i in range(3)]
 
     line_x0, line_x1 = box_x0 + 0.035, box_x0 + 0.095
-    col_xs = [box_x0 + box_w * frac for frac in (0.44, 0.69, 0.92)]
+    line_mid = (line_x0 + line_x1) / 2
+    col_xs = [box_x0 + box_w * frac for frac in (0.47, 0.67, 0.86)]
 
     ax.text(box_x0 + box_w / 2, title_y, "Agreement between", transform=ax.transAxes,
-            ha="center", va="center", fontsize=TICK_SIZE, fontweight="bold", zorder=11)
+            ha="center", va="center", fontsize=TICK_SIZE, zorder=11)
     for cx, label in zip(col_xs, col_labels):
         ax.text(cx, header_y, label, transform=ax.transAxes, ha="center", va="center",
-                fontsize=TICK_SIZE - 2, fontweight="bold", zorder=11)
+                fontsize=TICK_SIZE - 2, zorder=11)
     for (color, flags), ry in zip(rows, row_ys):
+        # A plain line with a single marker at its midpoint - the same handle style
+        # matplotlib's own legend() draws for these lines everywhere else, rather than a
+        # marker at each end.
         ax.plot([line_x0, line_x1], [ry, ry], transform=ax.transAxes, color=color,
-                linewidth=2.2, marker="o", markersize=6, zorder=11, clip_on=False)
+                linewidth=2.2, zorder=11, clip_on=False)
+        ax.plot([line_mid], [ry], transform=ax.transAxes, color=color, marker="o",
+                markersize=6, zorder=11, clip_on=False)
         for cx, flag in zip(col_xs, flags):
             if flag:
                 _draw_checkmark(ax, cx, ry)
