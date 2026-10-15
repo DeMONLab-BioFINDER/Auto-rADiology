@@ -3,7 +3,6 @@
 
 import math
 import re
-import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -97,8 +96,6 @@ def format_suvr_label(display_target=None) -> str:
     return "SUVR"
 
 
-def wrap_plot_title(title: str, width: int = 36) -> str:
-    return textwrap.fill(str(title), width=width, break_long_words=False, break_on_hyphens=False)
 
 
 def order_targets(targets: list[str]) -> list[str]:
@@ -200,7 +197,9 @@ def save_figure(fig, out_path: Path, **kwargs) -> bool:
 
 
 def style_axes(ax, title: str, xlabel: str, ylabel: str, *, xrotation: int = 0):
-    ax.set_title(wrap_plot_title(title), fontsize=TITLE_SIZE, pad=12, loc="center")
+    # wrap=True measures the title against the actual figure width at render time (unlike a
+    # fixed character-count wrap), so it only wraps when the title would actually overflow.
+    ax.set_title(str(title), fontsize=TITLE_SIZE, pad=12, loc="center", wrap=True)
     ax.set_xlabel(xlabel, fontsize=LABEL_SIZE)
     ax.set_ylabel(ylabel, fontsize=LABEL_SIZE)
     ax.tick_params(axis="x", rotation=xrotation, labelsize=TICK_SIZE)
@@ -208,8 +207,15 @@ def style_axes(ax, title: str, xlabel: str, ylabel: str, *, xrotation: int = 0):
     ax.grid(alpha=0.28)
 
 
-def style_legend(ax, **kwargs):
-    legend = ax.legend(fontsize=LEGEND_SIZE, frameon=False, **kwargs)
+def style_legend(ax, *, boxed: bool = False, **kwargs):
+    """boxed=True draws a rounded-corner frame around the legend (fancybox) with a
+    translucent white background, for a chart busy enough that an unboxed legend gets lost
+    among the plotted lines; the default (boxed=False) stays frameless, as most panels want."""
+    if boxed:
+        legend = ax.legend(fontsize=LEGEND_SIZE, frameon=True, fancybox=True,
+                            framealpha=0.9, edgecolor="0.75", **kwargs)
+    else:
+        legend = ax.legend(fontsize=LEGEND_SIZE, frameon=False, **kwargs)
     if legend is not None and legend.get_title() is not None:
         legend.get_title().set_fontsize(LEGEND_SIZE)
     return legend
@@ -998,21 +1004,22 @@ def make_probability_vs_suvr_scatter(
     plt.close(fig)
 
 
-CENTILOID_BIN_EDGES = [-np.inf, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, np.inf]
+CENTILOID_BIN_EDGES = [-np.inf, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, np.inf]
 CENTILOID_BIN_LABELS = [
-    "<-50", "-50–-40", "-40–-30", "-30–-20", "-20–-10", "-10–0",
+    "<-30", "-30–-20", "-20–-10", "-10–0",
     "0–10", "10–20", "20–30", "30–40", "40–50", "50–60",
     "60–70", "70–80", "80–90", "90–100", ">100",
 ]
 
 
-def _plot_line(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, color: str, label: str, metric_col: str = "_agree"):
+def _plot_line(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, color: str, label: str, metric_col: str = "_agree", show_n: bool = True):
     by_bin = df.groupby("_bin", observed=False)[metric_col].mean().reindex(bin_labels)
     n_by_bin = df.groupby("_bin", observed=False)[metric_col].size().reindex(bin_labels, fill_value=0)
     y = by_bin.where(n_by_bin >= min_bin_n)
+    full_label = f"{label} (n={int(n_by_bin.sum())})" if show_n else label
     ax.plot(
         bin_labels, y, marker="o", markersize=7, linewidth=2.2,
-        color=color, label=f"{label} (n={int(n_by_bin.sum())})", zorder=3,
+        color=color, label=full_label, zorder=3,
     )
 
 
@@ -1042,22 +1049,27 @@ def _plot_confusion_category_rates(ax, df: pd.DataFrame, bin_labels, min_bin_n: 
         )
 
 
-def _plot_cutoff_agreement(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, value_col: str, cutoff: float):
+def _plot_cutoff_agreement(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, value_col: str, cutoff: float) -> int:
     """3 lines, matching Nadine's description of the reference figure: how often the model
     agrees with a binary call derived from thresholding value_col at cutoff, how often the
     clinical read agrees with that same cutoff call, and how often the model agrees with
     the clinical read directly - binned. Unlike the 4-category breakdown, this requires an
     actual positivity cutoff on value_col, which (apart from Centiloid) isn't literature-
-    validated for individual scans - treat non-Centiloid cutoffs passed in as provisional."""
+    validated for individual scans - treat non-Centiloid cutoffs passed in as provisional.
+    All 3 lines are computed over every scan (not a category subset like the 4-category
+    breakdown), so they always share the same n - showing "(n=...)" on each line would just
+    repeat the same number 3 times. Returns that shared n so the caller can show it once
+    (e.g. in the title) instead."""
     quant_positive = (df[value_col] > cutoff).astype(int)
     df = df.assign(
         _model_vs_quant=(df["pred"] == quant_positive).astype(float),
         _human_vs_quant=(df["y"] == quant_positive).astype(float),
         _model_vs_human=(df["pred"] == df["y"]).astype(float),
     )
-    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[5], "Model agrees with quantitative cutoff", metric_col="_model_vs_quant")
-    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[1], "Human agrees with quantitative cutoff", metric_col="_human_vs_quant")
-    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[3], "Model agrees with human", metric_col="_model_vs_human")
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[5], "Model agrees with quantitative cutoff", metric_col="_model_vs_quant", show_n=False)
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[1], "Human agrees with quantitative cutoff", metric_col="_human_vs_quant", show_n=False)
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[3], "Model agrees with human", metric_col="_model_vs_human", show_n=False)
+    return len(df)
 
 
 def make_agreement_by_centiloid_panel(
@@ -1121,26 +1133,26 @@ def make_agreement_by_centiloid_panel(
     fig, ax = plt.subplots(figsize=(12, 5.5))
     ax2 = ax.twinx()
     ax2.bar(CENTILOID_BIN_LABELS, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
-    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="0.4")
-    ax2.tick_params(axis="y", labelsize=TICK_SIZE, colors="0.4")
-    ax2.spines["right"].set_color("0.4")
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="black")
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE, color="0.6", labelcolor="black")
+    ax2.spines["right"].set_color("0.6")
     ax2.grid(False)
 
     if has_group:
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
             _plot_line(ax, df[df[group_col] == g], CENTILOID_BIN_LABELS, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
-        style_legend(ax, title=group_label or group_col, loc="lower center")
+        style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ax.set_ylim(0, 1.05)
         ylabel = "Accuracy"
         title = f"Classification outcome vs. {value_label}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
-        _plot_cutoff_agreement(ax, df, CENTILOID_BIN_LABELS, min_bin_n, value_col, cutoff)
+        n_total = _plot_cutoff_agreement(ax, df, CENTILOID_BIN_LABELS, min_bin_n, value_col, cutoff)
         style_legend(ax, loc="lower center")
         ax.set_ylim(0, 1.05)
         ylabel = "Agreement"
-        title = f"Agreement vs. {value_label} (cutoff = {cutoff:g})"
+        title = f"Agreement vs. {value_label} (cutoff = {cutoff:g}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     elif discordant_only:
         _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n, categories=DISCORDANT_CATEGORIES)
@@ -1153,7 +1165,7 @@ def make_agreement_by_centiloid_panel(
         default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
-        style_legend(ax, loc="lower center")
+        style_legend(ax, loc="best", boxed=True)
         ax.set_ylim(-2, 102)
         ylabel = "Percentage (%)"
         title = f"Classification outcome vs. {value_label}"
@@ -1328,9 +1340,9 @@ def make_agreement_by_value_panel(
     fig, ax = plt.subplots(figsize=(10, 5.5))
     ax2 = ax.twinx()
     ax2.bar(bin_labels, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
-    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="0.4")
-    ax2.tick_params(axis="y", labelsize=TICK_SIZE, colors="0.4")
-    ax2.spines["right"].set_color("0.4")
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="black")
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE, color="0.6", labelcolor="black")
+    ax2.spines["right"].set_color("0.6")
     ax2.grid(False)
 
     label_x = value_label or value_col
@@ -1339,17 +1351,17 @@ def make_agreement_by_value_panel(
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
             _plot_line(ax, df[df[group_col] == g], bin_labels, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
-        style_legend(ax, title=group_label or group_col, loc="lower center")
+        style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ax.set_ylim(0, 1.05)
         ylabel = "Accuracy"
         title = f"Classification outcome vs. {label_x}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
-        _plot_cutoff_agreement(ax, df, bin_labels, min_bin_n, value_col, cutoff)
+        n_total = _plot_cutoff_agreement(ax, df, bin_labels, min_bin_n, value_col, cutoff)
         style_legend(ax, loc="lower center")
         ax.set_ylim(0, 1.05)
         ylabel = "Agreement"
-        title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, provisional)"
+        title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, temp, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     elif discordant_only:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n, categories=DISCORDANT_CATEGORIES)
@@ -1362,7 +1374,7 @@ def make_agreement_by_value_panel(
         default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n)
-        style_legend(ax, loc="lower center")
+        style_legend(ax, loc="best", boxed=True)
         ax.set_ylim(-2, 102)
         ylabel = "Percentage (%)"
         title = f"Classification outcome vs. {label_x}"

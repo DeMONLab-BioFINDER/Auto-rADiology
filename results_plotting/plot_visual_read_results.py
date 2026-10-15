@@ -53,8 +53,8 @@ REGIONAL_SUVR_BY_OUTCOME = [
     ("Universal", "Universal tau SUVR"),
     ("TemporoParietal", "TemporoParietal tau SUVR"),
     ("MetaTemporal", "MetaTemporal tau SUVR"),
-    ("MesialTemporal", "MesialTemporal tau SUVR (strong discriminator in aggregate; not a sole visual-read-positivity trigger)"),
-    ("Frontal", "Frontal tau SUVR (weakest of the 4 CenTauR subregions for AD discrimination)"),
+    ("MesialTemporal", "MesialTemporal tau SUVR"),
+    ("Frontal", "Frontal tau SUVR"),
 ]
 
 
