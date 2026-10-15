@@ -1261,8 +1261,8 @@ def make_agreement_by_centiloid_panel(
     fig, ax = plt.subplots(figsize=(12, 5.5))
     ax2 = ax.twinx()
     ax2.bar(CENTILOID_BIN_LABELS, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
-    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="black")
-    ax2.tick_params(axis="y", labelsize=TICK_SIZE, color="0.6", labelcolor="black")
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="0.6")
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE, color="0.6", labelcolor="0.6")
     ax2.spines["right"].set_color("0.6")
     ax2.grid(False)
 
@@ -1473,8 +1473,8 @@ def make_agreement_by_value_panel(
     fig, ax = plt.subplots(figsize=(10, 5.5))
     ax2 = ax.twinx()
     ax2.bar(bin_labels, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
-    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="black")
-    ax2.tick_params(axis="y", labelsize=TICK_SIZE, color="0.6", labelcolor="black")
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="0.6")
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE, color="0.6", labelcolor="0.6")
     ax2.spines["right"].set_color("0.6")
     ax2.grid(False)
 
