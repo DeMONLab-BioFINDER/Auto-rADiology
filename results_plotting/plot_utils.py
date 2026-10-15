@@ -973,6 +973,27 @@ CENTILOID_BIN_LABELS = [
 ]
 
 
+def _plot_line(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, color: str, label: str, metric_col: str = "_agree"):
+    by_bin = df.groupby("_bin", observed=False)[metric_col].mean().reindex(bin_labels)
+    n_by_bin = df.groupby("_bin", observed=False)[metric_col].size().reindex(bin_labels, fill_value=0)
+    y = by_bin.where(n_by_bin >= min_bin_n)
+    ax.plot(
+        bin_labels, y, marker="o", markersize=7, linewidth=2.2,
+        color=color, label=f"{label} (n={int(n_by_bin.sum())})", zorder=3,
+    )
+
+
+def _plot_agreement_breakdown(ax, df: pd.DataFrame, bin_labels, min_bin_n: int):
+    """Splits 'agreement' into the 3 metrics that actually compose it - overall accuracy,
+    sensitivity (model's hit rate on clinician-positive cases), and specificity (model's
+    hit rate on clinician-negative cases) - instead of one blended line. This surfaces
+    WHERE disagreement concentrates: e.g. overall accuracy can look fine while sensitivity
+    specifically collapses in the equivocal mid-range, which a single accuracy line hides."""
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[1], "Overall agreement")
+    _plot_line(ax, df[df["y"] == 1], bin_labels, min_bin_n, CUSTOM_PALETTE[3], "Sensitivity (clinician-positive cases)")
+    _plot_line(ax, df[df["y"] == 0], bin_labels, min_bin_n, CUSTOM_PALETTE[5], "Specificity (clinician-negative cases)")
+
+
 def make_agreement_by_centiloid_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
@@ -993,8 +1014,10 @@ def make_agreement_by_centiloid_panel(
     the clearly-negative and clearly-positive extremes and dips in the clinically-equivocal
     mid-range, which is also where most scans actually sit - something a raw per-subject
     scatter doesn't show directly. Bin edges match the source figure's Centiloid bins.
-    Optional group_col draws one line per subgroup (e.g. site) for a multi-line comparison,
-    matching the source figure's multi-reader panels; omit it for a single overall line."""
+    By default draws 3 lines - overall agreement, sensitivity, specificity (see
+    _plot_agreement_breakdown) - matching the source figure's 3-line look. Pass group_col
+    (e.g. site) instead to compare overall agreement across subgroups; the two modes are
+    mutually exclusive (group_col disables the sensitivity/specificity breakdown)."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1031,22 +1054,13 @@ def make_agreement_by_centiloid_panel(
     ax2.tick_params(axis="y", labelsize=TICK_SIZE)
     ax2.grid(False)
 
-    def _plot_line(sub: pd.DataFrame, color: str, label: str):
-        agree_by_bin = sub.groupby("_bin", observed=False)["_agree"].mean().reindex(CENTILOID_BIN_LABELS)
-        n_by_bin = sub.groupby("_bin", observed=False)["_agree"].size().reindex(CENTILOID_BIN_LABELS, fill_value=0)
-        y = agree_by_bin.where(n_by_bin >= min_bin_n)
-        ax.plot(
-            CENTILOID_BIN_LABELS, y, marker="o", markersize=7, linewidth=2.2,
-            color=color, label=f"{label} (n={int(n_by_bin.sum())})", zorder=3,
-        )
-
     if has_group:
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
-            _plot_line(df[df[group_col] == g], CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
+            _plot_line(ax, df[df[group_col] == g], CENTILOID_BIN_LABELS, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
         style_legend(ax, title=group_label or group_col, loc="lower center")
     else:
-        _plot_line(df, CUSTOM_PALETTE[1], "Model vs. clinical read")
+        _plot_agreement_breakdown(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
         style_legend(ax, loc="lower center")
 
     ax.set_ylim(0, 1.05)
@@ -1162,22 +1176,13 @@ def make_agreement_by_value_panel(
     ax2.tick_params(axis="y", labelsize=TICK_SIZE)
     ax2.grid(False)
 
-    def _plot_line(sub: pd.DataFrame, color: str, label: str):
-        agree_by_bin = sub.groupby("_bin", observed=False)["_agree"].mean().reindex(bin_labels)
-        n_by_bin = sub.groupby("_bin", observed=False)["_agree"].size().reindex(bin_labels, fill_value=0)
-        y = agree_by_bin.where(n_by_bin >= min_bin_n)
-        ax.plot(
-            bin_labels, y, marker="o", markersize=7, linewidth=2.2,
-            color=color, label=f"{label} (n={int(n_by_bin.sum())})", zorder=3,
-        )
-
     if has_group:
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
-            _plot_line(df[df[group_col] == g], CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
+            _plot_line(ax, df[df[group_col] == g], bin_labels, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
         style_legend(ax, title=group_label or group_col, loc="lower center")
     else:
-        _plot_line(df, CUSTOM_PALETTE[1], "Model vs. clinical read")
+        _plot_agreement_breakdown(ax, df, bin_labels, min_bin_n)
         style_legend(ax, loc="lower center")
 
     label_x = value_label or value_col
