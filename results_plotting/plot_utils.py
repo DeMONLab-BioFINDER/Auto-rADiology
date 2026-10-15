@@ -1342,6 +1342,67 @@ def make_classification_breakdown_panel(
     plt.close(fig)
 
 
+def make_classification_breakdown_violin_panel(
+    df_preds: pd.DataFrame,
+    out_dir: Path,
+    decision_threshold: float | None = None,
+    filename: str = "visual_read_classification_breakdown_violin.png",
+):
+    """Predicted-probability distribution for all 4 model/clinician outcome combinations
+    (not just the 2 discordant ones), phrased as "Model X, Visual read Y" rather than
+    TP/TN/FP/FN (see make_classification_breakdown_panel) - one violin per category, same
+    order/colors as that bar chart for visual consistency."""
+    df = df_preds[["y", "pred", "prob"]].copy()
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+    df = df.dropna(subset=["y", "pred", "prob"])
+    if df.empty:
+        return
+
+    y_int = df["y"].astype(int)
+    pred_int = df["pred"].astype(int)
+    df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_int, pred_int)]
+
+    order = ["True Positive", "True Negative", "False Negative", "False Positive"]
+    display_labels = {
+        "True Positive": "Model 1,\nVisual read 1",
+        "True Negative": "Model 0,\nVisual read 0",
+        "False Negative": "Model 0,\nVisual read 1",
+        "False Positive": "Model 1,\nVisual read 0",
+    }
+    order = [c for c in order if (df["_category"] == c).sum() >= 1]
+    if not order:
+        return
+    plot_df = df[df["_category"].isin(order)]
+
+    fig, ax = plt.subplots(figsize=(9.5, 6))
+    sns.violinplot(
+        data=plot_df, x="_category", y="prob", order=order, ax=ax,
+        hue="_category", hue_order=order, palette=CONFUSION_CATEGORY_PALETTE, legend=False,
+        inner="box", cut=0,
+    )
+    sns.stripplot(
+        data=plot_df, x="_category", y="prob", order=order, ax=ax,
+        color="black", size=4, alpha=0.5, jitter=0.15, linewidth=0,
+    )
+    if decision_threshold is not None:
+        ax.axhline(decision_threshold, color="black", linestyle="--", linewidth=1.4,
+                   label=f"Decision threshold = {decision_threshold:.3f}")
+        style_legend(ax, loc="upper center")
+
+    counts = plot_df["_category"].value_counts()
+    xticklabels = [f"{display_labels[c]}\n(n={int(counts.get(c, 0))})" for c in order]
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels(xticklabels)
+    ax.set_ylim(-0.02, 1.02)
+    style_axes(ax, "Predicted probability by classification outcome", "", "Predicted probability")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
 def make_discordant_probability_violin_panel(
     df_preds: pd.DataFrame,
     out_dir: Path,

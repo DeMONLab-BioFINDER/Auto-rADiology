@@ -15,6 +15,7 @@ from plot_utils import (
     make_agreement_by_value_panel,
     make_class_balance_panel,
     make_classification_breakdown_panel,
+    make_classification_breakdown_violin_panel,
     make_confusion_category_categorical_panel,
     make_confusion_category_distribution_panel,
     make_discordant_probability_violin_panel,
@@ -188,6 +189,7 @@ def main():
     )
     make_discordant_probability_violin_panel(df_preds, out_dir, decision_threshold)
     make_classification_breakdown_panel(df_preds, out_dir)
+    make_classification_breakdown_violin_panel(df_preds, out_dir, decision_threshold)
 
     if df_demo is not None:
         for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
