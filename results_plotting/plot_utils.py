@@ -830,3 +830,136 @@ def make_confusion_category_distribution_panel(
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
+
+
+def make_confusion_category_categorical_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    cat_col: str = "apoe",
+    cat_label: str | None = None,
+    filename: str | None = None,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Within-group proportion of a categorical variable (e.g. APOE e4 carrier status),
+    one group of bars per confusion-matrix category (TP/TN/FP/FN) - an AD-epidemiology
+    construct-validity check: true positives should skew toward known AD risk factors
+    (APOE e4 carriage, etc.) more than true negatives, and discordant cases are the
+    interesting middle ground. Normalized within each category (not raw counts) since
+    FP/FN groups are typically much smaller than TP/TN."""
+    if cat_col not in df_demo.columns:
+        print(f"[WARNING] '{cat_col}' not found in demographics table; skipping confusion-category categorical panel.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "pred"]],
+        df_demo[[id_col_demo, cat_col]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df = df.dropna(subset=["y", "pred", cat_col])
+    if df.empty or df["y"].nunique() < 2:
+        return
+
+    y_true = df["y"].astype(int).to_numpy()
+    y_pred = df["pred"].astype(int).to_numpy()
+    df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_true, y_pred)]
+    df[cat_col] = df[cat_col].astype("string").fillna("NA")
+
+    order = [c for c in CONFUSION_CATEGORY_ORDER if (df["_category"] == c).sum() >= 2]
+    if not order:
+        return
+
+    cat_order = get_display_order(df[cat_col], cat_col)
+    proportions = (
+        df.groupby("_category")[cat_col]
+        .value_counts(normalize=True)
+        .rename("proportion")
+        .reset_index()
+    )
+
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    sns.barplot(
+        data=proportions, x="_category", y="proportion", hue=cat_col,
+        order=order, hue_order=cat_order, ax=ax,
+    )
+    label = cat_label or cat_col
+    counts = df["_category"].value_counts()
+    xticklabels = [f"{c}\n(n={counts.get(c, 0)})" for c in order]
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels(xticklabels)
+    style_axes(ax, f"{label} by classification outcome", "", "Proportion within outcome")
+    style_legend(ax, title=label, loc="best")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / (filename or f"visual_read_{cat_col}_by_outcome.png"), dpi=300)
+    plt.close(fig)
+
+
+def make_probability_vs_suvr_scatter(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    decision_threshold: float,
+    value_col: str = "Universal",
+    value_label: str | None = None,
+    filename: str | None = None,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Model probability (continuous) vs. quantitative tau SUVR (continuous), one point
+    per subject, colored by confusion-matrix category (TP/TN/FP/FN against the clinical
+    visual read). Unlike the KDE-by-outcome panel (which bins into 4 discrete groups and
+    shows distributions), this shows the actual joint relationship between what the model
+    predicts and the quantitative signal - where the model's decision boundary sits
+    relative to SUVR, and whether discordant points sit near clearly-positive/negative
+    quantitative territory or in between. No SUVR cutoff is drawn (no validated per-scan
+    cutoff exists for these regions) - only the model's own decision threshold, which is
+    an actual value the model uses."""
+    if value_col not in df_demo.columns:
+        print(f"[WARNING] '{value_col}' not found in demographics table; skipping probability-vs-SUVR scatter.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "pred", "prob"]],
+        df_demo[[id_col_demo, value_col]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df = df.dropna(subset=["y", "pred", "prob", value_col])
+    if df.empty or df["y"].nunique() < 2:
+        return
+
+    y_true = df["y"].astype(int).to_numpy()
+    y_pred = df["pred"].astype(int).to_numpy()
+    df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_true, y_pred)]
+
+    order = [c for c in CONFUSION_CATEGORY_ORDER if (df["_category"] == c).sum() >= 1]
+    if not order:
+        return
+
+    fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    for category in order:
+        subset = df[df["_category"] == category]
+        ax.scatter(
+            subset[value_col], subset["prob"],
+            color=CONFUSION_CATEGORY_PALETTE[category], label=f"{category} (n={len(subset)})",
+            s=45, alpha=0.75, edgecolor="white", linewidth=0.5,
+        )
+
+    ax.axhline(decision_threshold, color="black", linestyle="--", linewidth=1.6,
+               label=f"Decision threshold = {decision_threshold:.3f}")
+
+    label = value_label or value_col
+    ax.set_ylim(-0.02, 1.02)
+    style_axes(ax, f"Model probability vs. {label}", label, "Predicted probability")
+    style_legend(ax, loc="best")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / (filename or f"visual_read_probability_vs_{value_col.lower()}.png"), dpi=300)
+    plt.close(fig)

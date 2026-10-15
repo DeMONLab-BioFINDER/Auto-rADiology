@@ -12,13 +12,58 @@ from plot_utils import (
     CUSTOM_PALETTE,
     find_demo_csv,
     make_class_balance_panel,
+    make_confusion_category_categorical_panel,
     make_confusion_category_distribution_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
+    make_probability_vs_suvr_scatter,
     make_roc_confusion_panel,
     resolve_existing_path,
     resolve_path,
 )
+
+# AD construct-validity check: true positives should skew toward known AD risk/severity
+# markers (higher amyloid burden, lower cognition) more than true negatives.
+CONSTRUCT_VALIDITY_CONTINUOUS = [
+    ("CL", "Amyloid Centiloid"),
+    ("CDR", "CDR"),
+    ("CDR_SB", "CDR Sum of Boxes"),
+]
+
+# Regional tau SUVR vs. classification outcome (model agreement/discordance by region).
+# Universal/MesialTemporal/MetaTemporal/TemporoParietal/Frontal are CenTauR's own
+# standardized, tracer-harmonized masks (Villemagne et al. 2023, Alzheimer's & Dementia,
+# https://doi.org/10.1002/dad2.12454): a single "universal" cortical mask (intersection of
+# 6 tracers' AD-signature difference maps) with 4 subregions nested inside it. CenTauR's
+# own validation (CTR > 2, AD A-beta+ vs CU A-beta-) found Mesial Temporal, Meta Temporal,
+# and Temporo-Parietal comparably strong discriminators (accuracy 0.94-0.96, sensitivity
+# 0.88-0.91); Frontal was the weakest (accuracy 0.91, sensitivity only 0.73) - ordered
+# last here for that reason. Universal is first (the overall composite, closest to
+# "is this scan tau-positive at all"); Temporo-Parietal second - CenTauR's authors
+# recommend it as the region to use "for a global transformation" when only one region is
+# wanted, and note it's the most sensitive to longitudinal tau accumulation.
+#
+# Separately, and specific to flortaucipir: the FDA/EMA-approved *visual-read* criterion
+# that visual_read is graded against (Moscoso et al. 2025, JAMA,
+# https://doi.org/10.1001/jama.2025.7817) calls a scan positive based on posterolateral
+# temporal/occipital/parietal-precuneus signal, deliberately NOT on isolated mesial
+# temporal signal - flortaucipir has known non-specific/off-target binding there, making
+# an MTL-only pattern unreliable for a human rater to call, even though MesialTemporal
+# SUVR discriminates AD well in aggregate (above). So a false positive driven mainly by
+# elevated MesialTemporal may reflect early tau the visual-read label is structurally
+# blind to at the individual-scan level, not necessarily a model error - worth flagging
+# specifically on that panel, not a reason to deprioritize the region generally.
+# This regional mapping (and the visual-read criterion) is specific to flortaucipir and
+# does not transfer as-is to other tau tracers (RO948, MK6240, PI2620, ...), which have
+# different off-target binding profiles (CenTauR paper, same point; Moscoso paper limits
+# itself to flortaucipir for the same reason).
+REGIONAL_SUVR_BY_OUTCOME = [
+    ("Universal", "Universal tau SUVR"),
+    ("TemporoParietal", "TemporoParietal tau SUVR"),
+    ("MetaTemporal", "MetaTemporal tau SUVR"),
+    ("MesialTemporal", "MesialTemporal tau SUVR (strong discriminator in aggregate; not a sole visual-read-positivity trigger)"),
+    ("Frontal", "Frontal tau SUVR (weakest of the 4 CenTauR subregions for AD discrimination)"),
+]
 
 
 def parse_args():
@@ -139,10 +184,28 @@ def main():
     )
 
     if df_demo is not None:
-        make_confusion_category_distribution_panel(
-            df_preds, df_demo, out_dir,
-            value_col="Universal", value_label="Universal tau SUVR",
+        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME + CONSTRUCT_VALIDITY_CONTINUOUS:
+            # Keep the original documented filename for Universal (README's
+            # visual_read_universal_suvr_by_outcome.png); every other column gets the
+            # generic <col>_by_outcome.png naming.
+            kwargs = {} if value_col == "Universal" else {
+                "filename": f"visual_read_{value_col.lower()}_by_outcome.png"
+            }
+            make_confusion_category_distribution_panel(
+                df_preds, df_demo, out_dir,
+                value_col=value_col, value_label=value_label, **kwargs,
+            )
+        make_confusion_category_categorical_panel(
+            df_preds, df_demo, out_dir, cat_col="apoe", cat_label="APOE e4 status",
         )
+        # Continuous model-probability-vs-quantitative-SUVR scatter, for the CenTauR
+        # regions only (not CONSTRUCT_VALIDITY_CONTINUOUS - CL/CDR aren't the tau-SUVR
+        # quantitative reference the model is being compared against).
+        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
+            make_probability_vs_suvr_scatter(
+                df_preds, df_demo, out_dir, decision_threshold,
+                value_col=value_col, value_label=value_label,
+            )
 
     print(f"[done] figures saved to {out_dir}")
 
