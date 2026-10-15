@@ -1291,6 +1291,57 @@ def make_classification_rate_by_value_panel(
     plt.close(fig)
 
 
+def make_classification_breakdown_panel(
+    df_preds: pd.DataFrame,
+    out_dir: Path,
+    filename: str = "visual_read_classification_breakdown.png",
+):
+    """Single overall bar chart: % of all scans in each of the 4 model/clinician outcome
+    combinations, phrased directly as "Model X, Visual read Y" rather than TP/TN/FP/FN -
+    the clinical visual read isn't itself ground truth, so naming outcomes as model
+    "errors" bakes in an assumption the whole discordant-case analysis is questioning.
+    Not binned by any quantitative variable - just the overall composition of this run's
+    results, for a quick at-a-glance summary."""
+    df = df_preds[["y", "pred"]].copy()
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df = df.dropna(subset=["y", "pred"])
+    if df.empty:
+        return
+
+    y_int = df["y"].astype(int)
+    pred_int = df["pred"].astype(int)
+    categories = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_int, pred_int)]
+    n_total = len(df)
+
+    order = ["True Positive", "True Negative", "False Negative", "False Positive"]
+    display_labels = {
+        "True Positive": "Model 1,\nVisual read 1",
+        "True Negative": "Model 0,\nVisual read 0",
+        "False Negative": "Model 0,\nVisual read 1",
+        "False Positive": "Model 1,\nVisual read 0",
+    }
+    counts = pd.Series(categories).value_counts().reindex(order, fill_value=0)
+    pct = counts / n_total * 100
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    colors = [CONFUSION_CATEGORY_PALETTE[c] for c in order]
+    bars = ax.bar([display_labels[c] for c in order], pct.to_numpy(), color=colors)
+    for bar, category in zip(bars, order):
+        ax.annotate(
+            f"{pct[category]:.1f}%\n(n={int(counts[category])})",
+            (bar.get_x() + bar.get_width() / 2, bar.get_height()),
+            ha="center", va="bottom", fontsize=TICK_SIZE,
+        )
+
+    ax.set_ylim(0, max(float(pct.max()) * 1.25, 10))
+    style_axes(ax, f"Classification outcome (n={n_total})", "", "Percentage (%)", xrotation=0)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
 def make_discordant_probability_violin_panel(
     df_preds: pd.DataFrame,
     out_dir: Path,
