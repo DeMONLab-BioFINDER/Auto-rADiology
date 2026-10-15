@@ -792,10 +792,13 @@ CONFUSION_CATEGORY_MODEL_HUMAN = {
 }
 
 
+_SIGN = {0: "−", 1: "+"}  # minus sign (U+2212), not a hyphen - renders as a proper +/- pair
+
+
 def confusion_display_label(category: str, multiline: bool = False) -> str:
     model_val, human_val = CONFUSION_CATEGORY_MODEL_HUMAN[category]
     sep = ",\n" if multiline else ", "
-    return f"Model {model_val}{sep}Visual read {human_val}"
+    return f"Model {_SIGN[model_val]}{sep}Visual read {_SIGN[human_val]}"
 
 
 def make_confusion_category_distribution_panel(
