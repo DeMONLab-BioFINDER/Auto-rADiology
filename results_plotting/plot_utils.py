@@ -1059,6 +1059,103 @@ def make_agreement_by_centiloid_panel(
     plt.close(fig)
 
 
+def _quantile_bin_labels(series: pd.Series, n_bins: int):
+    """Equal-count quantile bin edges/labels for a continuous column, with open-ended end
+    labels ("<x" / ">x") - used where no validated per-scan clinical cutoff exists, so bins
+    are data-driven rather than literature thresholds. Returns (None, None) if there isn't
+    enough distinct data to form at least 2 bins."""
+    n_bins = min(n_bins, series.nunique() - 1)
+    if n_bins < 2:
+        return None, None
+    try:
+        _, bin_edges = pd.qcut(series, q=n_bins, retbins=True, duplicates="drop")
+    except ValueError:
+        return None, None
+    if len(bin_edges) < 3:
+        return None, None
+
+    labels = []
+    for i in range(len(bin_edges) - 1):
+        lo, hi = bin_edges[i], bin_edges[i + 1]
+        if i == 0:
+            labels.append(f"<{hi:.2f}")
+        elif i == len(bin_edges) - 2:
+            labels.append(f">{lo:.2f}")
+        else:
+            labels.append(f"{lo:.2f}–{hi:.2f}")
+    return bin_edges, labels
+
+
+def make_agreement_by_value_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    value_col: str,
+    value_label: str | None = None,
+    n_bins: int = 6,
+    min_bin_n: int = 2,
+    filename: str | None = None,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Same style as make_agreement_by_centiloid_panel (binned agreement line over a
+    background histogram of % of scans per bin) but for an arbitrary quantitative column
+    (e.g. a regional tau SUVR) using data-driven equal-count quantile bins instead of the
+    Centiloid-specific fixed bins - there's no literature SUVR cutoff per region to anchor
+    fixed bins to. Use this for the 5 CenTauR regions; use make_agreement_by_centiloid_panel
+    for Centiloid itself to keep the literature-matching fixed bins."""
+    if value_col not in df_demo.columns:
+        print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "pred"]],
+        df_demo[[id_col_demo, value_col]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df = df.dropna(subset=["y", "pred", value_col])
+    if df.empty:
+        return
+
+    bin_edges, bin_labels = _quantile_bin_labels(df[value_col], n_bins)
+    if bin_labels is None:
+        return
+    df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=bin_labels, include_lowest=True)
+    df["_agree"] = (df["y"] == df["pred"]).astype(float)
+
+    bin_counts = df["_bin"].value_counts().reindex(bin_labels, fill_value=0)
+    pct_of_scans = bin_counts / bin_counts.sum() * 100
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    ax2 = ax.twinx()
+    ax2.bar(bin_labels, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE)
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE)
+    ax2.grid(False)
+
+    agree_by_bin = df.groupby("_bin", observed=False)["_agree"].mean().reindex(bin_labels)
+    n_by_bin = df.groupby("_bin", observed=False)["_agree"].size().reindex(bin_labels, fill_value=0)
+    y = agree_by_bin.where(n_by_bin >= min_bin_n)
+    label_x = value_label or value_col
+    ax.plot(
+        bin_labels, y, marker="o", markersize=7, linewidth=2.2,
+        color=CUSTOM_PALETTE[1], label=f"Model vs. clinical read (n={int(n_by_bin.sum())})", zorder=3,
+    )
+    style_legend(ax, loc="lower center")
+
+    ax.set_ylim(0, 1.05)
+    ax.set_zorder(ax2.get_zorder() + 1)
+    ax.patch.set_visible(False)
+    style_axes(ax, f"Model-clinician agreement vs. {label_x}", label_x, "Agreement", xrotation=30)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
+    plt.close(fig)
+
+
 def make_classification_rate_by_value_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,

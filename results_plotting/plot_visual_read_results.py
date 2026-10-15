@@ -12,8 +12,8 @@ from plot_utils import (
     CUSTOM_PALETTE,
     find_demo_csv,
     make_agreement_by_centiloid_panel,
+    make_agreement_by_value_panel,
     make_class_balance_panel,
-    make_classification_rate_by_value_panel,
     make_confusion_category_categorical_panel,
     make_confusion_category_distribution_panel,
     make_discordant_probability_violin_panel,
@@ -189,7 +189,7 @@ def main():
 
     if df_demo is not None:
         for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
-            make_classification_rate_by_value_panel(
+            make_agreement_by_value_panel(
                 df_preds, df_demo, out_dir,
                 value_col=value_col, value_label=value_label,
             )
