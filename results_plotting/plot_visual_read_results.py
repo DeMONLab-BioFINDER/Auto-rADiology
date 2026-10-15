@@ -17,7 +17,6 @@ from plot_utils import (
     make_classification_breakdown_panel,
     make_classification_breakdown_violin_panel,
     make_confusion_category_categorical_panel,
-    make_confusion_category_distribution_panel,
     make_discordant_probability_violin_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
@@ -26,14 +25,6 @@ from plot_utils import (
     resolve_existing_path,
     resolve_path,
 )
-
-# AD construct-validity check: true positives should skew toward known AD risk/severity
-# markers (higher amyloid burden, lower cognition) more than true negatives.
-CONSTRUCT_VALIDITY_CONTINUOUS = [
-    ("CL", "Amyloid Centiloid"),
-    ("CDR", "CDR"),
-    ("CDR_SB", "CDR Sum of Boxes"),
-]
 
 # Regional tau SUVR vs. classification outcome (model agreement/discordance by region).
 # Universal/MesialTemporal/MetaTemporal/TemporoParietal/Frontal are CenTauR's own
@@ -205,17 +196,6 @@ def main():
                 value_col=value_col, value_label=value_label,
                 discordant_only=True,
             )
-        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME + CONSTRUCT_VALIDITY_CONTINUOUS:
-            # Keep the original documented filename for Universal (README's
-            # visual_read_universal_suvr_by_outcome.png); every other column gets the
-            # generic <col>_by_outcome.png naming.
-            kwargs = {} if value_col == "Universal" else {
-                "filename": f"visual_read_{value_col.lower()}_by_outcome.png"
-            }
-            make_confusion_category_distribution_panel(
-                df_preds, df_demo, out_dir,
-                value_col=value_col, value_label=value_label, **kwargs,
-            )
         make_confusion_category_categorical_panel(
             df_preds, df_demo, out_dir, cat_col="apoe", cat_label="APOE e4 status",
         )
@@ -243,8 +223,8 @@ def main():
                 cutoff=1.5,
             )
         # Continuous model-probability-vs-quantitative-SUVR scatter, for the CenTauR
-        # regions only (not CONSTRUCT_VALIDITY_CONTINUOUS - CL/CDR aren't the tau-SUVR
-        # quantitative reference the model is being compared against).
+        # regions only - CL/CDR aren't the tau-SUVR quantitative reference the model is
+        # being compared against.
         for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
             make_probability_vs_suvr_scatter(
                 df_preds, df_demo, out_dir, decision_threshold,
