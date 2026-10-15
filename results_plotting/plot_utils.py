@@ -777,6 +777,26 @@ CONFUSION_CATEGORY_PALETTE = {
     "False Negative": CUSTOM_PALETTE[4],  # yellow
 }
 
+# (model, human) 0/1 pair for each category, used to render anything shown to a viewer
+# (legend labels, axis ticks) as "Model X, Visual read Y" instead of True/False
+# Positive/Negative - the clinical visual read isn't itself ground truth, so the TP/FP
+# convention bakes in an assumption the whole discordant-case analysis is questioning.
+# CONFUSION_CATEGORY_LABELS/ORDER/PALETTE above stay as the standard stats vocabulary
+# (sensitivity/specificity math, dict keys, CSV columns) - this mapping only controls
+# display text.
+CONFUSION_CATEGORY_MODEL_HUMAN = {
+    "True Negative": (0, 0),
+    "True Positive": (1, 1),
+    "False Positive": (1, 0),
+    "False Negative": (0, 1),
+}
+
+
+def confusion_display_label(category: str, multiline: bool = False) -> str:
+    model_val, human_val = CONFUSION_CATEGORY_MODEL_HUMAN[category]
+    sep = ",\n" if multiline else ", "
+    return f"Model {model_val}{sep}Visual read {human_val}"
+
 
 def make_confusion_category_distribution_panel(
     df_preds: pd.DataFrame,
@@ -821,7 +841,7 @@ def make_confusion_category_distribution_panel(
     for category in order:
         vals = df.loc[df["_category"] == category, value_col]
         sns.kdeplot(vals, ax=ax, color=CONFUSION_CATEGORY_PALETTE[category], linewidth=2.2,
-                    label=f"{category} (n={len(vals)})")
+                    label=f"{confusion_display_label(category)} (n={len(vals)})")
 
     # KDE's gaussian tails (plus any rare high outliers) can stretch the x-axis far past
     # where scans actually concentrate, compressing the interesting part of the curve into
@@ -897,7 +917,7 @@ def make_confusion_category_categorical_panel(
     )
     label = cat_label or cat_col
     counts = df["_category"].value_counts()
-    xticklabels = [f"{c}\n(n={counts.get(c, 0)})" for c in order]
+    xticklabels = [f"{confusion_display_label(c, multiline=True)}\n(n={counts.get(c, 0)})" for c in order]
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels(xticklabels)
     style_axes(ax, f"{label} by classification outcome", "", "Proportion within outcome")
@@ -958,7 +978,7 @@ def make_probability_vs_suvr_scatter(
         subset = df[df["_category"] == category]
         ax.scatter(
             subset[value_col], subset["prob"],
-            color=CONFUSION_CATEGORY_PALETTE[category], label=f"{category} (n={len(subset)})",
+            color=CONFUSION_CATEGORY_PALETTE[category], label=f"{confusion_display_label(category)} (n={len(subset)})",
             s=45, alpha=0.75, edgecolor="white", linewidth=0.5,
         )
 
@@ -1015,7 +1035,7 @@ def _plot_confusion_category_rates(ax, df: pd.DataFrame, bin_labels, min_bin_n: 
         pct = (by_bin / n_by_bin * 100).where(n_by_bin >= min_bin_n)
         ax.plot(
             bin_labels, pct, marker="o", markersize=7, linewidth=2.2,
-            color=CONFUSION_CATEGORY_PALETTE[category], label=f"{category} (n={int(by_bin.sum())})", zorder=3,
+            color=CONFUSION_CATEGORY_PALETTE[category], label=f"{confusion_display_label(category)} (n={int(by_bin.sum())})", zorder=3,
         )
 
 
@@ -1456,12 +1476,7 @@ def make_classification_breakdown_panel(
     n_total = len(df)
 
     order = ["True Positive", "True Negative", "False Negative", "False Positive"]
-    display_labels = {
-        "True Positive": "Model 1,\nVisual read 1",
-        "True Negative": "Model 0,\nVisual read 0",
-        "False Negative": "Model 0,\nVisual read 1",
-        "False Positive": "Model 1,\nVisual read 0",
-    }
+    display_labels = {c: confusion_display_label(c, multiline=True) for c in order}
     counts = pd.Series(categories).value_counts().reindex(order, fill_value=0)
     pct = counts / n_total * 100
 
@@ -1506,12 +1521,7 @@ def make_classification_breakdown_violin_panel(
     df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_int, pred_int)]
 
     order = ["True Positive", "True Negative", "False Negative", "False Positive"]
-    display_labels = {
-        "True Positive": "Model 1,\nVisual read 1",
-        "True Negative": "Model 0,\nVisual read 0",
-        "False Negative": "Model 0,\nVisual read 1",
-        "False Positive": "Model 1,\nVisual read 0",
-    }
+    display_labels = {c: confusion_display_label(c, multiline=True) for c in order}
     order = [c for c in order if (df["_category"] == c).sum() >= 1]
     if not order:
         return
@@ -1587,10 +1597,8 @@ def make_discordant_probability_violin_panel(
                    label=f"Decision threshold = {decision_threshold:.3f}")
         style_legend(ax, loc="upper center")
 
-    model_vals = {"False Negative": 0, "False Positive": 1}
-    human_vals = {"False Negative": 1, "False Positive": 0}
     counts = plot_df["_category"].value_counts()
-    xticklabels = [f"model: {model_vals[c]}\nhuman: {human_vals[c]}\n(n={counts.get(c, 0)})" for c in order]
+    xticklabels = [f"{confusion_display_label(c, multiline=True)}\n(n={counts.get(c, 0)})" for c in order]
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels(xticklabels)
     ax.set_ylim(-0.02, 1.02)
