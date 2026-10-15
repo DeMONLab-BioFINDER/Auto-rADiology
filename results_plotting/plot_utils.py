@@ -983,15 +983,22 @@ def _plot_line(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, color: str, lab
     )
 
 
-def _plot_confusion_category_rates(ax, df: pd.DataFrame, bin_labels, min_bin_n: int):
-    """4 lines, one per confusion-matrix category (TP/TN/FP/FN) - % of scans in that bin
-    falling into each category, summing to 100% per bin. Uses the same category colors as
-    the rest of the deck (CONFUSION_CATEGORY_PALETTE) for visual consistency."""
+DISCORDANT_CATEGORIES = ["False Negative", "False Positive"]
+
+
+def _plot_confusion_category_rates(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, categories=None):
+    """One line per confusion-matrix category - % of scans in that bin falling into each
+    category. By default all 4 (TP/TN/FP/FN), summing to 100% per bin; pass
+    categories=DISCORDANT_CATEGORIES for just the 2 discordant ones (FN/FP), which no longer
+    sum to 100% but isolate where disagreement concentrates along the x-axis. Uses the same
+    category colors as the rest of the deck (CONFUSION_CATEGORY_PALETTE) for visual
+    consistency."""
+    categories = categories or CONFUSION_CATEGORY_ORDER
     y_int = df["y"].astype(int)
     pred_int = df["pred"].astype(int)
     df = df.assign(_category=[CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_int, pred_int)])
     df["_in_category"] = 1.0
-    for category in CONFUSION_CATEGORY_ORDER:
+    for category in categories:
         sub = df[df["_category"] == category]
         by_bin = sub.groupby("_bin", observed=False)["_in_category"].sum().reindex(bin_labels, fill_value=0)
         n_by_bin = df.groupby("_bin", observed=False)["_in_category"].size().reindex(bin_labels, fill_value=0)
@@ -1029,6 +1036,7 @@ def make_agreement_by_centiloid_panel(
     group_col: str | None = None,
     group_label: str | None = None,
     cutoff: float | None = None,
+    discordant_only: bool = False,
     min_bin_n: int = 2,
     filename: str | None = None,
     id_col_preds: str = "ID_ind",
@@ -1042,10 +1050,12 @@ def make_agreement_by_centiloid_panel(
     _plot_confusion_category_rates) - matching the reference figure convention. Bin edges
     match the source figure's Centiloid bins. Pass cutoff (e.g. 24.4, the Moscoso et al. 2025
     Centiloid positivity threshold) instead for a 3-line agreement view (model-vs-cutoff,
-    human-vs-cutoff, model-vs-human; see _plot_cutoff_agreement) - the two modes are
-    mutually exclusive (cutoff disables the 4-category breakdown). group_col (e.g. site)
-    is a third, separate mode comparing overall accuracy across subgroups; it takes
-    priority over cutoff if both are passed."""
+    human-vs-cutoff, model-vs-human; see _plot_cutoff_agreement). Pass discordant_only=True
+    for a focused 2-line view (just False Negative and False Positive rates, not summing to
+    100%) - isolates where disagreement concentrates along the scale without the TP/TN lines
+    dominating the view. group_col (e.g. site) is a fourth mode comparing overall accuracy
+    across subgroups. Modes are mutually exclusive; priority is group_col > cutoff >
+    discordant_only > the default 4-category breakdown."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1098,6 +1108,15 @@ def make_agreement_by_centiloid_panel(
         ylabel = "Agreement"
         title = f"Agreement vs. {value_label} (cutoff = {cutoff:g})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
+    elif discordant_only:
+        _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n, categories=DISCORDANT_CATEGORIES)
+        style_legend(ax, loc="upper center")
+        ax.relim(); ax.autoscale_view(scalex=False)
+        ylim_top = max(10.0, ax.get_ylim()[1] * 1.15)
+        ax.set_ylim(-2, ylim_top)
+        ylabel = "Percentage of scans (%)"
+        title = f"Discordant cases vs. {value_label}"
+        default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
         style_legend(ax, loc="lower center")
@@ -1212,8 +1231,9 @@ def make_agreement_by_value_panel(
     value_col: str,
     value_label: str | None = None,
     cutoff: float | None = None,
+    discordant_only: bool = False,
     min_bin_n: int = 2,
-    min_bin_count: int = 15,
+    min_bin_count: int = 8,
     group_col: str | None = None,
     group_label: str | None = None,
     filename: str | None = None,
@@ -1226,12 +1246,19 @@ def make_agreement_by_value_panel(
     until each cleared bin has >= min_bin_count scans (_density_adaptive_bin_labels) - fine
     resolution where this region's SUVR concentrates, coarse in its sparse tail, with
     breakpoints falling out of the run's own distribution rather than hand-picked, and
-    computed independently per region since their distributions differ. Pass cutoff for a
-    3-line agreement view instead (model-vs-cutoff, human-vs-cutoff, model-vs-human; see
+    computed independently per region since their distributions differ. min_bin_count only
+    sets the merge-stopping threshold (every cleared bin is guaranteed >= min_bin_count
+    scans); min_bin_n is the separate, much lower threshold below which a bin's point is
+    dropped from the line entirely - as long as min_bin_count > min_bin_n (true by default),
+    merged bins can get finer without opening gaps in the line. Pass cutoff for a 3-line
+    agreement view instead (model-vs-cutoff, human-vs-cutoff, model-vs-human; see
     _plot_cutoff_agreement) - unlike Centiloid's 24.4, there's no literature-validated
     per-scan SUVR cutoff for any of these regions, so treat any cutoff passed here as
-    provisional and say so if asked. group_col (e.g. site) is a third mode comparing overall
-    accuracy across subgroups; it takes priority over cutoff if both are passed."""
+    provisional and say so if asked. Pass discordant_only=True for a focused 2-line view
+    (False Negative / False Positive rates only, not summing to 100%). group_col (e.g. site)
+    is a fourth mode comparing overall accuracy across subgroups. Modes are mutually
+    exclusive; priority is group_col > cutoff > discordant_only > the default 4-category
+    breakdown."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1289,6 +1316,15 @@ def make_agreement_by_value_panel(
         ylabel = "Agreement"
         title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, provisional)"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
+    elif discordant_only:
+        _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n, categories=DISCORDANT_CATEGORIES)
+        style_legend(ax, loc="upper center")
+        ax.relim(); ax.autoscale_view(scalex=False)
+        ylim_top = max(10.0, ax.get_ylim()[1] * 1.15)
+        ax.set_ylim(-2, ylim_top)
+        ylabel = "Percentage of scans (%)"
+        title = f"Discordant cases vs. {label_x}"
+        default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n)
         style_legend(ax, loc="lower center")

@@ -197,6 +197,14 @@ def main():
                 df_preds, df_demo, out_dir,
                 value_col=value_col, value_label=value_label,
             )
+            # Focused 2-line view (False Negative / False Positive rates only) - isolates
+            # where discordant cases concentrate along this region's SUVR scale, without
+            # the much larger TP/TN lines dominating the view.
+            make_agreement_by_value_panel(
+                df_preds, df_demo, out_dir,
+                value_col=value_col, value_label=value_label,
+                discordant_only=True,
+            )
         for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME + CONSTRUCT_VALIDITY_CONTINUOUS:
             # Keep the original documented filename for Universal (README's
             # visual_read_universal_suvr_by_outcome.png); every other column gets the
@@ -215,6 +223,11 @@ def main():
         # Moscoso et al. 2025 source figure (background histogram + agreement line) -
         # easier to read at a glance than the per-subject scatter/distribution panels above.
         make_agreement_by_centiloid_panel(df_preds, df_demo, out_dir)
+        # Same focused 2-line (FN/FP rate) view as the regional SUVR panels, over Centiloid.
+        make_agreement_by_centiloid_panel(
+            df_preds, df_demo, out_dir, discordant_only=True,
+            filename="visual_read_discordant_by_cl.png",
+        )
         # Centiloid's cutoff (24.4) is literature-validated (Moscoso et al. 2025's own
         # amyloid-positivity threshold); the SUVR cutoff below is NOT - no validated
         # per-scan tau SUVR cutoff exists, 1.5 is a provisional placeholder pending
