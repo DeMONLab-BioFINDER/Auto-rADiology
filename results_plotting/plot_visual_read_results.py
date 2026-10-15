@@ -13,8 +13,10 @@ from plot_utils import (
     find_demo_csv,
     make_agreement_by_centiloid_panel,
     make_class_balance_panel,
+    make_classification_rate_by_value_panel,
     make_confusion_category_categorical_panel,
     make_confusion_category_distribution_panel,
+    make_discordant_probability_violin_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
     make_probability_vs_suvr_scatter,
@@ -183,8 +185,14 @@ def main():
         decision_threshold,
         out_dir,
     )
+    make_discordant_probability_violin_panel(df_preds, out_dir, decision_threshold)
 
     if df_demo is not None:
+        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
+            make_classification_rate_by_value_panel(
+                df_preds, df_demo, out_dir,
+                value_col=value_col, value_label=value_label,
+            )
         for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME + CONSTRUCT_VALIDITY_CONTINUOUS:
             # Keep the original documented filename for Universal (README's
             # visual_read_universal_suvr_by_outcome.png); every other column gets the

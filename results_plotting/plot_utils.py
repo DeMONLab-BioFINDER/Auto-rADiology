@@ -1057,3 +1057,138 @@ def make_agreement_by_centiloid_panel(
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
     plt.close(fig)
+
+
+def make_classification_rate_by_value_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    value_col: str,
+    value_label: str | None = None,
+    class_col: str = "y",
+    class_labels: tuple[str, str] = ("Negative (clinical read)", "Positive (clinical read)"),
+    n_bins: int = 6,
+    filename: str | None = None,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Percentage classified negative vs. positive, binned over a quantitative SUVR column -
+    a calibration-style curve (same spirit as Moscoso et al. 2025's SUVR-vs-visual-read
+    figures) showing where classification rate transitions as quantitative tau burden
+    increases. Bins are data-driven equal-count quantiles of this run's own cohort, not a
+    literature/clinical cutoff (none validated for individual scans in these regions) -
+    end bins are shown open-ended ("<x" / ">x") since they're the sparsest, most
+    extreme-tail portions of the distribution. class_col defaults to the clinical read
+    (y); pass class_col="pred" to show the model's own call rate instead."""
+    if value_col not in df_demo.columns:
+        print(f"[WARNING] '{value_col}' not found in demographics table; skipping classification-rate-by-{value_col} panel.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, class_col]],
+        df_demo[[id_col_demo, value_col]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df[class_col] = pd.to_numeric(df[class_col], errors="coerce")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df = df.dropna(subset=[class_col, value_col])
+    if df.empty or df[class_col].nunique() < 2:
+        return
+
+    n_bins = min(n_bins, df[value_col].nunique() - 1)
+    if n_bins < 2:
+        return
+    try:
+        _, bin_edges = pd.qcut(df[value_col], q=n_bins, retbins=True, duplicates="drop")
+    except ValueError:
+        return
+    if len(bin_edges) < 3:
+        return
+
+    labels = []
+    for i in range(len(bin_edges) - 1):
+        lo, hi = bin_edges[i], bin_edges[i + 1]
+        if i == 0:
+            labels.append(f"<{hi:.2f}")
+        elif i == len(bin_edges) - 2:
+            labels.append(f">{lo:.2f}")
+        else:
+            labels.append(f"{lo:.2f}–{hi:.2f}")
+    df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=labels, include_lowest=True)
+
+    rates = pd.crosstab(df["_bin"], df[class_col].astype(int), normalize="index") * 100
+    rates = rates.reindex(index=labels, columns=[0, 1], fill_value=0)
+    n_by_bin = df["_bin"].value_counts().reindex(labels, fill_value=0)
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    for cls, color, label in [(0, SEABORN_COLORS[0], class_labels[0]), (1, SEABORN_COLORS[1], class_labels[1])]:
+        ax.plot(labels, rates[cls], marker="o", markersize=7, linewidth=2.2, color=color, label=label)
+
+    ax.set_ylim(-2, 102)
+    label_x = value_label or value_col
+    style_axes(ax, f"Classification rate vs. {label_x}", label_x, "Percentage (%)", xrotation=30)
+    xticklabels = [f"{lab}\n(n={n_by_bin[lab]})" for lab in labels]
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(xticklabels)
+    style_legend(ax, loc="center left")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / (filename or f"visual_read_classification_rate_by_{value_col.lower()}.png"), dpi=300)
+    plt.close(fig)
+
+
+def make_discordant_probability_violin_panel(
+    df_preds: pd.DataFrame,
+    out_dir: Path,
+    decision_threshold: float | None = None,
+    filename: str = "visual_read_discordant_probability_violin.png",
+):
+    """Predicted-probability distribution among discordant cases only (False Negatives:
+    model=0/human=1, and False Positives: model=1/human=0), as a violin+stripplot - shows
+    whether misses cluster near the decision threshold (borderline) or sit confidently on
+    the wrong side (a more striking model/rater disagreement), without the much larger
+    correctly-classified majority diluting the view the way the full-population
+    probability-by-class panel does."""
+    df = df_preds[["y", "pred", "prob"]].copy()
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+    df = df.dropna(subset=["y", "pred", "prob"])
+    if df.empty:
+        return
+
+    y_int = df["y"].astype(int)
+    pred_int = df["pred"].astype(int)
+    df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_int, pred_int)]
+
+    order = [c for c in ["False Negative", "False Positive"] if (df["_category"] == c).sum() >= 1]
+    if not order:
+        return
+    plot_df = df[df["_category"].isin(order)]
+
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    sns.violinplot(
+        data=plot_df, x="_category", y="prob", order=order, ax=ax,
+        color=SEABORN_COLORS[0], inner="box", cut=0,
+    )
+    sns.stripplot(
+        data=plot_df, x="_category", y="prob", order=order, ax=ax,
+        color=SEABORN_COLORS[5], size=5, alpha=0.85, jitter=0.12, linewidth=0,
+    )
+    if decision_threshold is not None:
+        ax.axhline(decision_threshold, color="black", linestyle="--", linewidth=1.4,
+                   label=f"Decision threshold = {decision_threshold:.3f}")
+        style_legend(ax, loc="upper center")
+
+    model_vals = {"False Negative": 0, "False Positive": 1}
+    human_vals = {"False Negative": 1, "False Positive": 0}
+    counts = plot_df["_category"].value_counts()
+    xticklabels = [f"model: {model_vals[c]}\nhuman: {human_vals[c]}\n(n={counts.get(c, 0)})" for c in order]
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels(xticklabels)
+    ax.set_ylim(-0.02, 1.02)
+    style_axes(ax, "Predicted probability among discordant cases", "", "Predicted probability")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
