@@ -1134,6 +1134,46 @@ SUVR_BIN_LABELS = (
 )
 
 
+def _density_adaptive_bin_labels(series: pd.Series, base_edges: list[float], min_count: int = 15):
+    """Merges the fixed-width base bins together, walking low to high, until each merged
+    bin clears min_count scans - fine resolution where the data concentrates, coarse bins
+    in the sparse tail, with the breakpoints falling out of this run's own distribution
+    rather than hand-picked. A final bin left under-powered after the walk is folded into
+    the previous one rather than kept as its own under-powered bin."""
+    s = series.dropna()
+    counts, _ = np.histogram(s, bins=base_edges)
+
+    merged_edges = [base_edges[0]]
+    acc = 0
+    for i, c in enumerate(counts):
+        acc += c
+        is_last = i == len(counts) - 1
+        if not is_last and acc >= min_count:
+            merged_edges.append(base_edges[i + 1])
+            acc = 0
+    merged_edges.append(base_edges[-1])
+
+    if len(merged_edges) > 2:
+        final_count = ((s >= merged_edges[-2]) & (s < merged_edges[-1])).sum()
+        if final_count < min_count:
+            del merged_edges[-2]
+
+    labels = []
+    for i in range(len(merged_edges) - 1):
+        lo, hi = merged_edges[i], merged_edges[i + 1]
+        if not np.isfinite(lo) and not np.isfinite(hi):
+            # Everything landed in one bin (e.g. too little data to clear min_count
+            # anywhere) - label with the actual observed range, not literal "<inf".
+            labels.append(f"{s.min():.1f}–{s.max():.1f}" if len(s) else "all")
+        elif not np.isfinite(lo):
+            labels.append(f"<{hi:.1f}")
+        elif not np.isfinite(hi):
+            labels.append(f">{lo:.1f}")
+        else:
+            labels.append(f"{lo:.1f}–{hi:.1f}")
+    return merged_edges, labels
+
+
 def make_agreement_by_value_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
@@ -1141,6 +1181,7 @@ def make_agreement_by_value_panel(
     value_col: str,
     value_label: str | None = None,
     min_bin_n: int = 2,
+    min_bin_count: int = 15,
     group_col: str | None = None,
     group_label: str | None = None,
     filename: str | None = None,
@@ -1148,13 +1189,16 @@ def make_agreement_by_value_panel(
     id_col_demo: str = "ID",
 ):
     """Same style as make_agreement_by_centiloid_panel (binned lines over a background
-    histogram of % of scans per bin) but for a regional tau SUVR column, using fixed
-    0.1-wide bins from 0.9 to 2.8 (SUVR_BIN_EDGES/LABELS) - there's no literature SUVR
-    cutoff per region to validate a different scheme against, but fixed real-value bins
-    (not data-range-based or equal-count) keep bin boundaries comparable across regions/runs
-    and show the true distribution shape. Use this for the 5 CenTauR regions; use
-    make_agreement_by_centiloid_panel for Centiloid itself to keep its own literature bins.
-    Optional group_col draws one line per subgroup (e.g. site) instead of one overall line."""
+    histogram of % of scans per bin) but for a regional tau SUVR column. Starts from fixed
+    0.1-wide bins (0.9 to 2.8, SUVR_BIN_EDGES) and merges them adjacently (low to high)
+    until each cleared bin has >= min_bin_count scans (_density_adaptive_bin_labels) - fine
+    resolution where this region's SUVR concentrates, coarse in its sparse tail, with
+    breakpoints falling out of the run's own distribution rather than hand-picked, and
+    computed independently per region since their distributions differ. There's no
+    literature SUVR cutoff per region to validate a different scheme against. Use this for
+    the 5 CenTauR regions; use make_agreement_by_centiloid_panel for Centiloid itself to
+    keep its own literature bins. Optional group_col draws one line per subgroup (e.g.
+    site) instead of one overall line."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1178,7 +1222,9 @@ def make_agreement_by_value_panel(
     if df.empty:
         return
 
-    bin_edges, bin_labels = SUVR_BIN_EDGES, SUVR_BIN_LABELS
+    bin_edges, bin_labels = _density_adaptive_bin_labels(df[value_col], SUVR_BIN_EDGES, min_bin_count)
+    if len(bin_labels) < 2:
+        return
     df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=bin_labels, right=False)
     df["_agree"] = (df["y"] == df["pred"]).astype(float)
 
