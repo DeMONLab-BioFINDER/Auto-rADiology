@@ -983,15 +983,23 @@ def _plot_line(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, color: str, lab
     )
 
 
-def _plot_agreement_breakdown(ax, df: pd.DataFrame, bin_labels, min_bin_n: int):
-    """Splits 'agreement' into the 3 metrics that actually compose it - overall accuracy,
-    sensitivity (model's hit rate on clinician-positive cases), and specificity (model's
-    hit rate on clinician-negative cases) - instead of one blended line. This surfaces
-    WHERE disagreement concentrates: e.g. overall accuracy can look fine while sensitivity
-    specifically collapses in the equivocal mid-range, which a single accuracy line hides."""
-    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[1], "Overall agreement")
-    _plot_line(ax, df[df["y"] == 1], bin_labels, min_bin_n, CUSTOM_PALETTE[3], "Sensitivity (clinician-positive cases)")
-    _plot_line(ax, df[df["y"] == 0], bin_labels, min_bin_n, CUSTOM_PALETTE[5], "Specificity (clinician-negative cases)")
+def _plot_confusion_category_rates(ax, df: pd.DataFrame, bin_labels, min_bin_n: int):
+    """4 lines, one per confusion-matrix category (TP/TN/FP/FN) - % of scans in that bin
+    falling into each category, summing to 100% per bin. Uses the same category colors as
+    the rest of the deck (CONFUSION_CATEGORY_PALETTE) for visual consistency."""
+    y_int = df["y"].astype(int)
+    pred_int = df["pred"].astype(int)
+    df = df.assign(_category=[CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(y_int, pred_int)])
+    df["_in_category"] = 1.0
+    for category in CONFUSION_CATEGORY_ORDER:
+        sub = df[df["_category"] == category]
+        by_bin = sub.groupby("_bin", observed=False)["_in_category"].sum().reindex(bin_labels, fill_value=0)
+        n_by_bin = df.groupby("_bin", observed=False)["_in_category"].size().reindex(bin_labels, fill_value=0)
+        pct = (by_bin / n_by_bin * 100).where(n_by_bin >= min_bin_n)
+        ax.plot(
+            bin_labels, pct, marker="o", markersize=7, linewidth=2.2,
+            color=CONFUSION_CATEGORY_PALETTE[category], label=f"{category} (n={int(by_bin.sum())})", zorder=3,
+        )
 
 
 def make_agreement_by_centiloid_panel(
@@ -1007,17 +1015,15 @@ def make_agreement_by_centiloid_panel(
     id_col_preds: str = "ID_ind",
     id_col_demo: str = "ID",
 ):
-    """Model/clinical-read agreement binned over quantitative amyloid burden, styled after
-    Moscoso et al. 2025 (JAMA, https://doi.org/10.1001/jama.2025.7817) Fig 2: a line of
-    binned agreement against a background histogram (right axis) of what fraction of scans
-    fall in each bin. Makes the usual finding visible at a glance - agreement is highest at
-    the clearly-negative and clearly-positive extremes and dips in the clinically-equivocal
-    mid-range, which is also where most scans actually sit - something a raw per-subject
-    scatter doesn't show directly. Bin edges match the source figure's Centiloid bins.
-    By default draws 3 lines - overall agreement, sensitivity, specificity (see
-    _plot_agreement_breakdown) - matching the source figure's 3-line look. Pass group_col
-    (e.g. site) instead to compare overall agreement across subgroups; the two modes are
-    mutually exclusive (group_col disables the sensitivity/specificity breakdown)."""
+    """Model/clinical-read classification outcome binned over quantitative amyloid burden,
+    styled after Moscoso et al. 2025 (JAMA, https://doi.org/10.1001/jama.2025.7817) Fig 2:
+    binned lines against a background histogram (right axis) of what fraction of scans fall
+    in each bin. By default draws 4 lines, one per confusion-matrix category (TP/TN/FP/FN) -
+    % of scans in that bin in each category, summing to 100% (see
+    _plot_confusion_category_rates) - matching the reference figure convention. Bin edges
+    match the source figure's Centiloid bins. Pass group_col (e.g. site) instead to compare
+    overall accuracy across subgroups; the two modes are mutually exclusive (group_col
+    disables the 4-category breakdown)."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1060,13 +1066,18 @@ def make_agreement_by_centiloid_panel(
             _plot_line(ax, df[df[group_col] == g], CENTILOID_BIN_LABELS, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
         style_legend(ax, title=group_label or group_col, loc="lower center")
     else:
-        _plot_agreement_breakdown(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
+        _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
         style_legend(ax, loc="lower center")
 
-    ax.set_ylim(0, 1.05)
+    if has_group:
+        ax.set_ylim(0, 1.05)
+        ylabel = "Accuracy"
+    else:
+        ax.set_ylim(-2, 102)
+        ylabel = "Percentage (%)"
     ax.set_zorder(ax2.get_zorder() + 1)
     ax.patch.set_visible(False)
-    style_axes(ax, f"Model-clinician agreement vs. {value_label}", value_label, "Agreement", xrotation=45)
+    style_axes(ax, f"Classification outcome vs. {value_label}", value_label, ylabel, xrotation=45)
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
@@ -1182,15 +1193,20 @@ def make_agreement_by_value_panel(
             _plot_line(ax, df[df[group_col] == g], bin_labels, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
         style_legend(ax, title=group_label or group_col, loc="lower center")
     else:
-        _plot_agreement_breakdown(ax, df, bin_labels, min_bin_n)
+        _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n)
         style_legend(ax, loc="lower center")
 
     label_x = value_label or value_col
 
-    ax.set_ylim(0, 1.05)
+    if has_group:
+        ax.set_ylim(0, 1.05)
+        ylabel = "Accuracy"
+    else:
+        ax.set_ylim(-2, 102)
+        ylabel = "Percentage (%)"
     ax.set_zorder(ax2.get_zorder() + 1)
     ax.patch.set_visible(False)
-    style_axes(ax, f"Model-clinician agreement vs. {label_x}", label_x, "Agreement", xrotation=30)
+    style_axes(ax, f"Classification outcome vs. {label_x}", label_x, ylabel, xrotation=30)
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
