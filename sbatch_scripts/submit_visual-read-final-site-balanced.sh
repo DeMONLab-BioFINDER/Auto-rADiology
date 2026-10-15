@@ -44,10 +44,10 @@ python ./run.py \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs 55 \
+  --epochs 40 \
   --cls_loss softmax \
   --balance_sampling_by site \
-  --model_name_extra "visual-read-final-site-balanced-55" \
+  --model_name_extra "visual-read-final-site-balanced-40" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

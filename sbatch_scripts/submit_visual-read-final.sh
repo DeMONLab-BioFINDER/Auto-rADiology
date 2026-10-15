@@ -47,9 +47,9 @@ python ./run.py \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs 60 \
+  --epochs 44 \
   --cls_loss softmax \
-  --model_name_extra "visual-read-final-60" \
+  --model_name_extra "visual-read-final-44" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

@@ -50,10 +50,10 @@ python ./run.py \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs 74 \
+  --epochs 44 \
   --cls_loss softmax \
   --class_weight_cls \
-  --model_name_extra "visual-read-final-weighted-softmax-74" \
+  --model_name_extra "visual-read-final-weighted-softmax-44" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
