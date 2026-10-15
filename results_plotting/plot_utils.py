@@ -208,10 +208,10 @@ def style_axes(ax, title: str, xlabel: str, ylabel: str, *, xrotation: int = 0):
     ax.grid(alpha=0.28)
 
 
-def style_legend(ax, *, boxed: bool = False, **kwargs):
-    """boxed=True draws a rounded-corner frame around the legend (fancybox) with a
-    translucent white background, for a chart busy enough that an unboxed legend gets lost
-    among the plotted lines; the default (boxed=False) stays frameless, as most panels want."""
+def style_legend(ax, *, boxed: bool = True, **kwargs):
+    """Draws a rounded-corner frame around the legend (fancybox) with a translucent white
+    background by default, for every chart's legend - boxed=False opts back out to a
+    frameless legend for a specific panel if one ever needs it."""
     if boxed:
         legend = ax.legend(fontsize=LEGEND_SIZE, frameon=True, fancybox=True,
                             framealpha=0.9, edgecolor="0.75", **kwargs)
@@ -237,16 +237,29 @@ def _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans):
         ax.add_patch(Rectangle((i - 0.325, y0), 0.65, f * (y1 - y0), alpha=0, zorder=-100))
 
 
+def _draw_checkmark(ax, cx: float, cy: float, size: float = 0.019, color: str = "#2E8B45"):
+    """A hand-drawn checkmark (two line segments) instead of a text glyph - sidesteps font
+    fallback entirely (no risk of a missing-glyph box) and, being an actual line like
+    everything else on these charts, looks native rather than like a dropped-in symbol.
+    Short down-stroke then a longer up-stroke, the standard checkmark proportions."""
+    ax.plot(
+        [cx - size, cx - size * 0.25, cx + size * 1.2],
+        [cy, cy - size * 0.9, cy + size],
+        transform=ax.transAxes, color=color, linewidth=3.2,
+        solid_capstyle="round", solid_joinstyle="round", zorder=11, clip_on=False,
+    )
+
+
 def _draw_cutoff_agreement_table(ax, value_col_label: str):
     """Compact checkmark table replacing the 3-line text legend on the cutoff-agreement
-    charts: one row per line (a color swatch matching its plotted color instead of a long
-    text label), columns for the three things being compared (Model / the quantitative
+    charts: one row per line - a short line+marker swatch matching its actual plotted style,
+    not a text label - columns for the three things being compared (Model / the quantitative
     value / Human visual read), with a checkmark under the two columns each line actually
     compares. Far narrower than the text legend it replaces, so it fits in a corner without
     competing with the lines for space. value_col_label should be a short column header
-    ("Centiloid", "SUVR"), not the full region-specific value_label used in the chart
-    title/axis - the table has no room for a long label and doesn't need it, since the
-    region is already named in the title."""
+    ("CL", "SUVR"), not the full region-specific value_label used in the chart title/axis -
+    the table has no room for a long label and doesn't need it, since the region is already
+    named in the title."""
     rows = [
         (CUSTOM_PALETTE[5], (True, True, False)),   # Model agrees with quantitative cutoff
         (CUSTOM_PALETTE[1], (False, True, True)),   # Human agrees with quantitative cutoff
@@ -254,7 +267,7 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
     ]
     col_labels = ["Model", value_col_label, "Human"]
 
-    box_x0, box_y0, box_w, box_h = 0.56, 0.04, 0.42, 0.34
+    box_x0, box_y0, box_w, box_h = 0.56, 0.06, 0.42, 0.30
     ax.add_patch(FancyBboxPatch(
         (box_x0, box_y0), box_w, box_h,
         boxstyle="round,pad=0.0,rounding_size=0.02",
@@ -262,29 +275,32 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
         linewidth=1.0, alpha=0.92, zorder=10, clip_on=False,
     ))
 
-    swatch_x = box_x0 + 0.055
-    col_xs = [box_x0 + box_w * frac for frac in (0.40, 0.66, 0.90)]
-    title_y = box_y0 + box_h - 0.06
-    header_y = box_y0 + box_h - 0.145
-    row_ys = [header_y - 0.082 * (i + 1) for i in range(3)]
+    # 5 equal vertical slots (title, header, 3 data rows) - guarantees everything stays
+    # inside the box regardless of box_h, instead of hand-tuned offsets that can overflow.
+    n_slots = 5
+    slot_h = box_h / n_slots
+
+    def slot_center(k):
+        return box_y0 + box_h - slot_h * (k + 0.5)
+
+    title_y = slot_center(0)
+    header_y = slot_center(1)
+    row_ys = [slot_center(2 + i) for i in range(3)]
+
+    line_x0, line_x1 = box_x0 + 0.035, box_x0 + 0.095
+    col_xs = [box_x0 + box_w * frac for frac in (0.44, 0.69, 0.92)]
 
     ax.text(box_x0 + box_w / 2, title_y, "Agreement between", transform=ax.transAxes,
             ha="center", va="center", fontsize=TICK_SIZE, fontweight="bold", zorder=11)
     for cx, label in zip(col_xs, col_labels):
         ax.text(cx, header_y, label, transform=ax.transAxes, ha="center", va="center",
-                fontsize=TICK_SIZE - 3, fontweight="bold", zorder=11)
+                fontsize=TICK_SIZE - 2, fontweight="bold", zorder=11)
     for (color, flags), ry in zip(rows, row_ys):
-        ax.add_patch(Rectangle(
-            (swatch_x - 0.015, ry - 0.015), 0.03, 0.03,
-            transform=ax.transAxes, facecolor=color, edgecolor="none", zorder=11, clip_on=False,
-        ))
+        ax.plot([line_x0, line_x1], [ry, ry], transform=ax.transAxes, color=color,
+                linewidth=2.2, marker="o", markersize=6, zorder=11, clip_on=False)
         for cx, flag in zip(col_xs, flags):
             if flag:
-                # DejaVu Sans explicitly - seaborn's theme puts Arial first in the sans-serif
-                # fallback list, and Arial on some systems lacks the checkmark glyph.
-                ax.text(cx, ry, "✓", transform=ax.transAxes, ha="center", va="center",
-                        fontsize=TICK_SIZE + 3, color="#2E8B45", fontweight="bold", zorder=11,
-                        fontfamily="DejaVu Sans")
+                _draw_checkmark(ax, cx, ry)
 
 
 def add_panel_labels(axes, labels: list[str], *, xytext=(-14, 8), fontsize=14):
@@ -1128,9 +1144,9 @@ def _plot_cutoff_agreement(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, val
     (e.g. in the title) instead."""
     quant_positive = (df[value_col] > cutoff).astype(int)
     df = df.assign(
-        _model_vs_quant=(df["pred"] == quant_positive).astype(float),
-        _human_vs_quant=(df["y"] == quant_positive).astype(float),
-        _model_vs_human=(df["pred"] == df["y"]).astype(float),
+        _model_vs_quant=(df["pred"] == quant_positive).astype(float) * 100,
+        _human_vs_quant=(df["y"] == quant_positive).astype(float) * 100,
+        _model_vs_human=(df["pred"] == df["y"]).astype(float) * 100,
     )
     _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[5], "Model agrees with quantitative cutoff", metric_col="_model_vs_quant", show_n=False)
     _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[1], "Human agrees with quantitative cutoff", metric_col="_human_vs_quant", show_n=False)
@@ -1216,9 +1232,9 @@ def make_agreement_by_centiloid_panel(
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
         n_total = _plot_cutoff_agreement(ax, df, CENTILOID_BIN_LABELS, min_bin_n, value_col, cutoff)
-        ax.set_ylim(0, 1.05)
-        _draw_cutoff_agreement_table(ax, value_label)
-        ylabel = "Agreement"
+        ax.set_ylim(0, 105)
+        _draw_cutoff_agreement_table(ax, "CL")
+        ylabel = "Agreement (%)"
         title = f"Agreement vs. {value_label} (cutoff = {cutoff:g}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     elif discordant_only:
@@ -1427,9 +1443,9 @@ def make_agreement_by_value_panel(
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
         n_total = _plot_cutoff_agreement(ax, df, bin_labels, min_bin_n, value_col, cutoff)
-        ax.set_ylim(0, 1.05)
+        ax.set_ylim(0, 105)
         _draw_cutoff_agreement_table(ax, "SUVR")
-        ylabel = "Agreement"
+        ylabel = "Agreement (%)"
         title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, temp, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     elif discordant_only:
@@ -1616,7 +1632,7 @@ def make_classification_breakdown_violin_panel(
     sns.violinplot(
         data=plot_df, x="_category", y="prob", order=order, ax=ax,
         hue="_category", hue_order=order, palette=CONFUSION_CATEGORY_PALETTE, legend=False,
-        inner="box", cut=0,
+        inner="box", cut=0, saturation=1.0,
     )
     sns.stripplot(
         data=plot_df, x="_category", y="prob", order=order, ax=ax,
