@@ -1131,7 +1131,7 @@ def make_agreement_by_value_panel(
     out_dir: Path,
     value_col: str,
     value_label: str | None = None,
-    n_bins: int = 6,
+    n_bins: int = 12,
     min_bin_n: int = 2,
     group_col: str | None = None,
     group_label: str | None = None,
