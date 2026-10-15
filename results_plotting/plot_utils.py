@@ -739,7 +739,7 @@ def make_probability_by_class_panel(
     for cls in (0, 1):
         vals = y_prob[y_true == cls]
         if len(vals) >= 2:
-            sns.kdeplot(vals, ax=ax, color=colors[cls], linewidth=2.2, fill=True, alpha=0.15,
+            sns.kdeplot(vals, ax=ax, color=colors[cls], linewidth=2.2, fill=True, alpha=0.35,
                         label=f"{labels[cls]} (n={len(vals)})")
             kde_vals[cls] = vals
         elif len(vals) == 1:
