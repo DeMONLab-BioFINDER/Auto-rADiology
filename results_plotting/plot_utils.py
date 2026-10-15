@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch, Rectangle
 import numpy as np
 import pandas as pd
@@ -237,20 +238,24 @@ def _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans):
         ax.add_patch(Rectangle((i - 0.325, y0), 0.65, f * (y1 - y0), alpha=0, zorder=-100))
 
 
-def _draw_checkmark(ax, cx: float, cy: float, size_x: float = 0.011, size_y: float = 0.024, color: str = "#2E8B45"):
+def _draw_checkmark(fig, cx: float, cy: float, size_x: float = 0.0055, size_y: float = 0.012, color: str = "#2E8B45"):
     """A hand-drawn checkmark (two line segments) instead of a text glyph - sidesteps font
     fallback entirely (no risk of a missing-glyph box) and, being an actual line like
     everything else on these charts, looks native rather than like a dropped-in symbol.
     Short down-stroke then a longer up-stroke, the standard checkmark proportions.
-    size_x/size_y are independent because axes-fraction x/y units aren't physically equal
+    size_x/size_y are independent because figure-fraction x/y units aren't physically equal
     on a wide (width > height) figure - a symmetric size_x==size_y renders visibly flat
-    ("vertically squished"); size_y needs to be noticeably larger to look upright."""
-    ax.plot(
+    ("vertically squished"); size_y needs to be noticeably larger to look upright. Added via
+    fig.add_artist (a figure-level artist), not ax.plot - an Axes' own children are drawn
+    during that Axes' render pass, which happens before the figure's own artists (like the
+    table's background box), so an ax.plot line positioned here would end up painted over by
+    that box even though it's visually "in front" by zorder within the axes alone."""
+    fig.add_artist(Line2D(
         [cx - size_x, cx - size_x * 0.25, cx + size_x * 1.2],
         [cy, cy - size_y * 0.9, cy + size_y],
-        transform=ax.transAxes, color=color, linewidth=2.6,
+        transform=fig.transFigure, color=color, linewidth=2.0,
         solid_capstyle="round", solid_joinstyle="round", zorder=11, clip_on=False,
-    )
+    ))
 
 
 def _draw_cutoff_agreement_table(ax, value_col_label: str):
@@ -258,11 +263,14 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
     charts: one row per line - a short line+marker swatch matching its actual plotted style,
     not a text label - columns for the three things being compared (Model / the quantitative
     value / Human visual read), with a checkmark under the two columns each line actually
-    compares. Far narrower than the text legend it replaces, so it fits in a corner without
-    competing with the lines for space. value_col_label should be a short column header
+    compares, and grey divider lines ruling off each row so it reads as a table. Positioned
+    in figure coordinates, entirely outside the axes (in the right margin the caller reserves
+    via finalize_figure's rect) rather than inside the plot, so it never sits on top of a
+    line or the background histogram. value_col_label should be a short column header
     ("CL", "SUVR"), not the full region-specific value_label used in the chart title/axis -
     the table has no room for a long label and doesn't need it, since the region is already
     named in the title."""
+    fig = ax.figure
     rows = [
         (CUSTOM_PALETTE[5], (True, True, False)),   # Model agrees with quantitative cutoff
         (CUSTOM_PALETTE[1], (False, True, True)),   # Human agrees with quantitative cutoff
@@ -270,49 +278,75 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
     ]
     col_labels = ["Model", value_col_label, "Human"]
 
-    box_x0, box_y0, box_w, box_h = 0.56, 0.06, 0.42, 0.30
-    ax.add_patch(FancyBboxPatch(
+    # Sized in physical inches, not figure-fraction - these panels use two different figure
+    # widths (10" and 12"), and text has a fixed point size regardless, so a fixed *fraction*
+    # of the figure is a different number of inches on each one (too narrow on the 10" one,
+    # which is what caused the column headers to collide there).
+    fig_w_in, fig_h_in = fig.get_size_inches()
+    box_w_in, box_h_in = 2.3, 1.85
+    margin_right_in = 0.15
+    box_w, box_h = box_w_in / fig_w_in, box_h_in / fig_h_in
+    box_x0 = 1.0 - (margin_right_in + box_w_in) / fig_w_in
+    box_y0 = 0.5 - box_h / 2
+
+    fig.add_artist(FancyBboxPatch(
         (box_x0, box_y0), box_w, box_h,
-        boxstyle="round,pad=0.0,rounding_size=0.02",
-        transform=ax.transAxes, facecolor="white", edgecolor="0.75",
-        linewidth=1.0, alpha=0.92, zorder=10, clip_on=False,
+        boxstyle="round,pad=0.0,rounding_size=0.015",
+        transform=fig.transFigure, facecolor="white", edgecolor="0.75",
+        linewidth=1.0, zorder=10, clip_on=False,
     ))
 
     # 5 vertical slots (title, header, 3 data rows) sized off the content area, not the
-    # full box - top_margin/bottom_margin keep the content from crowding the box edges
-    # (bottom gets more room since the last row previously sat almost flush with it).
-    top_margin = 0.05 * box_h
-    bottom_margin = 0.16 * box_h
+    # full box - top_margin/bottom_margin keep the content from crowding the box edges.
+    top_margin = 0.06 * box_h
+    bottom_margin = 0.10 * box_h
     content_top = box_y0 + box_h - top_margin
     slot_h = (box_h - top_margin - bottom_margin) / 5
 
     def slot_center(k):
         return content_top - slot_h * (k + 0.5)
 
+    def slot_bottom(k):
+        return content_top - slot_h * (k + 1)
+
     title_y = slot_center(0)
     header_y = slot_center(1)
     row_ys = [slot_center(2 + i) for i in range(3)]
 
-    line_x0, line_x1 = box_x0 + 0.035, box_x0 + 0.095
+    line_x0, line_x1 = box_x0 + 0.22 / fig_w_in, box_x0 + 0.48 / fig_w_in
     line_mid = (line_x0 + line_x1) / 2
-    col_xs = [box_x0 + box_w * frac for frac in (0.47, 0.67, 0.86)]
+    col_xs = [box_x0 + box_w * frac for frac in (0.40, 0.62, 0.84)]
 
-    ax.text(box_x0 + box_w / 2, title_y, "Agreement between", transform=ax.transAxes,
-            ha="center", va="center", fontsize=TICK_SIZE, zorder=11)
+    fig.text(box_x0 + box_w / 2, title_y, "Agreement between", transform=fig.transFigure,
+             ha="center", va="center", fontsize=TICK_SIZE, zorder=11)
     for cx, label in zip(col_xs, col_labels):
-        ax.text(cx, header_y, label, transform=ax.transAxes, ha="center", va="center",
-                fontsize=TICK_SIZE - 2, zorder=11)
+        fig.text(cx, header_y, label, transform=fig.transFigure, ha="center", va="center",
+                 fontsize=TICK_SIZE - 2, zorder=11)
+
+    # Grey rules between every slot (title/header, header/row1, row1/row2, row2/row3) so the
+    # table reads row-by-row rather than as one undifferentiated block.
+    for k in range(4):
+        y = slot_bottom(k)
+        fig.add_artist(Line2D(
+            [box_x0 + 0.015, box_x0 + box_w - 0.015], [y, y], transform=fig.transFigure,
+            color="0.8", linewidth=0.9, zorder=10, clip_on=False,
+        ))
+
     for (color, flags), ry in zip(rows, row_ys):
         # A plain line with a single marker at its midpoint - the same handle style
         # matplotlib's own legend() draws for these lines everywhere else, rather than a
         # marker at each end.
-        ax.plot([line_x0, line_x1], [ry, ry], transform=ax.transAxes, color=color,
-                linewidth=2.2, zorder=11, clip_on=False)
-        ax.plot([line_mid], [ry], transform=ax.transAxes, color=color, marker="o",
-                markersize=6, zorder=11, clip_on=False)
+        fig.add_artist(Line2D(
+            [line_x0, line_x1], [ry, ry], transform=fig.transFigure, color=color,
+            linewidth=2.2, zorder=11, clip_on=False,
+        ))
+        fig.add_artist(Line2D(
+            [line_mid], [ry], transform=fig.transFigure, color=color, marker="o",
+            markersize=5, linestyle="None", zorder=11, clip_on=False,
+        ))
         for cx, flag in zip(col_xs, flags):
             if flag:
-                _draw_checkmark(ax, cx, ry)
+                _draw_checkmark(fig, cx, ry)
 
 
 def add_panel_labels(axes, labels: list[str], *, xytext=(-14, 8), fontsize=14):
@@ -1271,7 +1305,10 @@ def make_agreement_by_centiloid_panel(
     ax.patch.set_visible(False)
     style_axes(ax, title, value_label, ylabel, xrotation=45)
 
-    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    # The checkmark table sits outside the axes entirely (figure coordinates), so the plot
+    # itself needs to be squeezed into the remaining left portion of the figure to leave it
+    # room - otherwise it would overlap the ax2 percentage-of-scans axis and its label.
+    finalize_figure(fig, rect=(0.0, 0.0, 0.70, 0.99) if cutoff is not None else (0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or default_filename), dpi=300)
     plt.close(fig)
 
@@ -1482,7 +1519,10 @@ def make_agreement_by_value_panel(
     ax.patch.set_visible(False)
     style_axes(ax, title, label_x, ylabel, xrotation=30)
 
-    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    # The checkmark table sits outside the axes entirely (figure coordinates), so the plot
+    # itself needs to be squeezed into the remaining left portion of the figure to leave it
+    # room - otherwise it would overlap the ax2 percentage-of-scans axis and its label.
+    finalize_figure(fig, rect=(0.0, 0.0, 0.70, 0.99) if cutoff is not None else (0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or default_filename), dpi=300)
     plt.close(fig)
 
