@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch, Rectangle
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -219,6 +220,71 @@ def style_legend(ax, *, boxed: bool = False, **kwargs):
     if legend is not None and legend.get_title() is not None:
         legend.get_title().set_fontsize(LEGEND_SIZE)
     return legend
+
+
+def _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans):
+    """Invisible placeholder bars added to `ax` (not ax2) mirroring the shape of the
+    background histogram, scaled into ax's own y-limits. loc="best" only avoids overlapping
+    artists that live on the same Axes it's attached to - it has no visibility into a twinx
+    sibling's bars, so without this a "best"-placed legend can still land on top of a tall
+    histogram bar. Call this after ax's ylim is finalized and before style_legend()."""
+    y0, y1 = ax.get_ylim()
+    max_pct = pct_of_scans.max()
+    if max_pct <= 0:
+        return
+    frac = pct_of_scans.to_numpy() / max_pct
+    for i, f in enumerate(frac):
+        ax.add_patch(Rectangle((i - 0.325, y0), 0.65, f * (y1 - y0), alpha=0, zorder=-100))
+
+
+def _draw_cutoff_agreement_table(ax, value_col_label: str):
+    """Compact checkmark table replacing the 3-line text legend on the cutoff-agreement
+    charts: one row per line (a color swatch matching its plotted color instead of a long
+    text label), columns for the three things being compared (Model / the quantitative
+    value / Human visual read), with a checkmark under the two columns each line actually
+    compares. Far narrower than the text legend it replaces, so it fits in a corner without
+    competing with the lines for space. value_col_label should be a short column header
+    ("Centiloid", "SUVR"), not the full region-specific value_label used in the chart
+    title/axis - the table has no room for a long label and doesn't need it, since the
+    region is already named in the title."""
+    rows = [
+        (CUSTOM_PALETTE[5], (True, True, False)),   # Model agrees with quantitative cutoff
+        (CUSTOM_PALETTE[1], (False, True, True)),   # Human agrees with quantitative cutoff
+        (CUSTOM_PALETTE[3], (True, False, True)),   # Model agrees with human
+    ]
+    col_labels = ["Model", value_col_label, "Human"]
+
+    box_x0, box_y0, box_w, box_h = 0.56, 0.04, 0.42, 0.34
+    ax.add_patch(FancyBboxPatch(
+        (box_x0, box_y0), box_w, box_h,
+        boxstyle="round,pad=0.0,rounding_size=0.02",
+        transform=ax.transAxes, facecolor="white", edgecolor="0.75",
+        linewidth=1.0, alpha=0.92, zorder=10, clip_on=False,
+    ))
+
+    swatch_x = box_x0 + 0.055
+    col_xs = [box_x0 + box_w * frac for frac in (0.40, 0.66, 0.90)]
+    title_y = box_y0 + box_h - 0.06
+    header_y = box_y0 + box_h - 0.145
+    row_ys = [header_y - 0.082 * (i + 1) for i in range(3)]
+
+    ax.text(box_x0 + box_w / 2, title_y, "Agreement between", transform=ax.transAxes,
+            ha="center", va="center", fontsize=TICK_SIZE, fontweight="bold", zorder=11)
+    for cx, label in zip(col_xs, col_labels):
+        ax.text(cx, header_y, label, transform=ax.transAxes, ha="center", va="center",
+                fontsize=TICK_SIZE - 3, fontweight="bold", zorder=11)
+    for (color, flags), ry in zip(rows, row_ys):
+        ax.add_patch(Rectangle(
+            (swatch_x - 0.015, ry - 0.015), 0.03, 0.03,
+            transform=ax.transAxes, facecolor=color, edgecolor="none", zorder=11, clip_on=False,
+        ))
+        for cx, flag in zip(col_xs, flags):
+            if flag:
+                # DejaVu Sans explicitly - seaborn's theme puts Arial first in the sans-serif
+                # fallback list, and Arial on some systems lacks the checkmark glyph.
+                ax.text(cx, ry, "✓", transform=ax.transAxes, ha="center", va="center",
+                        fontsize=TICK_SIZE + 3, color="#2E8B45", fontweight="bold", zorder=11,
+                        fontfamily="DejaVu Sans")
 
 
 def add_panel_labels(axes, labels: list[str], *, xytext=(-14, 8), fontsize=14):
@@ -1142,15 +1208,16 @@ def make_agreement_by_centiloid_panel(
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
             _plot_line(ax, df[df[group_col] == g], CENTILOID_BIN_LABELS, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
-        style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ax.set_ylim(0, 1.05)
+        _add_legend_avoidance_proxies(ax, CENTILOID_BIN_LABELS, pct_of_scans)
+        style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ylabel = "Accuracy"
         title = f"Classification outcome vs. {value_label}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
         n_total = _plot_cutoff_agreement(ax, df, CENTILOID_BIN_LABELS, min_bin_n, value_col, cutoff)
-        style_legend(ax, loc="lower center")
         ax.set_ylim(0, 1.05)
+        _draw_cutoff_agreement_table(ax, value_label)
         ylabel = "Agreement"
         title = f"Agreement vs. {value_label} (cutoff = {cutoff:g}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
@@ -1165,8 +1232,9 @@ def make_agreement_by_centiloid_panel(
         default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
-        style_legend(ax, loc="best", boxed=True)
         ax.set_ylim(-2, 102)
+        _add_legend_avoidance_proxies(ax, CENTILOID_BIN_LABELS, pct_of_scans)
+        style_legend(ax, loc="best", boxed=True)
         ylabel = "Percentage (%)"
         title = f"Classification outcome vs. {value_label}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
@@ -1351,15 +1419,16 @@ def make_agreement_by_value_panel(
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
             _plot_line(ax, df[df[group_col] == g], bin_labels, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
-        style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ax.set_ylim(0, 1.05)
+        _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans)
+        style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ylabel = "Accuracy"
         title = f"Classification outcome vs. {label_x}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
         n_total = _plot_cutoff_agreement(ax, df, bin_labels, min_bin_n, value_col, cutoff)
-        style_legend(ax, loc="lower center")
         ax.set_ylim(0, 1.05)
+        _draw_cutoff_agreement_table(ax, "SUVR")
         ylabel = "Agreement"
         title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, temp, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
@@ -1374,8 +1443,9 @@ def make_agreement_by_value_panel(
         default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n)
-        style_legend(ax, loc="best", boxed=True)
         ax.set_ylim(-2, 102)
+        _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans)
+        style_legend(ax, loc="best", boxed=True)
         ylabel = "Percentage (%)"
         title = f"Classification outcome vs. {label_x}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
