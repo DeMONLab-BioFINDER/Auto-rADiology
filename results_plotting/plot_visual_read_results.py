@@ -215,6 +215,20 @@ def main():
         # Moscoso et al. 2025 source figure (background histogram + agreement line) -
         # easier to read at a glance than the per-subject scatter/distribution panels above.
         make_agreement_by_centiloid_panel(df_preds, df_demo, out_dir)
+        # Centiloid's cutoff (24.4) is literature-validated (Moscoso et al. 2025's own
+        # amyloid-positivity threshold); the SUVR cutoff below is NOT - no validated
+        # per-scan tau SUVR cutoff exists, 1.5 is a provisional placeholder pending
+        # guidance from the lab (see the pending Slack question).
+        make_agreement_by_centiloid_panel(
+            df_preds, df_demo, out_dir, cutoff=24.4,
+            filename="visual_read_agreement_vs_cutoff_by_cl.png",
+        )
+        if "Universal" in df_demo.columns:
+            make_agreement_by_value_panel(
+                df_preds, df_demo, out_dir,
+                value_col="Universal", value_label="Universal tau SUVR",
+                cutoff=1.5,
+            )
         # Continuous model-probability-vs-quantitative-SUVR scatter, for the CenTauR
         # regions only (not CONSTRUCT_VALIDITY_CONTINUOUS - CL/CDR aren't the tau-SUVR
         # quantitative reference the model is being compared against).

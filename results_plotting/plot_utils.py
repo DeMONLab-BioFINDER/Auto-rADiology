@@ -1002,6 +1002,24 @@ def _plot_confusion_category_rates(ax, df: pd.DataFrame, bin_labels, min_bin_n: 
         )
 
 
+def _plot_cutoff_agreement(ax, df: pd.DataFrame, bin_labels, min_bin_n: int, value_col: str, cutoff: float):
+    """3 lines, matching Nadine's description of the reference figure: how often the model
+    agrees with a binary call derived from thresholding value_col at cutoff, how often the
+    clinical read agrees with that same cutoff call, and how often the model agrees with
+    the clinical read directly - binned. Unlike the 4-category breakdown, this requires an
+    actual positivity cutoff on value_col, which (apart from Centiloid) isn't literature-
+    validated for individual scans - treat non-Centiloid cutoffs passed in as provisional."""
+    quant_positive = (df[value_col] > cutoff).astype(int)
+    df = df.assign(
+        _model_vs_quant=(df["pred"] == quant_positive).astype(float),
+        _human_vs_quant=(df["y"] == quant_positive).astype(float),
+        _model_vs_human=(df["pred"] == df["y"]).astype(float),
+    )
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[5], "Model agrees with quantitative cutoff", metric_col="_model_vs_quant")
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[1], "Human agrees with quantitative cutoff", metric_col="_human_vs_quant")
+    _plot_line(ax, df, bin_labels, min_bin_n, CUSTOM_PALETTE[3], "Model agrees with human", metric_col="_model_vs_human")
+
+
 def make_agreement_by_centiloid_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
@@ -1010,6 +1028,7 @@ def make_agreement_by_centiloid_panel(
     value_label: str = "Centiloid",
     group_col: str | None = None,
     group_label: str | None = None,
+    cutoff: float | None = None,
     min_bin_n: int = 2,
     filename: str | None = None,
     id_col_preds: str = "ID_ind",
@@ -1021,9 +1040,12 @@ def make_agreement_by_centiloid_panel(
     in each bin. By default draws 4 lines, one per confusion-matrix category (TP/TN/FP/FN) -
     % of scans in that bin in each category, summing to 100% (see
     _plot_confusion_category_rates) - matching the reference figure convention. Bin edges
-    match the source figure's Centiloid bins. Pass group_col (e.g. site) instead to compare
-    overall accuracy across subgroups; the two modes are mutually exclusive (group_col
-    disables the 4-category breakdown)."""
+    match the source figure's Centiloid bins. Pass cutoff (e.g. 24.4, the Moscoso et al. 2025
+    Centiloid positivity threshold) instead for a 3-line agreement view (model-vs-cutoff,
+    human-vs-cutoff, model-vs-human; see _plot_cutoff_agreement) - the two modes are
+    mutually exclusive (cutoff disables the 4-category breakdown). group_col (e.g. site)
+    is a third, separate mode comparing overall accuracy across subgroups; it takes
+    priority over cutoff if both are passed."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1065,22 +1087,31 @@ def make_agreement_by_centiloid_panel(
         for i, g in enumerate(groups):
             _plot_line(ax, df[df[group_col] == g], CENTILOID_BIN_LABELS, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
         style_legend(ax, title=group_label or group_col, loc="lower center")
+        ax.set_ylim(0, 1.05)
+        ylabel = "Accuracy"
+        title = f"Classification outcome vs. {value_label}"
+        default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
+    elif cutoff is not None:
+        _plot_cutoff_agreement(ax, df, CENTILOID_BIN_LABELS, min_bin_n, value_col, cutoff)
+        style_legend(ax, loc="lower center")
+        ax.set_ylim(0, 1.05)
+        ylabel = "Agreement"
+        title = f"Agreement vs. {value_label} (cutoff = {cutoff:g})"
+        default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
         style_legend(ax, loc="lower center")
-
-    if has_group:
-        ax.set_ylim(0, 1.05)
-        ylabel = "Accuracy"
-    else:
         ax.set_ylim(-2, 102)
         ylabel = "Percentage (%)"
+        title = f"Classification outcome vs. {value_label}"
+        default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
+
     ax.set_zorder(ax2.get_zorder() + 1)
     ax.patch.set_visible(False)
-    style_axes(ax, f"Classification outcome vs. {value_label}", value_label, ylabel, xrotation=45)
+    style_axes(ax, title, value_label, ylabel, xrotation=45)
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
-    save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
+    save_figure(fig, out_dir / (filename or default_filename), dpi=300)
     plt.close(fig)
 
 
@@ -1180,6 +1211,7 @@ def make_agreement_by_value_panel(
     out_dir: Path,
     value_col: str,
     value_label: str | None = None,
+    cutoff: float | None = None,
     min_bin_n: int = 2,
     min_bin_count: int = 15,
     group_col: str | None = None,
@@ -1194,11 +1226,12 @@ def make_agreement_by_value_panel(
     until each cleared bin has >= min_bin_count scans (_density_adaptive_bin_labels) - fine
     resolution where this region's SUVR concentrates, coarse in its sparse tail, with
     breakpoints falling out of the run's own distribution rather than hand-picked, and
-    computed independently per region since their distributions differ. There's no
-    literature SUVR cutoff per region to validate a different scheme against. Use this for
-    the 5 CenTauR regions; use make_agreement_by_centiloid_panel for Centiloid itself to
-    keep its own literature bins. Optional group_col draws one line per subgroup (e.g.
-    site) instead of one overall line."""
+    computed independently per region since their distributions differ. Pass cutoff for a
+    3-line agreement view instead (model-vs-cutoff, human-vs-cutoff, model-vs-human; see
+    _plot_cutoff_agreement) - unlike Centiloid's 24.4, there's no literature-validated
+    per-scan SUVR cutoff for any of these regions, so treat any cutoff passed here as
+    provisional and say so if asked. group_col (e.g. site) is a third mode comparing overall
+    accuracy across subgroups; it takes priority over cutoff if both are passed."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1238,29 +1271,38 @@ def make_agreement_by_value_panel(
     ax2.tick_params(axis="y", labelsize=TICK_SIZE)
     ax2.grid(False)
 
+    label_x = value_label or value_col
+
     if has_group:
         groups = get_display_order(df[group_col], group_col)
         for i, g in enumerate(groups):
             _plot_line(ax, df[df[group_col] == g], bin_labels, min_bin_n, CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
         style_legend(ax, title=group_label or group_col, loc="lower center")
+        ax.set_ylim(0, 1.05)
+        ylabel = "Accuracy"
+        title = f"Classification outcome vs. {label_x}"
+        default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
+    elif cutoff is not None:
+        _plot_cutoff_agreement(ax, df, bin_labels, min_bin_n, value_col, cutoff)
+        style_legend(ax, loc="lower center")
+        ax.set_ylim(0, 1.05)
+        ylabel = "Agreement"
+        title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, provisional)"
+        default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n)
         style_legend(ax, loc="lower center")
-
-    label_x = value_label or value_col
-
-    if has_group:
-        ax.set_ylim(0, 1.05)
-        ylabel = "Accuracy"
-    else:
         ax.set_ylim(-2, 102)
         ylabel = "Percentage (%)"
+        title = f"Classification outcome vs. {label_x}"
+        default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
+
     ax.set_zorder(ax2.get_zorder() + 1)
     ax.patch.set_visible(False)
-    style_axes(ax, f"Classification outcome vs. {label_x}", label_x, ylabel, xrotation=30)
+    style_axes(ax, title, label_x, ylabel, xrotation=30)
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
-    save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
+    save_figure(fig, out_dir / (filename or default_filename), dpi=300)
     plt.close(fig)
 
 
