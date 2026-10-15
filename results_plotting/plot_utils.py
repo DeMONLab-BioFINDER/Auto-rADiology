@@ -13,13 +13,13 @@ import seaborn as sns
 from sklearn.metrics import roc_auc_score, roc_curve, average_precision_score, precision_recall_curve
 
 CUSTOM_PALETTE = [
-    "#1f77b4",  # blue
-    "#d62728",  # red
-    "#9467bd",  # purple
-    "#2ca02c",  # green
-    "#f1c40f",  # yellow
-    "#ff7f0e",  # orange
-    "#e377c2",  # pink
+    "#5B84B1",  # muted blue
+    "#C76B8E",  # muted rose (replaces harsh red)
+    "#8669B2",  # muted purple
+    "#5FA897",  # muted teal-green
+    "#D9A441",  # muted gold (replaces bright yellow)
+    "#E0875C",  # muted terracotta (replaces bright orange)
+    "#B98DC0",  # soft lavender-pink
 ]
 SEABORN_COLORS = sns.color_palette(CUSTOM_PALETTE)
 
