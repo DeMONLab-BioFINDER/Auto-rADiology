@@ -20,7 +20,6 @@ from plot_utils import (
     make_discordant_probability_violin_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
-    make_probability_vs_suvr_scatter,
     make_roc_confusion_panel,
     resolve_existing_path,
     resolve_path,
@@ -222,15 +221,6 @@ def main():
                 value_col="Universal", value_label="Universal tau SUVR",
                 cutoff=1.5,
             )
-        # Continuous model-probability-vs-quantitative-SUVR scatter, for the CenTauR
-        # regions only - CL/CDR aren't the tau-SUVR quantitative reference the model is
-        # being compared against.
-        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
-            make_probability_vs_suvr_scatter(
-                df_preds, df_demo, out_dir, decision_threshold,
-                value_col=value_col, value_label=value_label,
-            )
-
     print(f"[done] figures saved to {out_dir}")
 
 
