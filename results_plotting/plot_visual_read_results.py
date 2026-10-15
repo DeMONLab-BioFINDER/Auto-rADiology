@@ -17,7 +17,6 @@ from plot_utils import (
     make_classification_breakdown_panel,
     make_classification_breakdown_violin_panel,
     make_confusion_category_categorical_panel,
-    make_discordant_probability_violin_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
     make_roc_confusion_panel,
@@ -177,7 +176,6 @@ def main():
         decision_threshold,
         out_dir,
     )
-    make_discordant_probability_violin_panel(df_preds, out_dir, decision_threshold)
     make_classification_breakdown_panel(df_preds, out_dir)
     make_classification_breakdown_violin_panel(df_preds, out_dir, decision_threshold)
 
