@@ -284,7 +284,7 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
     # which is what caused the column headers to collide there).
     fig_w_in, fig_h_in = fig.get_size_inches()
     box_w_in, box_h_in = 2.3, 1.85
-    margin_right_in = 0.15
+    margin_right_in = 0.08
     box_w, box_h = box_w_in / fig_w_in, box_h_in / fig_h_in
     box_x0 = 1.0 - (margin_right_in + box_w_in) / fig_w_in
     box_y0 = 0.5 - box_h / 2
@@ -318,14 +318,14 @@ def _draw_cutoff_agreement_table(ax, value_col_label: str):
     col_xs = [box_x0 + box_w * frac for frac in (0.40, 0.62, 0.84)]
 
     fig.text(box_x0 + box_w / 2, title_y, "Agreement between", transform=fig.transFigure,
-             ha="center", va="center", fontsize=TICK_SIZE, zorder=11)
+             ha="center", va="center", fontsize=TICK_SIZE, fontweight="bold", zorder=11)
     for cx, label in zip(col_xs, col_labels):
         fig.text(cx, header_y, label, transform=fig.transFigure, ha="center", va="center",
                  fontsize=TICK_SIZE - 2, zorder=11)
 
-    # Grey rules between every slot (title/header, header/row1, row1/row2, row2/row3) so the
-    # table reads row-by-row rather than as one undifferentiated block.
-    for k in range(4):
+    # Grey rules between header/row1, row1/row2, row2/row3 - not under the title, which
+    # reads as a heading for the whole table rather than its own separated row.
+    for k in range(1, 4):
         y = slot_bottom(k)
         fig.add_artist(Line2D(
             [box_x0 + 0.015, box_x0 + box_w - 0.015], [y, y], transform=fig.transFigure,
@@ -1308,7 +1308,7 @@ def make_agreement_by_centiloid_panel(
     # The checkmark table sits outside the axes entirely (figure coordinates), so the plot
     # itself needs to be squeezed into the remaining left portion of the figure to leave it
     # room - otherwise it would overlap the ax2 percentage-of-scans axis and its label.
-    finalize_figure(fig, rect=(0.0, 0.0, 0.70, 0.99) if cutoff is not None else (0.0, 0.0, 0.99, 0.99))
+    finalize_figure(fig, rect=(0.0, 0.0, 0.74, 0.99) if cutoff is not None else (0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or default_filename), dpi=300)
     plt.close(fig)
 
@@ -1522,7 +1522,7 @@ def make_agreement_by_value_panel(
     # The checkmark table sits outside the axes entirely (figure coordinates), so the plot
     # itself needs to be squeezed into the remaining left portion of the figure to leave it
     # room - otherwise it would overlap the ax2 percentage-of-scans axis and its label.
-    finalize_figure(fig, rect=(0.0, 0.0, 0.70, 0.99) if cutoff is not None else (0.0, 0.0, 0.99, 0.99))
+    finalize_figure(fig, rect=(0.0, 0.0, 0.74, 0.99) if cutoff is not None else (0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or default_filename), dpi=300)
     plt.close(fig)
 
