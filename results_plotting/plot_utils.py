@@ -823,6 +823,16 @@ def make_confusion_category_distribution_panel(
         sns.kdeplot(vals, ax=ax, color=CONFUSION_CATEGORY_PALETTE[category], linewidth=2.2,
                     label=f"{category} (n={len(vals)})")
 
+    # KDE's gaussian tails (plus any rare high outliers) can stretch the x-axis far past
+    # where scans actually concentrate, compressing the interesting part of the curve into
+    # a sliver. Clip the view to the 1st-99th percentile of the data (not the KDE's own
+    # range) so the bulk of the distribution is legible; the small cut tails are a display
+    # choice, not a change to the underlying density estimate.
+    lo, hi = np.percentile(df[value_col], [1, 99])
+    if hi > lo:
+        pad = (hi - lo) * 0.05
+        ax.set_xlim(lo - pad, hi + pad)
+
     label = value_label or value_col
     style_axes(ax, f"{label} by classification outcome", label, "Density")
     style_legend(ax, loc="best")
@@ -1088,8 +1098,9 @@ def make_agreement_by_centiloid_panel(
     fig, ax = plt.subplots(figsize=(12, 5.5))
     ax2 = ax.twinx()
     ax2.bar(CENTILOID_BIN_LABELS, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
-    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE)
-    ax2.tick_params(axis="y", labelsize=TICK_SIZE)
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="0.4")
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE, colors="0.4")
+    ax2.spines["right"].set_color("0.4")
     ax2.grid(False)
 
     if has_group:
@@ -1294,8 +1305,9 @@ def make_agreement_by_value_panel(
     fig, ax = plt.subplots(figsize=(10, 5.5))
     ax2 = ax.twinx()
     ax2.bar(bin_labels, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
-    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE)
-    ax2.tick_params(axis="y", labelsize=TICK_SIZE)
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE, color="0.4")
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE, colors="0.4")
+    ax2.spines["right"].set_color("0.4")
     ax2.grid(False)
 
     label_x = value_label or value_col
