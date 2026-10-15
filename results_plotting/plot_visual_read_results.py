@@ -11,6 +11,7 @@ import seaborn as sns
 from plot_utils import (
     CUSTOM_PALETTE,
     find_demo_csv,
+    make_agreement_by_centiloid_panel,
     make_class_balance_panel,
     make_confusion_category_categorical_panel,
     make_confusion_category_distribution_panel,
@@ -198,6 +199,10 @@ def main():
         make_confusion_category_categorical_panel(
             df_preds, df_demo, out_dir, cat_col="apoe", cat_label="APOE e4 status",
         )
+        # Headline readability panel: binned agreement vs. Centiloid, styled after the
+        # Moscoso et al. 2025 source figure (background histogram + agreement line) -
+        # easier to read at a glance than the per-subject scatter/distribution panels above.
+        make_agreement_by_centiloid_panel(df_preds, df_demo, out_dir)
         # Continuous model-probability-vs-quantitative-SUVR scatter, for the CenTauR
         # regions only (not CONSTRUCT_VALIDITY_CONTINUOUS - CL/CDR aren't the tau-SUVR
         # quantitative reference the model is being compared against).

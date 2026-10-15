@@ -963,3 +963,97 @@ def make_probability_vs_suvr_scatter(
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or f"visual_read_probability_vs_{value_col.lower()}.png"), dpi=300)
     plt.close(fig)
+
+
+CENTILOID_BIN_EDGES = [-np.inf, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, np.inf]
+CENTILOID_BIN_LABELS = [
+    "<-50", "-50–-40", "-40–-30", "-30–-20", "-20–-10", "-10–0",
+    "0–10", "10–20", "20–30", "30–40", "40–50", "50–60",
+    "60–70", "70–80", "80–90", "90–100", ">100",
+]
+
+
+def make_agreement_by_centiloid_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    value_col: str = "CL",
+    value_label: str = "Centiloid",
+    group_col: str | None = None,
+    group_label: str | None = None,
+    min_bin_n: int = 2,
+    filename: str | None = None,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Model/clinical-read agreement binned over quantitative amyloid burden, styled after
+    Moscoso et al. 2025 (JAMA, https://doi.org/10.1001/jama.2025.7817) Fig 2: a line of
+    binned agreement against a background histogram (right axis) of what fraction of scans
+    fall in each bin. Makes the usual finding visible at a glance - agreement is highest at
+    the clearly-negative and clearly-positive extremes and dips in the clinically-equivocal
+    mid-range, which is also where most scans actually sit - something a raw per-subject
+    scatter doesn't show directly. Bin edges match the source figure's Centiloid bins.
+    Optional group_col draws one line per subgroup (e.g. site) for a multi-line comparison,
+    matching the source figure's multi-reader panels; omit it for a single overall line."""
+    if value_col not in df_demo.columns:
+        print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
+        return
+
+    merge_cols = [id_col_demo, value_col]
+    has_group = group_col is not None and group_col in df_demo.columns
+    if group_col is not None and not has_group:
+        print(f"[WARNING] group_col '{group_col}' not found in demographics table; plotting a single overall line.")
+    if has_group:
+        merge_cols.append(group_col)
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "pred"]],
+        df_demo[merge_cols],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df = df.dropna(subset=["y", "pred", value_col])
+    if df.empty:
+        return
+
+    df["_bin"] = pd.cut(df[value_col], bins=CENTILOID_BIN_EDGES, labels=CENTILOID_BIN_LABELS, right=False)
+    df["_agree"] = (df["y"] == df["pred"]).astype(float)
+
+    bin_counts = df["_bin"].value_counts().reindex(CENTILOID_BIN_LABELS, fill_value=0)
+    pct_of_scans = bin_counts / bin_counts.sum() * 100
+
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    ax2 = ax.twinx()
+    ax2.bar(CENTILOID_BIN_LABELS, pct_of_scans.to_numpy(), color="0.85", width=0.65, zorder=1)
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL_SIZE)
+    ax2.tick_params(axis="y", labelsize=TICK_SIZE)
+    ax2.grid(False)
+
+    def _plot_line(sub: pd.DataFrame, color: str, label: str):
+        agree_by_bin = sub.groupby("_bin", observed=False)["_agree"].mean().reindex(CENTILOID_BIN_LABELS)
+        n_by_bin = sub.groupby("_bin", observed=False)["_agree"].size().reindex(CENTILOID_BIN_LABELS, fill_value=0)
+        y = agree_by_bin.where(n_by_bin >= min_bin_n)
+        ax.plot(
+            CENTILOID_BIN_LABELS, y, marker="o", markersize=7, linewidth=2.2,
+            color=color, label=f"{label} (n={int(n_by_bin.sum())})", zorder=3,
+        )
+
+    if has_group:
+        groups = get_display_order(df[group_col], group_col)
+        for i, g in enumerate(groups):
+            _plot_line(df[df[group_col] == g], CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
+        style_legend(ax, title=group_label or group_col, loc="lower center")
+    else:
+        _plot_line(df, CUSTOM_PALETTE[1], "Model vs. clinical read")
+        style_legend(ax, loc="lower center")
+
+    ax.set_ylim(0, 1.05)
+    ax.set_zorder(ax2.get_zorder() + 1)
+    ax.patch.set_visible(False)
+    style_axes(ax, f"Model-clinician agreement vs. {value_label}", value_label, "Agreement", xrotation=45)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / (filename or f"visual_read_agreement_by_{value_col.lower()}.png"), dpi=300)
+    plt.close(fig)
