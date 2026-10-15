@@ -1086,6 +1086,20 @@ def _quantile_bin_labels(series: pd.Series, n_bins: int):
     return bin_edges, labels
 
 
+def _fixed_width_bin_labels(series: pd.Series, n_bins: int):
+    """Fixed-width bin edges/labels spanning this column's actual min-max range. Unlike
+    equal-count quantile bins (which are ~uniform population by construction and so make
+    the background histogram trivially flat), fixed-width bins reveal the true shape of
+    the distribution - e.g. a right-skewed SUVR distribution shows up as most scans
+    concentrated in the lower bins, which is the whole point of drawing that histogram."""
+    lo, hi = series.min(), series.max()
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+        return None, None
+    bin_edges = np.linspace(lo, hi, n_bins + 1)
+    labels = [f"{bin_edges[i]:.2f}–{bin_edges[i + 1]:.2f}" for i in range(n_bins)]
+    return bin_edges, labels
+
+
 def make_agreement_by_value_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
@@ -1094,23 +1108,35 @@ def make_agreement_by_value_panel(
     value_label: str | None = None,
     n_bins: int = 6,
     min_bin_n: int = 2,
+    group_col: str | None = None,
+    group_label: str | None = None,
     filename: str | None = None,
     id_col_preds: str = "ID_ind",
     id_col_demo: str = "ID",
 ):
     """Same style as make_agreement_by_centiloid_panel (binned agreement line over a
     background histogram of % of scans per bin) but for an arbitrary quantitative column
-    (e.g. a regional tau SUVR) using data-driven equal-count quantile bins instead of the
-    Centiloid-specific fixed bins - there's no literature SUVR cutoff per region to anchor
-    fixed bins to. Use this for the 5 CenTauR regions; use make_agreement_by_centiloid_panel
-    for Centiloid itself to keep the literature-matching fixed bins."""
+    (e.g. a regional tau SUVR) using data-driven fixed-width bins instead of the
+    Centiloid-specific literature bins - there's no literature SUVR cutoff per region to
+    anchor fixed bins to, but fixed-width (not equal-count) still shows the real
+    distribution shape. Use this for the 5 CenTauR regions; use
+    make_agreement_by_centiloid_panel for Centiloid itself to keep the literature-matching
+    bins. Optional group_col draws one line per subgroup (e.g. site) instead of one overall
+    line, matching the source figure's multi-line comparison."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
 
+    merge_cols = [id_col_demo, value_col]
+    has_group = group_col is not None and group_col in df_demo.columns
+    if group_col is not None and not has_group:
+        print(f"[WARNING] group_col '{group_col}' not found in demographics table; plotting a single overall line.")
+    if has_group:
+        merge_cols.append(group_col)
+
     df = pd.merge(
         df_preds[[id_col_preds, "y", "pred"]],
-        df_demo[[id_col_demo, value_col]],
+        df_demo[merge_cols],
         left_on=id_col_preds, right_on=id_col_demo, how="left",
     )
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
@@ -1120,7 +1146,7 @@ def make_agreement_by_value_panel(
     if df.empty:
         return
 
-    bin_edges, bin_labels = _quantile_bin_labels(df[value_col], n_bins)
+    bin_edges, bin_labels = _fixed_width_bin_labels(df[value_col], n_bins)
     if bin_labels is None:
         return
     df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=bin_labels, include_lowest=True)
@@ -1136,15 +1162,25 @@ def make_agreement_by_value_panel(
     ax2.tick_params(axis="y", labelsize=TICK_SIZE)
     ax2.grid(False)
 
-    agree_by_bin = df.groupby("_bin", observed=False)["_agree"].mean().reindex(bin_labels)
-    n_by_bin = df.groupby("_bin", observed=False)["_agree"].size().reindex(bin_labels, fill_value=0)
-    y = agree_by_bin.where(n_by_bin >= min_bin_n)
+    def _plot_line(sub: pd.DataFrame, color: str, label: str):
+        agree_by_bin = sub.groupby("_bin", observed=False)["_agree"].mean().reindex(bin_labels)
+        n_by_bin = sub.groupby("_bin", observed=False)["_agree"].size().reindex(bin_labels, fill_value=0)
+        y = agree_by_bin.where(n_by_bin >= min_bin_n)
+        ax.plot(
+            bin_labels, y, marker="o", markersize=7, linewidth=2.2,
+            color=color, label=f"{label} (n={int(n_by_bin.sum())})", zorder=3,
+        )
+
+    if has_group:
+        groups = get_display_order(df[group_col], group_col)
+        for i, g in enumerate(groups):
+            _plot_line(df[df[group_col] == g], CUSTOM_PALETTE[i % len(CUSTOM_PALETTE)], str(g))
+        style_legend(ax, title=group_label or group_col, loc="lower center")
+    else:
+        _plot_line(df, CUSTOM_PALETTE[1], "Model vs. clinical read")
+        style_legend(ax, loc="lower center")
+
     label_x = value_label or value_col
-    ax.plot(
-        bin_labels, y, marker="o", markersize=7, linewidth=2.2,
-        color=CUSTOM_PALETTE[1], label=f"Model vs. clinical read (n={int(n_by_bin.sum())})", zorder=3,
-    )
-    style_legend(ax, loc="lower center")
 
     ax.set_ylim(0, 1.05)
     ax.set_zorder(ax2.get_zorder() + 1)
