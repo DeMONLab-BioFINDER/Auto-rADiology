@@ -1495,7 +1495,7 @@ def make_agreement_by_value_panel(
         ax.set_ylim(0, 105)
         _draw_cutoff_agreement_table(ax, "SUVR")
         ylabel = "Agreement (%)"
-        title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, temp, n={n_total})"
+        title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     elif discordant_only:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n, categories=DISCORDANT_CATEGORIES)

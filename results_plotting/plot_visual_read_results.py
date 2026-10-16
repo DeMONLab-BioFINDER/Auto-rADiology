@@ -200,7 +200,7 @@ def main():
         )
         # Centiloid's cutoff (24.4) is literature-validated (Moscoso et al. 2025's own
         # amyloid-positivity threshold); the SUVR cutoff below is NOT - no validated
-        # per-scan tau SUVR cutoff exists, 1.3 is a provisional placeholder pending
+        # per-scan tau SUVR cutoff exists, 1.4 is a provisional placeholder pending
         # guidance from the lab (see the pending Slack question).
         make_agreement_by_centiloid_panel(
             df_preds, df_demo, out_dir, cutoff=24.4,
@@ -210,7 +210,7 @@ def main():
             make_agreement_by_value_panel(
                 df_preds, df_demo, out_dir,
                 value_col=value_col, value_label=value_label,
-                cutoff=1.3,
+                cutoff=1.4,
             )
     print(f"[done] figures saved to {out_dir}")
 
