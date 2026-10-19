@@ -1836,6 +1836,73 @@ def make_classification_breakdown_violin_panel(
     plt.close(fig)
 
 
+def make_classification_breakdown_suvr_violin_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    regions: list[tuple],
+    filename: str = "visual_read_classification_breakdown_suvr_violin.png",
+    n_cols: int = 3,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Regional version of make_classification_breakdown_violin_panel: one small panel per
+    tau SUVR region (regions = [(column, label), ...]), each a violin of that region's SUVR
+    for the 4 model/visual-read outcome combinations, same order/colors/labels as the
+    probability version."""
+    regions = [(c, lab) for c, lab in regions if c in df_demo.columns]
+    if not regions:
+        print("[WARNING] No regional SUVR columns found in demographics table; skipping SUVR violin panel.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "pred"]],
+        df_demo[[id_col_demo] + [c for c, _ in regions]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df = df.dropna(subset=["y", "pred"])
+    if df.empty:
+        return
+    df["_category"] = [
+        CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(df["y"].astype(int), df["pred"].astype(int))
+    ]
+    order = [c for c in ["True Positive", "True Negative", "False Negative", "False Positive"]
+             if (df["_category"] == c).sum() >= 1]
+    if not order:
+        return
+
+    n_panels = len(regions)
+    n_rows = int(np.ceil(n_panels / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6.8 * n_cols, 5.4 * n_rows), squeeze=False)
+    for idx, (col, label) in enumerate(regions):
+        ax = axes[idx // n_cols][idx % n_cols]
+        plot_df = df.dropna(subset=[col]).copy()
+        plot_df[col] = pd.to_numeric(plot_df[col], errors="coerce")
+        plot_df = plot_df.dropna(subset=[col])
+        sns.violinplot(
+            data=plot_df, x="_category", y=col, order=order, ax=ax,
+            hue="_category", hue_order=order, palette=CONFUSION_CATEGORY_PALETTE, legend=False,
+            inner="box", cut=0, saturation=1.0,
+        )
+        sns.stripplot(
+            data=plot_df, x="_category", y=col, order=order, ax=ax,
+            color="black", size=3, alpha=0.4, jitter=0.15, linewidth=0,
+        )
+        counts = plot_df["_category"].value_counts()
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels([
+            f"{confusion_display_label(c, multiline=True)}\n(n={int(counts.get(c, 0))})" for c in order
+        ])
+        style_axes(ax, label, "", "SUVR")
+    hide_unused_axes(axes, n_panels, n_rows * n_cols, n_cols)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
 def make_discordant_probability_violin_panel(
     df_preds: pd.DataFrame,
     out_dir: Path,
