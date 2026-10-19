@@ -10,7 +10,9 @@ contain, so e.g. CU would look better than AD dementia mostly because CU scans a
 negative. Splitting by the visual read first removes that.
 
 Variables (fixed in advance, see add_subgroup_columns in plot_utils.py): diagnosis, sex, APOE e4,
-amyloid status, site, and age as a continuous number.
+amyloid status, site, and age as a continuous number. The same groups are tested and plotted:
+groups with fewer than --min_level_n scans, and the "Other" diagnosis (a mix of non-AD conditions,
+see SUBGROUP_DESCRIBED_ONLY), are in the performance csv with tested = False but not tested or plotted.
 
 Tests, each run once for sensitivity and once for specificity:
   - 2 levels: Fisher's exact test
@@ -55,6 +57,7 @@ from scipy import stats
 from analyze_bias_significance import add_fdr_columns
 from list_discordant_cases import find_dataset_demo_csv
 from plot_utils import (
+    SUBGROUP_DESCRIBED_ONLY,
     SUBGROUP_METRICS,
     SUBGROUP_MIN_LEVEL_N,
     add_subgroup_columns,
@@ -82,8 +85,8 @@ def parse_args():
     parser.add_argument("--demo_csv", default=None, help="Path to the demographics csv.")
     parser.add_argument("--female_code", type=float, default=2, help="Value of `gender` meaning female.")
     parser.add_argument("--min_level_n", type=int, default=SUBGROUP_MIN_LEVEL_N,
-                        help="Levels with fewer scans than this are kept in the csv and the tests "
-                             "but left off the figures.")
+                        help="Levels with fewer scans than this are kept in the csv but not tested "
+                             "or plotted.")
     parser.add_argument("--n_perm", type=int, default=10000, help="Permutations for the 3+ level test.")
     return parser.parse_args()
 
@@ -191,6 +194,7 @@ def test_cdrsb_beyond_dx(df: pd.DataFrame, metric: str, n_perm: int) -> dict:
     sub = df[df["y"] == METRIC_READ[metric]].copy()
     sub["_cdrsb"] = pd.to_numeric(sub["CDR_SB"], errors="coerce")
     sub = sub.dropna(subset=["_cdrsb", "_g_dx"])
+    sub = sub[~sub["_g_dx"].isin(SUBGROUP_DESCRIBED_ONLY["_g_dx"])]
     out = {"family": "secondary", "variable": "CDR-SB (within diagnosis)", "metric": metric,
            "n_levels": np.nan, "n_scans": len(sub), "test": None, "statistic": np.nan, "p_value": np.nan,
            "median_cdrsb_model_right": sub.loc[sub["_correct"] == 1, "_cdrsb"].median(),
@@ -265,11 +269,14 @@ def main():
     subgroups = add_subgroup_columns(df, female_code=args.female_code)
     stat_rows, test_rows = [], []
     for col, name, levels in subgroups:
-        for level in levels:
-            stat_rows.append({"variable": name, "level": level, "column": col, "tested": True}
+        # The tests and the figures use exactly the same groups.
+        tested = [level for level in levels if (df[col] == level).sum() >= args.min_level_n]
+        described = [level for level in SUBGROUP_DESCRIBED_ONLY.get(col, []) if (df[col] == level).any()]
+        for level in levels + described:
+            stat_rows.append({"variable": name, "level": level, "column": col, "tested": level in tested}
                              | level_stats(df[df[col] == level]))
         for metric in METRIC_READ:
-            test_rows.append({"family": "primary"} | test_categorical(df, col, name, levels, metric, args.n_perm))
+            test_rows.append({"family": "primary"} | test_categorical(df, col, name, tested, metric, args.n_perm))
     if "age" in df.columns:
         for metric in METRIC_READ:
             test_rows.append({"family": "primary"} | test_age(df, metric))
@@ -308,7 +315,7 @@ def main():
             make_cdrsb_figure(df, metrics, dx_levels, args.min_level_n, out_dir)
             continue
         col = next(c for c, n, _ in subgroups if n == name)
-        sub = stats_df[(stats_df["variable"] == name) & (stats_df["n"] >= args.min_level_n)]
+        sub = stats_df[(stats_df["variable"] == name) & stats_df["tested"]]
         make_subgroup_performance_panel(
             sub, {m: overall[m] for m in metrics}, out_dir, metrics=[metric_spec[m] for m in metrics],
             filename=f"visual_read_subgroup_{col.removeprefix('_g_')}.png",
@@ -316,10 +323,10 @@ def main():
 
     print(f"[done] {len(df)} scans; whole cohort sensitivity {overall['sensitivity']:.1%}, "
           f"specificity {overall['specificity']:.1%}")
-    small = stats_df[(stats_df["n"] < args.min_level_n) & stats_df["tested"]]
-    if len(small):
-        print(f"[note] in the csv and tests but left off figures (n < {args.min_level_n}): "
-              + ", ".join(f"{r.variable}={r.level} (n={r.n})" for r in small.itertuples()))
+    untested = stats_df[~stats_df["tested"] & (stats_df["column"] != "_g_cog_amy")]
+    if len(untested):
+        print(f"[note] in the csv but not tested or plotted (n < {args.min_level_n}, or 'Other' diagnosis): "
+              + ", ".join(f"{r.variable}={r.level} (n={r.n})" for r in untested.itertuples()))
     untestable = tests_df[tests_df["test"].isna()]
     if len(untestable):
         print("[note] not testable: " + ", ".join(f"{r.variable} {r.metric}" for r in untestable.itertuples()))
@@ -328,7 +335,7 @@ def main():
     else:
         print("[result] Survives FDR correction (figure made for each):")
         print(significant[["family", "variable", "metric", "test", "p_value", "p_value_fdr_bh"]].to_string(index=False))
-    described = stats_df[~stats_df["tested"]]
+    described = stats_df[stats_df["column"] == "_g_cog_amy"]
     if len(described):
         print("[described, not tested] Cognitive status × amyloid:")
         print(described[["level", "n", "sensitivity_k", "sensitivity_n", "specificity_k", "specificity_n"]]

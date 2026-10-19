@@ -1211,7 +1211,12 @@ def make_subgroup_performance_panel(
 # ------------------------------
 # Subgroup analysis (shared by analyze_subgroup_performance_visual_read.py / _suvr.py)
 # ------------------------------
-SUBGROUP_MIN_LEVEL_N = 10  # a level below this is reported in the csv but left off the figures
+SUBGROUP_MIN_LEVEL_N = 10  # a level below this is reported in the csv but not tested or plotted
+
+# Levels reported in the csv but never tested or plotted, whatever their size. "Other" diagnosis is
+# a mix of non-AD conditions (FTD, DLB, psychiatric, ...), so a difference driven by it cannot be
+# read as a diagnosis effect - and the model saw too few such scans in training (~1%) to judge.
+SUBGROUP_DESCRIBED_ONLY = {"_g_dx": ["Other"]}
 
 
 def resolve_predictions_csv(run_dir: Path, dataset: str) -> tuple[Path, Path]:
@@ -1256,7 +1261,7 @@ def add_subgroup_columns(df: pd.DataFrame, female_code: float = 2) -> list[tuple
 
     if "dx" in df.columns:
         dx = combine_dx_groups(df["dx"]).replace({"AlzCS dem": "AD dementia"})
-        add("_g_dx", "Diagnosis", dx, ["CU", "MCI", "AD dementia", "Other"])
+        add("_g_dx", "Diagnosis", dx, ["CU", "MCI", "AD dementia"])  # "Other": see SUBGROUP_DESCRIBED_ONLY
     if "gender" in df.columns:
         sex = pd.to_numeric(df["gender"], errors="coerce")
         add("_g_sex", "Sex", sex.map(lambda v: pd.NA if pd.isna(v) else ("Female" if v == female_code else "Male")),

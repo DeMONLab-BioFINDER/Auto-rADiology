@@ -15,7 +15,8 @@ The adjusted error is what is tested and plotted. Raw MAE per group is still in 
 the group's median true SUVR, so the case-mix effect stays visible.
 
 Variables (fixed in advance, see add_subgroup_columns in plot_utils.py): diagnosis, sex, APOE e4,
-amyloid status, site, and age as a continuous number.
+amyloid status, site, and age as a continuous number. The "Other" diagnosis (a mix of non-AD
+conditions, see SUBGROUP_DESCRIBED_ONLY) is in the performance csv but not tested or plotted.
 
 Tests, per region:
   - 2 levels: Mann-Whitney test;  3+ levels: Kruskal-Wallis test
@@ -59,6 +60,7 @@ from scipy import stats
 from analyze_bias_significance import add_fdr_columns
 from list_discordant_cases import find_dataset_demo_csv
 from plot_utils import (
+    SUBGROUP_DESCRIBED_ONLY,
     SUBGROUP_MIN_LEVEL_N,
     add_subgroup_columns,
     find_demo_csv,
@@ -171,6 +173,7 @@ def test_cdrsb_beyond_dx(df, target) -> dict:
     """Does adjusted error rise with CDR-SB, among people with the same diagnosis?"""
     sub = df.assign(_cdrsb=pd.to_numeric(df["CDR_SB"], errors="coerce"))
     sub = sub.dropna(subset=["_cdrsb", "_g_dx", f"_adj_{target}"])
+    sub = sub[~sub["_g_dx"].isin(SUBGROUP_DESCRIBED_ONLY["_g_dx"])]
     out = {"family": "secondary", "region": target, "variable": "CDR-SB (within diagnosis)",
            "n_levels": np.nan, "n_scans": len(sub), "test": None, "statistic": np.nan, "p_value": np.nan}
     if len(sub) >= 3 and sub["_cdrsb"].nunique() > 1:
@@ -191,8 +194,11 @@ def main():
     stat_rows, test_rows = [], []
     for target in targets:
         for col, name, levels in subgroups:
-            for level in levels:
-                stat_rows.append({"region": target, "variable": name, "level": level, "column": col}
+            described = [level for level in SUBGROUP_DESCRIBED_ONLY.get(col, []) if (df[col] == level).any()]
+            for level in levels + described:
+                n_level = int((df[col] == level).sum())
+                stat_rows.append({"region": target, "variable": name, "level": level, "column": col,
+                                  "tested": level in levels and n_level >= args.min_level_n}
                                  | level_stats(df[df[col] == level], target))
             test_rows.append({"family": "primary"} | test_categorical(df, col, name, levels, target, args.min_level_n))
         if "age" in df.columns:
