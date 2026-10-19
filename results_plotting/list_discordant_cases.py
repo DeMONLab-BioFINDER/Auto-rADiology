@@ -309,7 +309,8 @@ def main():
             if subset.empty:
                 continue
             print(f"\nBaseline: top {len(subset)} most-confidently-agreeing [{confusion_display_label(category)}] cases:")
-            print(subset[display_cols].to_string(index=False))
+            # bucket / confident_error / near_ctrz2 are only computed for the discordant table.
+            print(subset[[c for c in display_cols if c in subset.columns]].to_string(index=False))
             baseline_ids += [str(i) for i in subset["ID"]]
 
         if baseline_ids:
