@@ -69,9 +69,8 @@ def parse_args():
     parser.add_argument("--demo_csv", default=None, help="Path to the demographics csv (default: data/demo_<dataset>.csv, then data/demo.csv).")
     parser.add_argument("--age_cutoff", type=float, default=75.0, help="Age threshold for the 'older' row of the dot plot.")
     parser.add_argument(
-        "--female_code", default=None,
-        help="Value of the `gender` column that means female (check the data dictionary). If omitted, "
-             "the sex row is labelled by its raw code instead of 'Female'.",
+        "--female_code", type=float, default=2,
+        help="Value of the `gender` column that means female (2 in this dataset).",
     )
     return parser.parse_args()
 
@@ -142,10 +141,8 @@ def add_indicator_columns(df: pd.DataFrame, args) -> list[tuple[str, str]]:
         cdr = pd.to_numeric(df["CDR"], errors="coerce")
         add("_cdr", "CDR ≥ 0.5", (cdr >= 0.5).where(cdr.notna()))
     if "gender" in df.columns:
-        if args.female_code is not None:
-            add("_sex", "Female", (df["gender"].astype("string") == str(args.female_code)).where(df["gender"].notna()))
-        else:
-            add("_sex", "Sex code 2", (pd.to_numeric(df["gender"], errors="coerce") == 2).where(df["gender"].notna()))
+        sex = pd.to_numeric(df["gender"], errors="coerce")
+        add("_sex", "Female", (sex == args.female_code).where(sex.notna()))
     if "MetaTemporal" in df.columns:
         suvr = pd.to_numeric(df["MetaTemporal"], errors="coerce")
         cutoff = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
