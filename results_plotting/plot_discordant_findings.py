@@ -19,10 +19,17 @@ small groups visibly look uncertain.
 Produces, next to the run's other figures (<run_dir>/figures/, or
 <run_dir>/validation/figures/ for a zero-shot external validation run):
 
-1. visual_read_discordant_findings.png - dot plot, one row per characteristic (proportion in each of
-   the four groups, whiskers = Wilson 95% CI), rows sorted by how far Model +, Visual read -
-   sits from Model -, Visual read -. n/N printed per discordant group, since the
-   denominator differs per row when a variable is missing.
+1. visual_read_discordant_findings.png - two-panel dot plot of the yes/no characteristics (Aβ+,
+   APOE ε4, female, cognitively unimpaired, CDR ≥ 0.5): left = Model -, Visual read + vs
+   Model +, Visual read +; right = Model +, Visual read - vs Model -, Visual read -. Proportions
+   with Wilson 95% CI, rows sorted by the larger discordant-vs-reference gap. n/N printed per
+   discordant group, since the denominator differs per row when a variable is missing.
+   Continuous variables are NOT thresholded here - see 3 and 4.
+3. visual_read_discordant_continuous.png - age, CDR-SB and Centiloid, every scan a dot with
+   the median marked, same two comparisons (top: false negatives vs true positives, bottom:
+   false positives vs true negatives).
+4. visual_read_discordant_regional_pattern.png - regional SUVRs and Mesial/Meta, Frontal/Meta
+   ratios across all four groups, dashed line = CTRz 2 equivalent (reference only).
 2. visual_read_discordant_findings_table.csv - slim supplement table: four agreement/
    discordance groups + overall cohort, one row per yes/no variable, diagnosis and CDR
    grouped, skewed variables as median [IQR], n/N shown wherever data is missing.
@@ -66,7 +73,6 @@ def parse_args():
     parser.add_argument("run_dir", help="Path to a results run directory trained with --targets visual_read.")
     parser.add_argument("--dataset", default="Gothenburg", help="Dataset name used in the result filenames.")
     parser.add_argument("--demo_csv", default=None, help="Path to the demographics csv (default: data/demo_<dataset>.csv, then data/demo.csv).")
-    parser.add_argument("--age_cutoff", type=float, default=75.0, help="Age threshold for the 'older' row of the dot plot.")
     parser.add_argument(
         "--female_code", type=float, default=2,
         help="Value of the `gender` column that means female (2 in this dataset).",
@@ -136,9 +142,6 @@ def add_indicator_columns(df: pd.DataFrame, args) -> list[tuple[str, str]]:
     if "dx" in df.columns:
         dx = combine_dx_groups(df["dx"])
         add("_cu", "Cog. unimpaired", (dx == "CU").where(df["dx"].notna()))
-    if "age" in df.columns:
-        age = pd.to_numeric(df["age"], errors="coerce")
-        add("_older", f"Age ≥ {args.age_cutoff:g}", (age >= args.age_cutoff).where(age.notna()))
     if "CDR" in df.columns:
         cdr = pd.to_numeric(df["CDR"], errors="coerce")
         add("_cdr", "CDR ≥ 0.5", (cdr >= 0.5).where(cdr.notna()))
@@ -164,61 +167,109 @@ def group_proportions(df: pd.DataFrame, indicators) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def make_dot_plot(ax, df: pd.DataFrame, indicators):
+# Left panel = false negatives (the group being looked at first), right = false positives.
+PANEL_ORDER = ["False Negative", "False Positive"]
+
+
+def make_dot_plot(axes, df: pd.DataFrame, indicators):
+    """Two panels sharing the same rows: each plots one discordant group against the group that
+    shares its visual read and that the model got right (two dots per row)."""
     props = group_proportions(df, indicators)
+    p_idx = props.set_index(["label", "category"])
 
     def diff(label, cat):
-        p = props.set_index(["label", "category"])["p"]
-        return abs(p.get((label, cat), np.nan) - p.get((label, SORT_REFERENCE[cat]), np.nan))
+        return abs(p_idx["p"].get((label, cat), np.nan) - p_idx["p"].get((label, SORT_REFERENCE[cat]), np.nan))
 
     # Sort by the larger of the two discordant-vs-reference gaps, biggest at the top.
     labels = [lab for _, lab in indicators]
     gap = {lab: np.nanmax([diff(lab, cat) for cat in DISCORDANT]) for lab in labels}
     labels = sorted(labels, key=lambda lab: gap[lab] if not np.isnan(gap[lab]) else -1)  # bottom -> top
 
-    offsets = np.linspace(-0.3, 0.3, len(GROUP_ORDER))
-    for cat, off in zip(GROUP_ORDER, offsets):
-        sub = props.set_index("label").loc[labels].reset_index()
-        sub = sub[sub["category"] == cat]
-        ys = np.arange(len(labels)) + off
-        discordant = cat in DISCORDANT
-        ax.hlines(ys, sub["lo"], sub["hi"], color=CONFUSION_CATEGORY_PALETTE[cat], linewidth=2 if discordant else 1.4,
-                  alpha=0.9 if discordant else 0.6, zorder=2)
-        ax.scatter(sub["p"], ys, s=95 if discordant else 55, color=CONFUSION_CATEGORY_PALETTE[cat],
-                   edgecolor="white", linewidth=0.8, zorder=3,
-                   label=f"{confusion_display_label(cat)} (n={int((df['category'] == cat).sum())})")
+    for panel, (ax, disc) in enumerate(zip(axes, PANEL_ORDER)):
+        ref = SORT_REFERENCE[disc]
+        for cat, off in ((ref, -0.17), (disc, 0.17)):
+            sub = props[props["category"] == cat].set_index("label").loc[labels].reset_index()
+            ys = np.arange(len(labels)) + off
+            is_disc = cat == disc
+            ax.hlines(ys, sub["lo"], sub["hi"], color=CONFUSION_CATEGORY_PALETTE[cat],
+                      linewidth=2.2 if is_disc else 1.6, alpha=0.9 if is_disc else 0.65, zorder=2)
+            ax.scatter(sub["p"], ys, s=100 if is_disc else 60, color=CONFUSION_CATEGORY_PALETTE[cat],
+                       edgecolor="white", linewidth=0.8, zorder=3,
+                       label=f"{confusion_display_label(cat)} (n={int((df['category'] == cat).sum())})")
 
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels, fontsize=LABEL_SIZE - 2)
-    ax.set_xlim(-0.03, 1.03)
-    ax.set_xlabel("Proportion of group (whiskers: Wilson 95% CI)", fontsize=LABEL_SIZE - 2)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    ax.grid(axis="x", color="#DDDDDD", linewidth=0.8, zorder=0)
-    ax.set_axisbelow(True)
-    for spine in ("top", "right"):
-        ax.spines[spine].set_visible(False)
-    n_disc = int(df["category"].isin(DISCORDANT).sum())
-    ax.set_title(f"What the discordant groups look like ({n_disc}/{len(df)} scans discordant)", fontsize=TITLE_SIZE - 3, pad=16)
-    ax.set_ylim(-0.6, len(labels) - 0.4)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.1), ncol=2, frameon=False, fontsize=TICK_SIZE - 1)
+        ax.set_yticks(range(len(labels)))
+        ax.set_yticklabels(labels if panel == 0 else [], fontsize=LABEL_SIZE - 2)
+        ax.set_xlim(-0.03, 1.03)
+        ax.set_ylim(-0.6, len(labels) - 0.4)
+        ax.set_xlabel("Proportion of group (whiskers: Wilson 95% CI)", fontsize=LABEL_SIZE - 3)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+        ax.grid(axis="x", color="#DDDDDD", linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+        ax.set_title(f"{confusion_display_label(disc)}\nvs {confusion_display_label(ref)}",
+                     fontsize=TITLE_SIZE - 5, pad=10, color=CONFUSION_CATEGORY_PALETTE[disc])
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=1, frameon=False, fontsize=TICK_SIZE - 1)
 
-    # n/N for the discordant groups, in the right margin (denominator differs when data is missing).
-    p_idx = props.set_index(["label", "category"])
-    x_text = [1.04, 1.16]
-    for cat, x in zip(DISCORDANT, x_text):
-        ax.text(x, len(labels) - 0.35, confusion_display_label(cat, multiline=True).replace("Visual read", "VR"),
-                transform=ax.get_yaxis_transform(), ha="left", va="bottom", fontsize=TICK_SIZE - 3,
-                color=CONFUSION_CATEGORY_PALETTE[cat], fontweight="bold")
+        # n/N for the discordant group, in the right margin (denominator differs when data is missing).
         for i, lab in enumerate(labels):
-            k, n = int(p_idx.loc[(lab, cat), "k"]), int(p_idx.loc[(lab, cat), "n"])
-            ax.text(x, i, f"{k}/{n}", transform=ax.get_yaxis_transform(), ha="left", va="center", fontsize=TICK_SIZE - 2)
+            k, n = int(p_idx.loc[(lab, disc), "k"]), int(p_idx.loc[(lab, disc), "n"])
+            ax.text(1.03, i, f"{k}/{n}", transform=ax.get_yaxis_transform(), ha="left", va="center",
+                    fontsize=TICK_SIZE - 2, color=CONFUSION_CATEGORY_PALETTE[disc])
 
 
 def make_findings_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: str):
-    # ~1.3 inches per row so the four dots of neighbouring rows don't crowd each other.
-    fig, ax = plt.subplots(figsize=(11, 2.0 + 1.05 * len(indicators)))
-    make_dot_plot(ax, df, indicators)
-    fig.subplots_adjust(left=0.2, right=0.80, top=0.93, bottom=0.16)
+    fig, axes = plt.subplots(1, 2, figsize=(15, 2.6 + 0.85 * len(indicators)))
+    make_dot_plot(axes, df, indicators)
+    n_disc = int(df["category"].isin(DISCORDANT).sum())
+    fig.suptitle(f"What the discordant groups look like ({n_disc}/{len(df)} scans discordant)",
+                 fontsize=TITLE_SIZE - 3)
+    fig.subplots_adjust(left=0.17, right=0.95, top=0.82, bottom=0.2, wspace=0.28)
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+# ------------------------------
+# Continuous characteristics: every point shown, no cut-offs
+# ------------------------------
+CONTINUOUS_VARS = [("age", "Age (years)"), ("CDR_SB", "CDR-SB"), ("CL", "Centiloid")]
+
+
+def make_continuous_figure(df: pd.DataFrame, out_dir: Path, filename: str):
+    """Age / CDR-SB / Centiloid without dichotomising: one panel per variable, every scan a dot,
+    black bar = median. Top row compares false negatives to true positives, bottom row false
+    positives to true negatives (same pairs as the dot plot)."""
+    variables = [(c, lab) for c, lab in CONTINUOUS_VARS if c in df.columns]
+    if not variables:
+        return
+    fig, axes = plt.subplots(2, len(variables), figsize=(4.6 * len(variables), 8.2), squeeze=False)
+    rng = np.random.default_rng(seed=0)
+    for r, disc in enumerate(PANEL_ORDER):
+        ref = SORT_REFERENCE[disc]
+        for c, (col, lab) in enumerate(variables):
+            ax = axes[r][c]
+            vals = pd.to_numeric(df[col], errors="coerce")
+            for x, cat in enumerate((ref, disc)):
+                v = vals[(df["category"] == cat)].dropna()
+                is_disc = cat == disc
+                ax.scatter(x + rng.normal(0, 0.06, size=len(v)), v, s=70 if is_disc else 35,
+                           color=CONFUSION_CATEGORY_PALETTE[cat], edgecolor="white", linewidth=0.7,
+                           alpha=0.95 if is_disc else 0.6, zorder=3 if is_disc else 2)
+                if len(v):
+                    ax.hlines(v.median(), x - 0.3, x + 0.3, color="black", linewidth=1.8, zorder=4)
+            ax.set_xlim(-0.6, 1.6)
+            ax.set_xticks([0, 1])
+            ax.set_xticklabels(
+                [f"{confusion_display_label(cat, multiline=True)}\n(n={int(vals[df['category'] == cat].notna().sum())})"
+                 for cat in (ref, disc)], fontsize=TICK_SIZE - 2)
+            if r == 0:
+                ax.set_title(lab, fontsize=TITLE_SIZE - 4)
+            ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
+            ax.set_axisbelow(True)
+            for spine in ("top", "right"):
+                ax.spines[spine].set_visible(False)
+    fig.suptitle("Continuous characteristics by group (black bar = median)", fontsize=TITLE_SIZE - 3)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.95))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
 
@@ -334,7 +385,7 @@ def make_findings_table(df: pd.DataFrame, indicators, out_dir: Path, filename: s
     if "age" in df.columns:
         add_row("Age, mean ± SD", lambda g: _mean_sd(g["age"]))
     for col, label in indicators:
-        if col in ("_older", "_meta", "_cu", "_cdr"):
+        if col in ("_meta", "_cu", "_cdr"):
             continue  # grouped rows below / imaging block cover these
         add_row(f"{label}, n/N (%)", lambda g, c=col: _count_cell(g[c].fillna(False).astype(bool), g[c].notna()))
 
@@ -378,7 +429,11 @@ def main():
 
     indicators = add_indicator_columns(df, args)
     out_dir.mkdir(parents=True, exist_ok=True)
-    make_findings_figure(df, indicators, out_dir, "visual_read_discordant_findings.png")
+    # The dot plot is for yes/no characteristics; Meta SUVR >= CTRz 2 is a thresholded continuous
+    # variable (kept in the table), so it is shown in the regional-pattern figure instead.
+    dot_indicators = [i for i in indicators if i[0] != "_meta"]
+    make_findings_figure(df, dot_indicators, out_dir, "visual_read_discordant_findings.png")
+    make_continuous_figure(df, out_dir, "visual_read_discordant_continuous.png")
     make_findings_table(df, indicators, out_dir, "visual_read_discordant_findings_table.csv", args)
     make_regional_pattern_figure(df, out_dir, "visual_read_discordant_regional_pattern.png")
 
