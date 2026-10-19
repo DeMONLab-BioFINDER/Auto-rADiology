@@ -245,7 +245,13 @@ def main():
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_csv = Path(args.out_csv) if args.out_csv else out_dir / "visual_read_discordant_cases.csv"
-    df_discordant.to_csv(out_csv, index=False)
+    # Intermediate columns (percentiles, model_agrees_with_quant, isolated_mtl, dist_from_threshold)
+    # stay in memory for the console printout but are not saved; `bucket` already encodes them.
+    csv_cols = (
+        ["ID", "y", "prob", "pred", "category", "bucket", "quant_positive", "confident_error", "near_ctrz2"]
+        + demo_cols
+    )
+    df_discordant[[c for c in csv_cols if c in df_discordant.columns]].to_csv(out_csv, index=False)
 
     n_fp = (df_discordant["category"] == "False Positive").sum()
     n_fn = (df_discordant["category"] == "False Negative").sum()
