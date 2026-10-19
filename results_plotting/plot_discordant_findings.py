@@ -24,12 +24,14 @@ Produces, next to the run's other figures (<run_dir>/figures/, or
    Model +, Visual read +; right = Model +, Visual read - vs Model -, Visual read -. Proportions
    with Wilson 95% CI, rows sorted by the larger discordant-vs-reference gap. n/N printed per
    discordant group, since the denominator differs per row when a variable is missing.
-   Continuous variables are NOT thresholded here - see 3 and 4.
+   Continuous variables are NOT thresholded here - see 3.
 3. visual_read_discordant_continuous.png - age, CDR-SB and Centiloid, every scan a dot with
    the median marked, same two comparisons (top: false negatives vs true positives, bottom:
    false positives vs true negatives).
-4. visual_read_discordant_regional_pattern.png - regional SUVRs and Mesial/Meta, Frontal/Meta
-   ratios across all four groups, dashed line = CTRz 2 equivalent (reference only).
+4. visual_read_kappa_grids.png - pairwise agreement between model, visual read and Meta-temporal
+   SUVR at its CTRz 2 equivalent: three 2x2 tables for everyone, Cohen's kappa (bootstrap 95% CI)
+   in each title. visual_read_kappa_table.csv has the same kappas for everyone and split by
+   cognitive status and by amyloid status (table only - no subgroup figure).
 2. visual_read_discordant_findings_table.csv - slim supplement table: four agreement/
    discordance groups + overall cohort, one row per yes/no variable, diagnosis and CDR
    grouped, skewed variables as median [IQR], n/N shown wherever data is missing.
@@ -42,7 +44,6 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
@@ -112,11 +113,9 @@ def load_scans(args, run_dir: Path):
         raise FileNotFoundError("Could not find a demographics csv - pass --demo_csv explicitly.")
 
     df_preds = pd.read_csv(preds_path)
-    df_preds = df_preds[[c for c in ["ID_ind", "y", "pred", "prob"] if c in df_preds.columns]]
+    df_preds = df_preds[[c for c in ["ID_ind", "y", "pred"] if c in df_preds.columns]]
     df_demo = pd.read_csv(demo_path)
     df = pd.merge(df_preds, df_demo, left_on="ID_ind", right_on="ID", how="left")
-    if "prob" in df.columns:
-        df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
     df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
     df = df.dropna(subset=["y", "pred"]).reset_index(drop=True)
@@ -276,128 +275,6 @@ def make_continuous_figure(df: pd.DataFrame, out_dir: Path, filename: str):
 
 
 # ------------------------------
-# Regional SUVR: are the errors borderline, and do they share a regional pattern?
-# ------------------------------
-SUVR_REGIONS = ["Universal", "MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
-# (numerator, denominator) - Mesial/Meta high with low Meta = medial-temporal-only uptake;
-# Frontal/Meta high = non-AD-like spread.
-SUVR_RATIOS = [("MesialTemporal", "MetaTemporal"), ("Frontal", "MetaTemporal")]
-CONFIDENT_DIST = 0.35  # |prob - 0.5| above this = "confident" error (outlined in black)
-
-
-def make_regional_pattern_figure(df: pd.DataFrame, out_dir: Path, filename: str):
-    """One strip panel per region SUVR plus the two ratios, all four groups side by side.
-    Dashed line = SUVR equivalent of CTRz 2 - a group-level CenTauR convention, drawn only as
-    a reference (list_discordant_cases.py explains why it is not a per-scan cutoff). Discordant
-    points with |prob - 0.5| > CONFIDENT_DIST are outlined in black."""
-    regions = [r for r in SUVR_REGIONS if r in df.columns]
-    ratios = [(a, b) for a, b in SUVR_RATIOS if a in df.columns and b in df.columns]
-    if not regions:
-        return
-    panels = [(r, pd.to_numeric(df[r], errors="coerce"), CENTAUR_FTP_CTRZ2_SUVR.get(r), f"{r} SUVR") for r in regions]
-    for a, b in ratios:
-        panels.append((f"{a}/{b}", pd.to_numeric(df[a], errors="coerce") / pd.to_numeric(df[b], errors="coerce"),
-                       None, f"{a} / {b}"))
-
-    n_cols = 3
-    n_rows = int(np.ceil(len(panels) / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.0 * n_cols, 4.6 * n_rows), squeeze=False)
-    rng = np.random.default_rng(seed=0)
-    confident = (df["prob"] - 0.5).abs() > CONFIDENT_DIST if "prob" in df.columns else pd.Series(False, index=df.index)
-
-    for ax, (name, vals, cutoff, ylabel) in zip(axes.flat, panels):
-        for i, cat in enumerate(GROUP_ORDER):
-            m = (df["category"] == cat) & vals.notna()
-            discordant = cat in DISCORDANT
-            xs = i + rng.normal(0, 0.07, size=int(m.sum()))
-            edge = np.where(confident[m] & discordant, "black", "white")
-            ax.scatter(xs, vals[m], s=60 if discordant else 22, color=CONFUSION_CATEGORY_PALETTE[cat],
-                       edgecolor=edge, linewidth=1.2 if discordant else 0.4,
-                       alpha=0.95 if discordant else 0.45, zorder=3 if discordant else 2)
-            if m.any():
-                ax.hlines(vals[m].median(), i - 0.3, i + 0.3, color="black", linewidth=1.6, zorder=4)
-        if cutoff is not None:
-            ax.axhline(cutoff, color="#555555", linestyle="--", linewidth=1.1, zorder=1)
-        ax.set_xticks(range(len(GROUP_ORDER)))
-        ax.set_xticklabels([confusion_display_label(c, multiline=True) for c in GROUP_ORDER], fontsize=TICK_SIZE - 3)
-        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 3)
-        ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
-        ax.set_axisbelow(True)
-        for spine in ("top", "right"):
-            ax.spines[spine].set_visible(False)
-    for ax in list(axes.flat)[len(panels):]:
-        ax.set_visible(False)
-
-    fig.suptitle("Regional tau pattern by agreement group (black bar = median; dashed = CTRz 2 equivalent; "
-                 "black outline = confident error)", fontsize=TITLE_SIZE - 5)
-    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.95))
-    save_figure(fig, out_dir / filename, dpi=300)
-    plt.close(fig)
-
-
-def make_meta_amyloid_figure(df: pd.DataFrame, out_dir: Path, filename: str):
-    """Headline picture: who does the SUVR side with? One column per Model/Visual read group, every
-    scan a dot at its Meta-temporal SUVR, filled = amyloid positive, hollow = amyloid negative,
-    grey = amyloid unknown. Dashed line = CTRz 2 SUVR equivalent (reference only). Counts above each
-    column: how many sit above the line, and how many are amyloid positive."""
-    if "MetaTemporal" not in df.columns:
-        return
-    suvr = pd.to_numeric(df["MetaTemporal"], errors="coerce")
-    amyloid = pd.to_numeric(df["amyloid_status"], errors="coerce") if "amyloid_status" in df.columns \
-        else pd.Series(np.nan, index=df.index)
-    cutoff = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
-    rng = np.random.default_rng(seed=0)
-
-    fig, ax = plt.subplots(figsize=(10, 6.5))
-    y_top = np.nanmax(suvr.to_numpy()) if suvr.notna().any() else cutoff
-    for x, cat in enumerate(GROUP_ORDER):
-        in_cat = (df["category"] == cat) & suvr.notna()
-        color = CONFUSION_CATEGORY_PALETTE[cat]
-        for status, face, edge in ((1, color, "white"), (0, "white", color), (np.nan, "#BBBBBB", "white")):
-            m = in_cat & (amyloid.isna() if np.isnan(status) else (amyloid == status))
-            if not m.any():
-                continue
-            ax.scatter(x + rng.uniform(-0.28, 0.28, size=int(m.sum())), suvr[m], s=34,
-                       facecolor=face, edgecolor=edge, linewidth=1.1, alpha=0.85, zorder=3)
-        if in_cat.any():
-            ax.hlines(suvr[in_cat].median(), x - 0.34, x + 0.34, color="black", linewidth=2, zorder=4)
-        n = int(in_cat.sum())
-        above = int((suvr[in_cat] >= cutoff).sum())
-        amy = amyloid[df["category"] == cat].dropna()
-        ax.text(x, 1.02, f"above line: {above}/{n}\nAβ+: {int(amy.sum())}/{len(amy)}",
-                transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=TICK_SIZE - 1)
-
-    ax.axhline(cutoff, color="#555555", linestyle="--", linewidth=1.2, zorder=1)
-    ax.text(len(GROUP_ORDER) - 0.5, cutoff, f" CTRz 2 ≈ {cutoff:.2f}", va="bottom", ha="right",
-            fontsize=TICK_SIZE - 2, color="#555555")
-    ax.set_xticks(range(len(GROUP_ORDER)))
-    ax.set_xticklabels([f"{confusion_display_label(c, multiline=True)}\n(n={int((df['category'] == c).sum())})"
-                        for c in GROUP_ORDER], fontsize=TICK_SIZE)
-    ax.set_xlim(-0.6, len(GROUP_ORDER) - 0.4)
-    ax.set_ylabel("Meta-temporal SUVR", fontsize=LABEL_SIZE - 2)
-    ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
-    ax.set_axisbelow(True)
-    for spine in ("top", "right"):
-        ax.spines[spine].set_visible(False)
-
-    handles = [
-        Line2D([0], [0], marker="o", linestyle="None", markersize=7, markerfacecolor="#666666",
-               markeredgecolor="white", label="Amyloid positive"),
-        Line2D([0], [0], marker="o", linestyle="None", markersize=7, markerfacecolor="white",
-               markeredgecolor="#666666", markeredgewidth=1.2, label="Amyloid negative"),
-        Line2D([0], [0], marker="o", linestyle="None", markersize=7, markerfacecolor="#BBBBBB",
-               markeredgecolor="white", label="Amyloid unknown"),
-        Line2D([0], [0], color="black", linewidth=2, label="Median"),
-    ]
-    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False,
-              fontsize=TICK_SIZE - 1)
-    fig.suptitle("Where each group sits on Meta-temporal SUVR, and who has amyloid", fontsize=TITLE_SIZE - 3)
-    fig.subplots_adjust(left=0.1, right=0.97, top=0.8, bottom=0.25)
-    save_figure(fig, out_dir / filename, dpi=300)
-    plt.close(fig)
-
-
-# ------------------------------
 # Agreement between the three "judges": model, visual read, Meta-temporal SUVR (CTRz 2)
 # ------------------------------
 KAPPA_PAIRS = [("model", "human", "Model vs visual read"),
@@ -406,11 +283,11 @@ KAPPA_PAIRS = [("model", "human", "Model vs visual read"),
 # CU vs impaired follows Karagianni 2026 (agreement differs a lot by clinical stage, partly through
 # prevalence). Amyloid positive only matches their Abeta+-restricted analysis and is the population a
 # tau-PET trial screen would actually be applied to.
-KAPPA_STRATA = [("All", "#333333"), ("Cog. unimpaired", "#4C78A8"), ("Cog. impaired", "#E4572E"),
-                ("Amyloid positive", "#7B4FA0")]
-# Inter-reader kappa for the FDA/EMA flortaucipir visual read vs fully manual external reads
-# (Moscoso et al. 2025), drawn as a reference band.
-HUMAN_HUMAN_KAPPA = (0.78, 0.94)
+# Rows of the kappa table. Each split is complete (CU + impaired = everyone with a diagnosis;
+# amyloid - and + = everyone with amyloid status), so groups are only compared within a split.
+# CU vs impaired follows Karagianni 2026; amyloid positive is the population a tau-PET trial
+# screen would be applied to.
+KAPPA_STRATA = ["All", "Cog. unimpaired", "Cog. impaired", "Amyloid negative", "Amyloid positive"]
 N_BOOT = 2000
 
 
@@ -443,6 +320,7 @@ def kappa_strata(df: pd.DataFrame, votes: pd.DataFrame) -> dict:
     return {"All": votes,
             "Cog. unimpaired": votes[mask(dx == "CU")],
             "Cog. impaired": votes[mask(dx.notna() & (dx != "CU"))],
+            "Amyloid negative": votes[mask(amyloid == 0)],
             "Amyloid positive": votes[mask(amyloid == 1)]}
 
 
@@ -463,52 +341,6 @@ def compute_kappa_table(df: pd.DataFrame) -> pd.DataFrame:
                          "agree_pct": round(100 * np.mean(x == y), 1) if len(v) else np.nan,
                          "kappa": round(k, 3), "ci_low": round(lo, 3), "ci_high": round(hi, 3)})
     return pd.DataFrame(rows)
-
-
-def make_kappa_figure(kappa: pd.DataFrame, out_dir: Path, filename: str):
-    """One row per pair, one dot per group (all / cog. unimpaired / cog. impaired), whiskers =
-    bootstrap 95% CI. Shaded band = human-vs-human agreement range for the same visual read."""
-    fig, ax = plt.subplots(figsize=(9.5, 5.2))
-    ax.axvspan(*HUMAN_HUMAN_KAPPA, color="#DDDDDD", alpha=0.6, zorder=0)
-    ax.text(np.mean(HUMAN_HUMAN_KAPPA), len(KAPPA_PAIRS) - 0.45, "two human readers\n(Moscoso 2025)",
-            ha="center", va="bottom", fontsize=TICK_SIZE - 3, color="#555555")
-
-    labels = [label for _, _, label in KAPPA_PAIRS][::-1]  # first pair at the top
-    offsets = np.linspace(0.27, -0.27, len(KAPPA_STRATA))
-    for (stratum, color), off in zip(KAPPA_STRATA, offsets):
-        sub = kappa[kappa["group"] == stratum].set_index("pair").reindex(labels)
-        ys = np.arange(len(labels)) + off
-        ax.hlines(ys, sub["ci_low"], sub["ci_high"], color=color, linewidth=1.8, zorder=2)
-        n = int(sub["n"].dropna().iloc[0]) if sub["n"].notna().any() else 0
-        ax.scatter(sub["kappa"], ys, s=70, color=color, edgecolor="white", linewidth=0.8, zorder=3,
-                   label=f"{stratum} (n={n})")
-        # Value printed just right of each whisker, so it never sits on top of another dot.
-        for y_, k, hi in zip(ys, sub["kappa"], sub["ci_high"]):
-            if pd.notna(k):
-                ax.text((hi if pd.notna(hi) else k) + 0.015, y_, f"{k:.2f}", ha="left", va="center",
-                        fontsize=TICK_SIZE - 3, color=color)
-
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels, fontsize=LABEL_SIZE - 2)
-    ax.set_ylim(-0.6, len(labels) - 0.1)
-    # Extend left of 0 when a CI dips below it (small strata), so no whisker is clipped.
-    ax.set_xlim(min(-0.05, np.nanmin(kappa[["kappa", "ci_low"]].to_numpy()) - 0.05), 1.1)
-    x_left = ax.get_xlim()[0]
-    ax.set_xticks(np.round(np.arange(np.ceil(x_left * 5) / 5, 1.001, 0.2), 1) + 0.0)  # 0.2 grid, inside the axis
-    ax.set_xlim(x_left, 1.1)
-    ax.axvline(0, color="#999999", linewidth=0.8, zorder=1)
-    ax.set_xlabel("Cohen's kappa (whiskers: bootstrap 95% CI)", fontsize=LABEL_SIZE - 3)
-    ax.grid(axis="x", color="#EEEEEE", linewidth=0.8, zorder=0)
-    ax.set_axisbelow(True)
-    for spine in ("top", "right"):
-        ax.spines[spine].set_visible(False)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.17), ncol=2, frameon=False, fontsize=TICK_SIZE - 2)
-    ax.set_title(f"How often the model, the visual read and the SUVR agree\n"
-                 f"(SUVR positive = Meta-temporal ≥ {CENTAUR_FTP_CTRZ2_SUVR['MetaTemporal']:.2f})",
-                 fontsize=TITLE_SIZE - 5, pad=12)
-    fig.subplots_adjust(left=0.24, right=0.97, top=0.84, bottom=0.28)
-    save_figure(fig, out_dir / filename, dpi=300)
-    plt.close(fig)
 
 
 def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path, filename: str):
@@ -645,17 +477,14 @@ def main():
     indicators = add_indicator_columns(df, args)
     out_dir.mkdir(parents=True, exist_ok=True)
     # The dot plot is for yes/no characteristics; Meta SUVR >= CTRz 2 is a thresholded continuous
-    # variable (kept in the table), so it is shown in the regional-pattern figure instead.
+    # variable, so it is kept in the table only.
     dot_indicators = [i for i in indicators if i[0] != "_meta"]
     make_findings_figure(df, dot_indicators, out_dir, "visual_read_discordant_findings.png")
     make_continuous_figure(df, out_dir, "visual_read_discordant_continuous.png")
     make_findings_table(df, indicators, out_dir, "visual_read_discordant_findings_table.csv", args)
-    make_regional_pattern_figure(df, out_dir, "visual_read_discordant_regional_pattern.png")
-    make_meta_amyloid_figure(df, out_dir, "visual_read_discordant_meta_amyloid.png")
     if "MetaTemporal" in df.columns:
         kappa = compute_kappa_table(df)
         kappa.to_csv(out_dir / "visual_read_kappa_table.csv", index=False)
-        make_kappa_figure(kappa, out_dir, "visual_read_kappa.png")
         make_kappa_grid_figure(df, kappa, out_dir, "visual_read_kappa_grids.png")
 
     counts = df["category"].value_counts()
