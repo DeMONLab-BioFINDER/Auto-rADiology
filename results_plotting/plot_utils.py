@@ -1122,10 +1122,22 @@ def make_confusion_category_categorical_panel(
 
 
 SUBGROUP_METRICS = [
-    ("sensitivity", "Sensitivity", "of visual-read POSITIVE scans,\nthe model found"),
-    ("specificity", "Specificity", "of visual-read NEGATIVE scans,\nthe model cleared"),
-    ("auc", "AUC", "ranking quality,\nindependent of the 0.5 threshold"),
+    ("sensitivity", "Sensitivity", "Model + among visual read +"),
+    ("specificity", "Specificity", "Model − among visual read −"),
+    ("auc", "AUC", "AUC"),
 ]
+
+
+def _wrap_level(level, width: int = 12) -> str:
+    """Break a long group name at its spaces so neighbouring tick labels do not collide."""
+    words, lines, line = str(level).split(), [], ""
+    for word in words:
+        if line and len(line) + 1 + len(word) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    return "\n".join(lines + [line])
 
 
 def make_subgroup_performance_panel(
@@ -1136,113 +1148,62 @@ def make_subgroup_performance_panel(
     metrics=None,
     title: str | None = None,
 ) -> bool:
-    """Forest plot of the visual-read model's performance in every demographic/clinical subgroup.
-
-    One row per subgroup level, grouped into bands by variable (site, cognitive status, amyloid
-    status, ...), and one column per metric. Reading rules built into the figure:
-
-    - Sensitivity and specificity get their own columns and are never collapsed into accuracy or
-      PPV, both of which move with the subgroup's positivity rate - a site can look worse on PPV
-      purely through case mix.
-    - AUC sits beside them because it is threshold-free: a subgroup where AUC matches the pooled
-      value but sensitivity does not has a THRESHOLD problem, not a harder-scans problem, and that
-      distinction changes what you would do about it. The figure is laid out so that comparison is
-      a left-to-right glance along one row.
-    - Whiskers are Wilson 95% intervals (percentile bootstrap for AUC) and k/n is printed per row,
-      because subgroup sizes here run from ~20 to ~170 scans and a wide interval is the honest
-      reading of a small cell. The intervals are what the figure says about uncertainty; the
-      hypothesis tests live in visual_read_subgroup_tests.csv and are reported in prose, not
-      marked on the figure.
-    - Levels with one class only (no read-positive scans, say) show "n.d." at their slot rather
-      than a dot at zero.
-
-    Passing a single variable's rows switches to the slide-shaped layout: the variable name moves
-    into the figure title and the left-margin band headers disappear. One variable per figure is
-    how this is meant to be used; passing several still works and stacks them into labelled bands.
+    """One variable's groups on the x-axis, the measure on the y-axis: dot = estimate, whisker =
+    95% CI (Wilson; bootstrap for AUC). One panel per measure in `metrics`. No all-scans reference
+    line: the test compares the groups with each other, so the overall value belongs in the text.
+    Each tick label carries k/n for that measure, because the denominator differs between
+    sensitivity (visual-read positives) and specificity (visual-read negatives).
 
     `stats_df` needs columns: variable, level, n, plus <metric>, <metric>_lo, <metric>_hi,
-    <metric>_k, <metric>_n per metric. `pooled` maps metric -> the whole-cohort value, drawn as
-    the reference line.
+    <metric>_k, <metric>_n per metric. `pooled` (metric -> all-scans value) is only used to set
+    the lower end of the y-axis.
     """
-    metrics = metrics or SUBGROUP_METRICS
-    metrics = [m for m in metrics if m[0] in stats_df.columns]
+    metrics = [m for m in (metrics or SUBGROUP_METRICS) if m[0] in stats_df.columns]
     if stats_df.empty or not metrics:
         print(f"[skip] {filename}: no subgroup statistics to plot.")
         return False
 
-    # Row layout: one slot per level, one blank slot between variables for the band header.
-    variables = list(dict.fromkeys(stats_df["variable"]))
-    single = len(variables) == 1
-    rows, bands = [], {}
-    for var in variables:
-        sub = stats_df[stats_df["variable"] == var]
-        start = len(rows)
-        rows.extend((var, lvl) for lvl in sub["level"])
-        bands[var] = (start, len(rows) - 1)
-        rows.append((None, None))  # spacer
-    rows = rows[:-1]
-    y_of = {(v, l): len(rows) - 1 - i for i, (v, l) in enumerate(rows) if v is not None}
+    sub = stats_df.reset_index(drop=True)
+    lows = pd.concat([pd.to_numeric(sub[f"{m}_lo"], errors="coerce") for m, _, _ in metrics])
+    refs = [pooled[m] for m, _, _ in metrics if m in pooled]
+    y_min = np.nanmin(list(lows.dropna()) + refs) if len(lows.dropna()) or refs else 0.0
+    y_min = max(0.0, np.floor((y_min - 0.05) * 10) / 10)
 
-    # Single-variable figures need a height floor: a 2-level variable is only 2 rows, and the
-    # title block plus the pooled-value caption need ~3.1in regardless of how few rows there are.
-    fig_h = (1.9 + 0.36 * len(rows)) if not single else max(4.0, 1.6 + 0.52 * len(rows))
-    fig, axes = plt.subplots(1, len(metrics), figsize=(4.9 * len(metrics), fig_h), sharey=True)
-    axes = np.atleast_1d(axes)
-
-    for ax, (metric, metric_label, metric_gloss) in zip(axes, metrics):
-        for _, row in stats_df.iterrows():
-            y = y_of[(row["variable"], row["level"])]
-            value = row.get(metric, np.nan)
+    fig, axes = plt.subplots(1, len(metrics), squeeze=False, sharey=True,
+                             figsize=(max(3.6, 1.2 * len(sub) + 1.4) * len(metrics), 4.6))
+    xs = np.arange(len(sub))
+    for ax, (metric, label, ylabel) in zip(axes[0], metrics):
+        for x, row in sub.iterrows():
+            value, lo, hi = row[metric], row[f"{metric}_lo"], row[f"{metric}_hi"]
             if not np.isfinite(value):
-                ax.text(0.5, y, "n.d.", ha="center", va="center", fontsize=TICK_SIZE - 2,
-                        color="#999999", style="italic")
                 continue
-            lo, hi = row.get(f"{metric}_lo", np.nan), row.get(f"{metric}_hi", np.nan)
             if np.isfinite(lo) and np.isfinite(hi):
-                ax.hlines(y, lo, hi, color="#999999", linewidth=2.0, zorder=2)
-            ax.scatter(value, y, s=95, color=CUSTOM_PALETTE[0], edgecolor="white",
-                       linewidth=0.8, zorder=3)
+                ax.vlines(x, lo, hi, color="#999999", linewidth=2.2, zorder=2)
+            ax.scatter(x, value, s=110, color=CUSTOM_PALETTE[0], edgecolor="white", linewidth=0.8, zorder=3)
+
+        def _count(row):
             k, n = row.get(f"{metric}_k", np.nan), row.get(f"{metric}_n", np.nan)
-            text = f"{int(k)}/{int(n)}" if np.isfinite(k) and np.isfinite(n) else f"n={int(row['n'])}"
-            ax.text(-0.02, y, text, ha="right", va="center", fontsize=TICK_SIZE - 3, color="#777777")
+            return f"{int(k)}/{int(n)}" if np.isfinite(k) and np.isfinite(n) else f"n={int(row['n'])}"
 
-        if metric in pooled and np.isfinite(pooled[metric]):
-            ax.axvline(pooled[metric], color="black", linestyle="--", linewidth=1.3, zorder=1)
-            ax.text(pooled[metric], -1.35, f"whole cohort {pooled[metric]:.0%}", ha="center",
-                    va="center", fontsize=TICK_SIZE - 2, color="black")
-
-        ax.set_xlim(-0.22, 1.08)
-        ax.set_ylim(-1.9, len(rows) - 0.3)
-        ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
-        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}" if v >= 0 else ""))
-        ax.set_title(f"{metric_label}\n{metric_gloss}", fontsize=TITLE_SIZE - 5, pad=10)
-        ax.grid(axis="x", color="#DDDDDD", linewidth=0.8, zorder=0)
+        ax.set_xticks(xs)
+        ax.set_xticklabels([f"{_wrap_level(r['level'])}\n({_count(r)})" for _, r in sub.iterrows()],
+                           fontsize=TICK_SIZE - 1)
+        ax.set_xlim(-0.6, len(sub) - 0.4)
+        ax.set_ylim(y_min, 1.02)
+        # Round steps, so a whole-percent label never sits on a 97.5% tick.
+        ax.yaxis.set_major_locator(plt.MultipleLocator(0.1 if 1 - y_min > 0.35 else 0.05))
+        if metric != "auc":
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+        ax.set_title(label, fontsize=TITLE_SIZE - 4, pad=8)
+        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 3)
+        ax.tick_params(axis="y", labelleft=True)
+        ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
         ax.set_axisbelow(True)
-        for spine in ("top", "right", "left"):
+        for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-        # The axis runs 0-100%; the negative x-space exists only to hold the k/n labels, so the
-        # spine must not extend into it and imply a coordinate there.
-        ax.spines["bottom"].set_bounds(0, 1)
-        ax.tick_params(axis="y", length=0)
 
-    # Shared row labels: level names on the axis, variable names as bold band headers to their left.
-    axes[0].set_yticks([y_of[(v, l)] for v, l in rows if v is not None])
-    axes[0].set_yticklabels([str(l) for v, l in rows if v is not None], fontsize=LABEL_SIZE - 3)
-    if not single:
-        for var in variables:
-            lo_i, _ = bands[var]
-            axes[0].text(-0.62, len(rows) - 1 - lo_i + 0.55, var, ha="left", va="center",
-                         fontsize=LABEL_SIZE - 3, fontweight="bold",
-                         transform=axes[0].get_yaxis_transform(which="grid"))
-
-    default_title = (f"Visual-read model performance by {variables[0].lower()}" if single else
-                     "Visual-read model performance by subgroup")
-    fig.suptitle((title or default_title) + "\nwhiskers: 95% CI"
-                 + ("" if single else "  ·  n.d. = metric undefined (one class only)"),
-                 fontsize=TITLE_SIZE - 4, y=1 - 0.22 / fig_h, va="top")
-    fig.subplots_adjust(left=0.17 if single else 0.23, right=0.98,
-                        top=1 - (1.55 if single else 1.65) / fig_h,
-                        bottom=(1.1 if single else 0.9) / fig_h, wspace=0.12)
+    fig.suptitle(title or str(sub["variable"].iloc[0]), fontsize=TITLE_SIZE - 2)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
     return True
@@ -1415,7 +1376,7 @@ def make_value_by_group_figure(
         ax.set_axisbelow(True)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-    _finish_subgroup_grid(fig, axes, len(panels), ylabel, f"{title}\nblack bar = median")
+    _finish_subgroup_grid(fig, axes, len(panels), ylabel, title)  # black bar = median (say so in the caption)
     save_figure(fig, out_path, dpi=300)
     plt.close(fig)
     return True
@@ -1446,7 +1407,7 @@ def make_value_vs_continuous_figure(
         ax.set_axisbelow(True)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-    _finish_subgroup_grid(fig, axes, len(panels), ylabel, f"{title}\nline = straight-line fit")
+    _finish_subgroup_grid(fig, axes, len(panels), ylabel, title)  # line = straight-line fit (say so in the caption)
     save_figure(fig, out_path, dpi=300)
     plt.close(fig)
     return True

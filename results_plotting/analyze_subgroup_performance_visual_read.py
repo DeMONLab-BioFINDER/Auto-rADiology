@@ -222,7 +222,7 @@ def make_cdrsb_figure(df: pd.DataFrame, metrics: list[str], dx_levels: list, min
                 confusion_display_label("False Negative" if read else "False Positive", multiline=True):
                     cdrsb[in_dx & (sub["_correct"] == 0)].dropna().to_numpy(),
             }))
-    make_value_by_group_figure(panels, "CDR-SB", "CDR-SB of scans the model agreed vs disagreed with, by diagnosis",
+    make_value_by_group_figure(panels, "CDR-SB", "CDR-SB, by diagnosis",
                                out_dir / "visual_read_subgroup_cdrsb.png")
 
 
@@ -244,13 +244,13 @@ def make_age_figure(df: pd.DataFrame, metrics: list[str], out_dir: Path):
         read = METRIC_READ[metric]
         sub = df[df["y"] == read]
         age = pd.to_numeric(sub["age"], errors="coerce")
-        panels.append((f"Visual read {'+' if read else '−'} scans ({metric})", {
+        panels.append((f"Visual read {'+' if read else '−'}", {
             confusion_display_label("True Positive" if read else "True Negative", multiline=True):
                 age[sub["_correct"] == 1].dropna().to_numpy(),
             confusion_display_label("False Negative" if read else "False Positive", multiline=True):
                 age[sub["_correct"] == 0].dropna().to_numpy(),
         }))
-    make_value_by_group_figure(panels, "Age (years)", "Age of scans the model agreed vs disagreed with",
+    make_value_by_group_figure(panels, "Age (years)", "Age",
                                out_dir / "visual_read_subgroup_age.png")
 
 

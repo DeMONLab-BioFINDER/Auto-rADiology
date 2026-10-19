@@ -226,13 +226,13 @@ def main():
                           for level in dx_levels
                           if ((df["_g_dx"] == level) & cdrsb.notna()).sum() >= args.min_level_n]
                 make_value_vs_continuous_figure(
-                    panels, "CDR-SB", ADJ_LABEL, f"{pretty_region_name(t)} SUVR prediction error by CDR-SB, per diagnosis",
+                    panels, "CDR-SB", ADJ_LABEL, f"{pretty_region_name(t)}: CDR-SB, by diagnosis",
                     out_dir / f"suvr_subgroup_cdrsb_{t}.png")
             continue
         if name == "Age":
             make_value_vs_continuous_figure(
                 [(pretty_region_name(t), df["age"], df[f"_adj_{t}"]) for t in regions],
-                "Age (years)", ADJ_LABEL, "SUVR prediction error by age",
+                "Age (years)", ADJ_LABEL, "Age",
                 out_dir / "suvr_subgroup_age.png")
             continue
         col, _, levels = next(s for s in subgroups if s[1] == name)
@@ -241,7 +241,7 @@ def main():
             groups = {level: df.loc[df[col] == level, f"_adj_{t}"].dropna().to_numpy() for level in levels}
             panels.append((pretty_region_name(t),
                            {level: v for level, v in groups.items() if len(v) >= args.min_level_n}))
-        make_value_by_group_figure(panels, ADJ_LABEL, f"SUVR prediction error by {name.lower()}",
+        make_value_by_group_figure(panels, ADJ_LABEL, name,
                                    out_dir / f"suvr_subgroup_{col.removeprefix('_g_')}.png")
 
     left_out = tests_df[tests_df.get("levels_left_out", pd.Series(dtype=str)).fillna("") != ""]
