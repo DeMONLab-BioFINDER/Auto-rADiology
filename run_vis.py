@@ -9,7 +9,7 @@ from src.params import parse_arguments
 from src.utils import get_device, set_seed
 from src.model_factory import build_model_from_args, classifier_out_dim
 from src.data import get_train_val_loaders
-from src.vis import run_visualization
+from src.vis import run_visualization, benchmark_occlusion
 
 import torch.multiprocessing as mp
 os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
@@ -42,7 +42,19 @@ def main(args):
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
     model.load_state_dict(state_dict, strict=False)
 
-    run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name, vis_norm=None)
+    if args.vis_benchmark:
+        x, _, _, extra, pid = next(iter(dl_va))
+        print(f"[benchmark] subject {pid[0]}")
+        benchmark_occlusion(model, x[:1].to(args.device), extra[:1].to(args.device) if extra is not None else None,
+                            args.device, mask_size=args.vis_mask_size, overlap=args.vis_overlap, n_batch=args.vis_n_batch)
+        return
+
+    vis_kwargs = {}
+    if args.visualization_name == "occlusion":
+        vis_kwargs = dict(mask_size=args.vis_mask_size, overlap=args.vis_overlap, n_batch=args.vis_n_batch,
+                          mode=args.vis_occlusion_mode, brain_bbox=args.vis_brain_bbox)
+    run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name,
+                      vis_kwargs=vis_kwargs, vis_norm=None)
 
     print('DONE!')
 

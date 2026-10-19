@@ -9,15 +9,19 @@ import pandas as pd
 import seaborn as sns
 
 from plot_utils import (
+    CENTAUR_FTP_CTRZ2_SUVR,
     CUSTOM_PALETTE,
     find_demo_csv,
     make_agreement_by_centiloid_panel,
     make_agreement_by_value_panel,
     make_classification_breakdown_panel,
     make_classification_breakdown_violin_panel,
+    make_confusion_category_categorical_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
+    make_probability_vs_suvr_scatter,
     make_roc_confusion_panel,
+    make_value_by_outcome_violin_panel,
     resolve_existing_path,
     resolve_path,
 )
@@ -199,9 +203,12 @@ def main():
             filename="visual_read_discordant_by_cl.png",
         )
         # Centiloid's cutoff (24.4) is literature-validated (Moscoso et al. 2025's own
-        # amyloid-positivity threshold); the SUVR cutoff below is NOT - no validated
-        # per-scan tau SUVR cutoff exists, 1.4 is a provisional placeholder pending
-        # guidance from the lab (see the pending Slack question).
+        # amyloid-positivity threshold). The tau SUVR cutoff per region is the SUVR
+        # equivalent of the CenTauR positivity convention, CenTauRz = 2 (Villemagne et al.
+        # 2023, flortaucipir equations, standard CenTauR pipeline SUVRs; see
+        # CENTAUR_FTP_CTRZ2_SUVR in plot_utils.py). It is a research convention, not a
+        # validated individual-scan clinical cutoff, and it only moderately agrees with the
+        # visual read (Karagianni et al. 2026), so disagreement with it is not itself an error.
         make_agreement_by_centiloid_panel(
             df_preds, df_demo, out_dir, cutoff=24.4,
             filename="visual_read_agreement_vs_cutoff_by_cl.png",
@@ -210,8 +217,25 @@ def main():
             make_agreement_by_value_panel(
                 df_preds, df_demo, out_dir,
                 value_col=value_col, value_label=value_label,
-                cutoff=1.4,
+                cutoff=CENTAUR_FTP_CTRZ2_SUVR[value_col],
+                cutoff_note=", CTRz = 2",
             )
+        # Model probability vs regional SUVR with the CenTauRz = 2 reference line: Meta and
+        # Mesial temporal (tests whether Model +, Visual read - cases are isolated mesial
+        # elevation, which the visual read deliberately ignores).
+        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
+            if value_col in ("MetaTemporal", "MesialTemporal"):
+                make_probability_vs_suvr_scatter(
+                    df_preds, df_demo, out_dir, decision_threshold,
+                    value_col=value_col, value_label=value_label,
+                    suvr_cutoff=CENTAUR_FTP_CTRZ2_SUVR[value_col],
+                )
+        # Clinical context by outcome: Centiloid / CDR-SB / age violins and amyloid-status
+        # proportions for all 4 model-vs-visual-read outcomes.
+        make_value_by_outcome_violin_panel(df_preds, df_demo, out_dir)
+        make_confusion_category_categorical_panel(
+            df_preds, df_demo, out_dir, cat_col="amyloid_status", cat_label="Amyloid status",
+        )
     print(f"[done] figures saved to {out_dir}")
 
 

@@ -62,6 +62,7 @@ import pandas as pd
 
 from plot_utils import (
     CONFUSION_CATEGORY_LABELS,
+    confusion_display_label,
     find_demo_csv,
     resolve_existing_path,
     resolve_path,
@@ -85,7 +86,7 @@ def parse_args():
     )
     parser.add_argument(
         "--top_n", type=int, default=10,
-        help="How many of the most-confidently-wrong FP and FN cases to print to the console.",
+        help="How many of the most-confidently-discordant cases to print to the console, per direction (Model +, Visual read - and Model -, Visual read +).",
     )
     parser.add_argument(
         "--quantitative_col", default="Universal",
@@ -222,7 +223,11 @@ def main():
 
     n_fp = (df_discordant["category"] == "False Positive").sum()
     n_fn = (df_discordant["category"] == "False Negative").sum()
-    print(f"[done] {len(df_discordant)} discordant cases ({n_fp} FP, {n_fn} FN) at threshold={threshold:.3f}")
+    print(
+        f"[done] {len(df_discordant)} discordant cases "
+        f"({n_fp} x [{confusion_display_label('False Positive')}], "
+        f"{n_fn} x [{confusion_display_label('False Negative')}]) at threshold={threshold:.3f}"
+    )
     print(f"       saved to {out_csv}")
 
     display_cols = ["ID", "prob", "dist_from_threshold"] + demo_cols
@@ -264,7 +269,7 @@ def main():
             subset = df_discordant[df_discordant["category"] == category].head(args.top_n)
             if subset.empty:
                 continue
-            print(f"\nTop {len(subset)} most-confidently-wrong {category} cases (for --vis_img_list):")
+            print(f"\nTop {len(subset)} most-confidently-discordant [{confusion_display_label(category)}] cases (for --vis_img_list):")
             print(subset[display_cols].to_string(index=False))
             print(f"--vis_img_list {','.join(str(i) for i in subset['ID'])}")
 
@@ -282,7 +287,7 @@ def main():
             subset = df_correct[df_correct["category"] == category].head(args.baseline_n)
             if subset.empty:
                 continue
-            print(f"\nBaseline: top {len(subset)} most-confidently-correct {category} cases:")
+            print(f"\nBaseline: top {len(subset)} most-confidently-agreeing [{confusion_display_label(category)}] cases:")
             print(subset[display_cols].to_string(index=False))
             baseline_ids += [str(i) for i in subset["ID"]]
 

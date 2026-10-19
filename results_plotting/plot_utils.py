@@ -1065,6 +1065,409 @@ def make_confusion_category_categorical_panel(
     plt.close(fig)
 
 
+def make_discordant_percentile_panel(
+    df_cohort: pd.DataFrame,
+    df_discordant: pd.DataFrame,
+    out_dir: Path,
+    suvr_cols: list[str],
+    filename: str = "visual_read_discordant_suvr_percentiles.png",
+    id_col_cohort: str = "ID_ind",
+    id_col_discordant: str = "ID",
+):
+    """One small-multiple per SUVR region, showing where each discordant case (False
+    Positive / False Negative) sits as a COHORT-RELATIVE PERCENTILE (0-100) on that region -
+    `df_cohort` must already carry a f"{col}_percentile" column per region, ranked across the
+    full run cohort (same convention as list_discordant_cases.py's quant_percentile /
+    mtl_percentile, just extended to every region instead of only Universal/MesialTemporal).
+    Deliberately no SUVR cutoff line is drawn - see list_discordant_cases.py's docstring for
+    why no validated per-scan cutoff exists for these regions; this is purely relative
+    standing within the sample, not a thresholded call."""
+    percentile_cols = [f"{c}_percentile" for c in suvr_cols if f"{c}_percentile" in df_cohort.columns]
+    if not percentile_cols:
+        return
+
+    df = pd.merge(
+        df_discordant[[id_col_discordant, "category"]],
+        df_cohort[[id_col_cohort] + percentile_cols],
+        left_on=id_col_discordant, right_on=id_col_cohort, how="left",
+    )
+    df = df[df["category"].isin(DISCORDANT_CATEGORIES)]
+    if df.empty:
+        return
+
+    order = [c for c in ["False Positive", "False Negative"] if (df["category"] == c).sum() > 0]
+    regions = [c for c in suvr_cols if f"{c}_percentile" in df.columns]
+
+    n_cols = min(3, len(regions))
+    n_rows = math.ceil(len(regions) / n_cols)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.4 * n_cols, 4.6 * n_rows), squeeze=False)
+
+    rng = np.random.default_rng(seed=0)
+    for idx, region in enumerate(regions):
+        r, c = idx // n_cols, idx % n_cols
+        ax = axes[r][c]
+        pct_col = f"{region}_percentile"
+
+        for cat in order:
+            sub = df[df["category"] == cat]
+            vals = pd.to_numeric(sub[pct_col], errors="coerce")
+            valid = vals.notna()
+            if not valid.any():
+                continue
+            x_center = order.index(cat)
+            xs = x_center + rng.normal(0, 0.04, size=int(valid.sum()))
+            ys = vals[valid].to_numpy()
+            ax.scatter(xs, ys, s=70, color=CONFUSION_CATEGORY_PALETTE[cat],
+                       edgecolor="white", linewidth=0.6, zorder=3)
+            for xi, yi, case_id in zip(xs, ys, sub.loc[valid, id_col_discordant]):
+                ax.annotate(str(case_id), (xi, yi), textcoords="offset points",
+                            xytext=(7, 0), fontsize=TICK_SIZE - 3, va="center")
+
+        ax.set_xlim(-0.6, len(order) - 0.4)
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels([confusion_display_label(cat, multiline=True) for cat in order], fontsize=TICK_SIZE - 1)
+        ax.set_ylim(-3, 103)
+        style_axes(ax, pretty_region_name(region), "", "Cohort percentile" if c == 0 else "")
+
+    hide_unused_axes(axes, len(regions), n_rows * n_cols, n_cols)
+    add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(regions))], xytext=(-10, 6), fontsize=13)
+
+    counts = df.drop_duplicates(subset=[id_col_discordant])["category"].value_counts()
+    legend_handles = [
+        Line2D([0], [0], marker="o", linestyle="None", markersize=8,
+               color=CONFUSION_CATEGORY_PALETTE[cat],
+               label=f"{confusion_display_label(cat)} (n={int(counts.get(cat, 0))})")
+        for cat in order
+    ]
+    fig.legend(handles=legend_handles, loc="upper center", bbox_to_anchor=(0.5, 0.995),
+               ncol=max(len(order), 1), fontsize=LEGEND_SIZE, frameon=True, fancybox=True,
+               framealpha=0.9, edgecolor="0.75")
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.88))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+def _format_continuous_cell(series: pd.Series) -> str:
+    vals = pd.to_numeric(series, errors="coerce").dropna()
+    if len(vals) == 0:
+        return "-"
+    if len(vals) == 1:
+        return f"{vals.iloc[0]:.1f} (n=1)"
+    return f"{vals.mean():.1f} ± {vals.std():.1f}"
+
+
+def _categorical_value_order(values: pd.Series, col: str) -> list[str]:
+    """Numeric ascending order when every present value parses as a number (e.g. CDR's
+    0/0.5/1/2/3), otherwise falls back to get_display_order's known preferred orders /
+    frequency order - avoids an arbitrary frequency-sorted CDR scale."""
+    present = values.astype("string").dropna().unique().tolist()
+    try:
+        return sorted(present, key=float)
+    except (TypeError, ValueError):
+        return get_display_order(values, col)
+
+
+def _format_categorical_rows(col: str, label: str, group_series: dict) -> list[tuple]:
+    non_null = [s for s in group_series.values() if s is not None and len(s) > 0]
+    if not non_null:
+        return []
+    all_values = pd.concat([s.astype("string") for s in non_null])
+    order = _categorical_value_order(all_values, col)
+
+    rows = [(label,) + ("",) * len(group_series)]
+    for val in order:
+        row = [f"    {val}"]
+        for s in group_series.values():
+            if s is None or len(s) == 0:
+                row.append("-")
+                continue
+            s_str = s.astype("string")
+            n_total = int(s_str.notna().sum())
+            n_val = int((s_str == val).sum())
+            pct = (n_val / n_total * 100) if n_total > 0 else 0.0
+            row.append(f"{n_val} ({pct:.0f}%)")
+        rows.append(tuple(row))
+    return rows
+
+
+def make_discordant_demographics_table(
+    df_cohort: pd.DataFrame,
+    df_discordant: pd.DataFrame,
+    out_dir: Path,
+    continuous_cols: list[tuple],
+    categorical_cols: list[tuple],
+    filename: str = "visual_read_discordant_demographics_table.png",
+):
+    """Descriptive-only characteristics table (no p-values - these groups can be single
+    digits) comparing each discordant group (False Positive / False Negative) against the
+    full run cohort as a reference column. Categorical rows show raw counts AND
+    within-group percentage; continuous rows show mean +/- SD (or the single value when a
+    group has only one case). Column headers use the model-vs-visual-read phrasing
+    (confusion_display_label) rather than the False Positive/Negative statistical
+    vocabulary - the clinical visual read isn't itself ground truth, so that labeling bakes
+    in an assumption this whole analysis is questioning; "False Positive"/"False Negative"
+    stay as the internal `category` values (set by list_discordant_cases.py) used here only
+    to select each group, not shown to the reader."""
+    groups = {
+        "False Positive": df_discordant[df_discordant["category"] == "False Positive"],
+        "False Negative": df_discordant[df_discordant["category"] == "False Negative"],
+        "Overall cohort": df_cohort,
+    }
+    display_names = {
+        "False Positive": confusion_display_label("False Positive"),
+        "False Negative": confusion_display_label("False Negative"),
+        "Overall cohort": "Overall cohort",
+    }
+    col_labels = ["Characteristic"] + [f"{display_names[name]} (n={len(df)})" for name, df in groups.items()]
+
+    rows = []
+    for col, label in continuous_cols:
+        if not any(col in df.columns for df in groups.values()):
+            continue
+        row = [label] + [
+            _format_continuous_cell(df[col]) if col in df.columns else "-"
+            for df in groups.values()
+        ]
+        rows.append(tuple(row))
+
+    for col, label in categorical_cols:
+        if not any(col in df.columns for df in groups.values()):
+            continue
+        group_series = {name: (df[col] if col in df.columns else None) for name, df in groups.items()}
+        rows.extend(_format_categorical_rows(col, label, group_series))
+
+    if not rows:
+        return
+
+    fig_h = 0.40 * (len(rows) + 1) + 0.7
+    fig, ax = plt.subplots(figsize=(10.5, fig_h))
+    ax.axis("off")
+    ax.set_title("Discordant case characteristics vs. overall run cohort", fontsize=TITLE_SIZE, pad=16)
+
+    table = ax.table(
+        cellText=[list(r) for r in rows],
+        colLabels=col_labels,
+        cellLoc="center",
+        loc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(TICK_SIZE)
+    table.scale(1, 1.55)
+    table.auto_set_column_width(list(range(len(col_labels))))
+
+    for (r, c), cell in table.get_celld().items():
+        cell.set_edgecolor("0.85")
+        if r == 0:
+            cell.set_facecolor(CUSTOM_PALETTE[0])
+            cell.set_text_props(color="white", fontweight="bold")
+        else:
+            cell.set_facecolor("#F4F6F8" if r % 2 == 0 else "white")
+        if c == 0:
+            cell.get_text().set_ha("left")
+            cell.PAD = 0.03
+
+    finalize_figure(fig, rect=(0.02, 0.0, 0.98, 0.96))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+# Flortaucipir (FTP) CenTauRz conversion, CTRz = slope * SUVR - intercept, per region, from
+# Villemagne et al. 2023 (Alzheimer's & Dementia: DADM 15:e12454), Table 1 (CL-SPM
+# pipeline). Only valid for SUVRs from the standard CenTauR pipeline with the CenTauR
+# inferior-cerebellar reference region (confirmed for this dataset). CTRz > 2 is the
+# CenTauR positivity convention, so the SUVR equivalent of CTRz = 2 is (2 + intercept) / slope.
+CENTAUR_FTP_EQUATIONS = {
+    "Universal": (13.63, 15.85),
+    "MesialTemporal": (10.42, 12.11),
+    "MetaTemporal": (12.95, 15.37),
+    "TemporoParietal": (13.75, 15.92),
+    "Frontal": (11.61, 13.01),
+}
+CENTAUR_FTP_CTRZ2_SUVR = {
+    region: (2.0 + intercept) / slope for region, (slope, intercept) in CENTAUR_FTP_EQUATIONS.items()
+}
+
+OUTCOME_VIOLIN_COLUMNS = [
+    ("CL", "Centiloid"),
+    ("CDR_SB", "CDR-SB"),
+    ("age", "Age (years)"),
+]
+
+
+def make_value_by_outcome_violin_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    columns: list[tuple] | None = None,
+    filename: str = "visual_read_clinical_values_by_outcome.png",
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """One violin panel per continuous clinical variable (Centiloid, CDR-SB, age), one violin
+    per model/visual-read outcome (all 4 combinations, same order, colours and "Model X,
+    Visual read Y" wording as make_classification_breakdown_violin_panel). Answers whether
+    discordant cases look more like the agreeing positives or agreeing negatives clinically
+    (e.g. Aβ burden for Model +, Visual read - cases: early real tau vs off-target)."""
+    columns = [(c, lab) for c, lab in (columns or OUTCOME_VIOLIN_COLUMNS) if c in df_demo.columns]
+    if not columns:
+        print("[WARNING] None of the clinical value columns found in demographics table; skipping violin panel.")
+        return
+
+    df = pd.merge(
+        df_preds[[id_col_preds, "y", "pred"]],
+        df_demo[[id_col_demo] + [c for c, _ in columns]],
+        left_on=id_col_preds, right_on=id_col_demo, how="left",
+    )
+    df["y"] = pd.to_numeric(df["y"], errors="coerce")
+    df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
+    df = df.dropna(subset=["y", "pred"])
+    if df.empty:
+        return
+    df["_category"] = [CONFUSION_CATEGORY_LABELS[(t, p)] for t, p in zip(df["y"].astype(int), df["pred"].astype(int))]
+
+    order = [c for c in ["True Positive", "True Negative", "False Negative", "False Positive"]
+             if (df["_category"] == c).sum() >= 1]
+    if not order:
+        return
+    display_labels = {c: confusion_display_label(c, multiline=True) for c in order}
+
+    fig, axes = plt.subplots(1, len(columns), figsize=(6.4 * len(columns), 6), squeeze=False)
+    for ax, (col, label) in zip(axes[0], columns):
+        plot_df = df.assign(_value=pd.to_numeric(df[col], errors="coerce")).dropna(subset=["_value"])
+        plot_df = plot_df[plot_df["_category"].isin(order)]
+        panel_order = [c for c in order if (plot_df["_category"] == c).sum() >= 1]
+        if not panel_order:
+            ax.set_visible(False)
+            continue
+        sns.violinplot(
+            data=plot_df, x="_category", y="_value", order=panel_order, ax=ax,
+            hue="_category", hue_order=panel_order, palette=CONFUSION_CATEGORY_PALETTE, legend=False,
+            inner="box", cut=0, saturation=1.0,
+        )
+        sns.stripplot(
+            data=plot_df, x="_category", y="_value", order=panel_order, ax=ax,
+            color="black", size=3.5, alpha=0.45, jitter=0.15, linewidth=0,
+        )
+        counts = plot_df["_category"].value_counts()
+        ax.set_xticks(range(len(panel_order)))
+        ax.set_xticklabels([f"{display_labels[c]}\n(n={int(counts.get(c, 0))})" for c in panel_order], fontsize=TICK_SIZE - 2)
+        style_axes(ax, label, "", label)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+COMPOSITION_COLUMNS = [
+    ("dx", "Diagnosis"),
+    ("site", "Site"),
+    ("gender", "Sex"),
+    ("age_group", "Age group"),
+    ("apoe", "APOE"),
+    ("amyloid_status", "Amyloid status"),
+    ("CDR", "CDR"),
+]
+COHORT_BAR_COLOR = "#B0B0B0"
+
+
+def _clean_category_labels(values: pd.Series) -> pd.Series:
+    """Integer-valued floats ('1.0') shown as ints ('1'); 0.5-style steps stay as they are."""
+    def _clean(v):
+        if pd.isna(v):
+            return pd.NA
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return str(v)
+        return str(int(f)) if f.is_integer() else str(f)
+    return values.map(_clean).astype("string")
+
+
+def make_discordant_composition_panel(
+    df_cohort: pd.DataFrame,
+    df_discordant: pd.DataFrame,
+    out_dir: Path,
+    columns: list[tuple] | None = None,
+    filename: str = "visual_read_discordant_composition.png",
+    n_cols: int = 3,
+):
+    """Composition of each discordant group (Model +, Visual read - and Model -, Visual
+    read +) next to the full run cohort, one small panel per demographic/clinical variable
+    (same variables as the discordant-characteristics table). Bars are the % of each group
+    that falls in each category, with the raw count printed above each bar - so
+    over/under-representation (e.g. a site that is 20% of the cohort but 50% of one
+    discordant group) is visible at a glance, and small groups are visibly small. Purely
+    descriptive: no tests, since the discordant groups are small."""
+    columns = columns or COMPOSITION_COLUMNS
+    group_order = [c for c in ["False Positive", "False Negative"]
+                   if (df_discordant["category"] == c).sum() > 0]
+    if not group_order:
+        return
+
+    groups = {}  # display label -> (dataframe, colour)
+    for cat in group_order:
+        sub = df_discordant[df_discordant["category"] == cat]
+        groups[f"{confusion_display_label(cat)} (n={len(sub)})"] = (sub, CONFUSION_CATEGORY_PALETTE[cat])
+    groups[f"Overall cohort (n={len(df_cohort)})"] = (df_cohort, COHORT_BAR_COLOR)
+
+    def _series(df: pd.DataFrame, col: str):
+        if col == "age_group":
+            if "age" not in df.columns:
+                return None
+            return bin_age_group(df["age"]).astype("string")
+        if col not in df.columns:
+            return None
+        return _clean_category_labels(df[col])
+
+    usable = [(c, lab) for c, lab in columns
+              if all(_series(df, c) is not None for df, _ in groups.values())]
+    if not usable:
+        return
+
+    n_panels = len(usable)
+    n_rows = math.ceil((n_panels + 1) / n_cols)  # +1 slot for the legend
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.6 * n_cols, 4.4 * n_rows), squeeze=False)
+
+    for idx, (col, label) in enumerate(usable):
+        ax = axes[idx // n_cols][idx % n_cols]
+        series = {name: _series(df, col) for name, (df, _) in groups.items()}
+        all_values = pd.concat(series.values()).dropna()
+        if col == "age_group":
+            order = [a for a in _AGE_BIN_LABELS if a in set(all_values)]
+        else:
+            order = _categorical_value_order(all_values, col)
+
+        n_groups = len(groups)
+        width = 0.8 / n_groups
+        ymax = 0.0
+        for g_idx, (name, (_, color)) in enumerate(groups.items()):
+            s = series[name].dropna()
+            total = len(s)
+            counts = [int((s == v).sum()) for v in order]
+            pct = [100.0 * c / total if total else 0.0 for c in counts]
+            xs = np.arange(len(order)) + (g_idx - (n_groups - 1) / 2) * width
+            ax.bar(xs, pct, width=width * 0.92, color=color)
+            for x, p, c in zip(xs, pct, counts):
+                ax.text(x, p + 1, str(c), ha="center", va="bottom", fontsize=8, color="0.25")
+            ymax = max(ymax, max(pct) if pct else 0.0)
+
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels(order)
+        ax.set_ylim(0, max(ymax * 1.18, 10))
+        style_axes(ax, label, "", "% of group", xrotation=30 if (len(order) > 4 or any(len(o) > 8 for o in order)) else 0)
+
+    legend_ax = axes[n_panels // n_cols][n_panels % n_cols]
+    legend_ax.axis("off")
+    handles = [Rectangle((0, 0), 1, 1, color=color, label=name) for name, (_, color) in groups.items()]
+    style_legend(legend_ax, handles=handles, loc="center", title="Group (counts above bars)")
+    hide_unused_axes(axes, n_panels + 1, n_rows * n_cols, n_cols)
+
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
 def make_probability_vs_suvr_scatter(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
@@ -1075,6 +1478,7 @@ def make_probability_vs_suvr_scatter(
     filename: str | None = None,
     id_col_preds: str = "ID_ind",
     id_col_demo: str = "ID",
+    suvr_cutoff: float | None = None,
 ):
     """Model probability (continuous) vs. quantitative tau SUVR (continuous), one point
     per subject, colored by confusion-matrix category (TP/TN/FP/FN against the clinical
@@ -1082,9 +1486,12 @@ def make_probability_vs_suvr_scatter(
     shows distributions), this shows the actual joint relationship between what the model
     predicts and the quantitative signal - where the model's decision boundary sits
     relative to SUVR, and whether discordant points sit near clearly-positive/negative
-    quantitative territory or in between. No SUVR cutoff is drawn (no validated per-scan
-    cutoff exists for these regions) - only the model's own decision threshold, which is
-    an actual value the model uses."""
+    quantitative territory or in between. Pass suvr_cutoff to also draw a vertical
+    reference line, e.g. the SUVR equivalent of the CenTauR positivity convention
+    (CTRz = 2, CENTAUR_FTP_CTRZ2_SUVR). That line is a research convention, not a
+    clinical per-scan cutoff, and CenTauRz positivity itself only moderately agrees with
+    the visual read (Karagianni et al. 2026), so disagreement with it is not an error by
+    itself. The horizontal line is the model's own decision threshold."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping probability-vs-SUVR scatter.")
         return
@@ -1121,6 +1528,9 @@ def make_probability_vs_suvr_scatter(
 
     ax.axhline(decision_threshold, color="black", linestyle="--", linewidth=1.6,
                label=f"Decision threshold = {decision_threshold:.3f}")
+    if suvr_cutoff is not None:
+        ax.axvline(suvr_cutoff, color="0.35", linestyle=":", linewidth=1.8,
+                   label=f"CenTauRz = 2 (SUVR {suvr_cutoff:.2f})")
 
     label = value_label or value_col
     ax.set_ylim(-0.02, 1.02)
@@ -1410,6 +1820,7 @@ def make_agreement_by_value_panel(
     value_col: str,
     value_label: str | None = None,
     cutoff: float | None = None,
+    cutoff_note: str = ", temp",
     discordant_only: bool = False,
     min_bin_n: int = 2,
     min_bin_count: int = 8,
@@ -1495,7 +1906,7 @@ def make_agreement_by_value_panel(
         ax.set_ylim(0, 105)
         _draw_cutoff_agreement_table(ax, "SUVR")
         ylabel = "Agreement (%)"
-        title = f"Agreement vs. {label_x} (cutoff = {cutoff:g}, n={n_total})"
+        title = f"Agreement vs. {label_x} (cutoff = {cutoff:.2f}{cutoff_note}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
     elif discordant_only:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n, categories=DISCORDANT_CATEGORIES)

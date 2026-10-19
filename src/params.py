@@ -102,6 +102,22 @@ def parse_arguments():
     # Visualization
     parser.add_argument("--visualization_name", type=str, default='gradcam', help="Interpretation method. e.g. 'gradcam' or 'occlusion'")
     parser.add_argument("--vis_img_list", type=str, default='0,1,2', help="visulize specific subject, ID seperate by comma")
+    parser.add_argument("--vis_mask_size", type=int, default=8,
+                        help="Occlusion: cube side length in voxels of the occluded patch (on the 128^3 model input). "
+                             "Larger = far fewer passes but coarser maps (e.g. 16).")
+    parser.add_argument("--vis_overlap", type=float, default=0.75,
+                        help="Occlusion: fractional overlap between neighbouring patches (stride = mask_size * (1 - overlap)). "
+                             "Lower = fewer passes (e.g. 0.5).")
+    parser.add_argument("--vis_n_batch", type=int, default=16, help="Occlusion: occluded volumes per forward batch.")
+    parser.add_argument("--vis_occlusion_mode", type=str, default="gaussian",
+                        help="Occlusion fill: 'gaussian' (MONAI default, soft Gaussian dimming of the patch), 'mean_img', "
+                             "'mean_patch', or a constant such as 0 to blank the patch to zero.")
+    parser.add_argument("--vis_brain_bbox", action="store_true",
+                        help="Occlusion: only occlude inside the bounding box of the (non-zero) brain, skipping empty "
+                             "background. Output outside the box is 0.")
+    parser.add_argument("--vis_benchmark", action="store_true",
+                        help="Do not run the visualization: time a few batches of forward passes on the first selected "
+                             "subject and print projected whole-volume occlusion times for several mask/overlap settings.")
 
     # Parse arguments and set up the output directory
     args, unknown = parser.parse_known_args()
