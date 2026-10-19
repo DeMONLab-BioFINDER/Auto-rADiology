@@ -33,6 +33,21 @@ Step 2 - does the uncertainty follow the biology? (needs the demographics csv, M
     visual_read_probability_vs_suvr.png   - every scan: Meta-temporal SUVR vs model probability
     visual_read_confidence_by_level.csv   - per level: SUVR, diagnosis, amyloid, site (descriptive)
 
+    Because CTRz 2 is itself an uncertain choice, the script also lets the data say where the cut-offs
+    are: the Meta-temporal SUVR at which the VISUAL READ becomes more likely positive than not, and the
+    SUVR at which the MODEL does (each a plain logistic fit of the yes/no call on SUVR, crossing 0.5,
+    with a bootstrap 95% CI, and the paired difference model - readers). A lower model cut-off is the
+    model's lean toward positive, in SUVR units. The confidence-vs-SUVR correlation is then repeated
+    with distance from the model's own cut-off, which needs no externally chosen cut-off at all.
+    visual_read_suvr_cutoffs.png          - the two fitted curves, their 0.5 crossings, and CTRz 2
+    visual_read_suvr_cutoffs.csv
+
+Step 3 - the confidently wrong scans, one by one:
+    visual_read_confidently_wrong_cases.csv - each case: probability, every regional SUVR (and which
+                                              are at or above their own CTRz 2 equivalent), Centiloid,
+                                              diagnosis, amyloid, APOE, age, sex, CDR-SB, site - plus
+                                              median rows for the confidently right scans to read them against
+
 Always:
     visual_read_confidence_groups.csv     - one row per scan: ID, visual read, probability, model call, level
     visual_read_confidence_summary.csv    - cut-offs used, level sizes, Brier score, calibration error,
@@ -59,6 +74,7 @@ from plot_utils import (
     TICK_SIZE,
     TITLE_SIZE,
     combine_dx_groups,
+    confusion_display_label,
     find_demo_csv,
     finalize_figure,
     resolve_path,
@@ -71,6 +87,8 @@ PRIMARY = {"confident": (0.1, 0.9), "uncertain": (0.3, 0.7)}
 FALLBACK = {"confident": (0.2, 0.8), "uncertain": (0.2, 0.8)}
 MIN_GROUP_N = 5
 SUVR_REGION = "MetaTemporal"
+REGIONS = ["Universal", "MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
+N_BOOT = 2000
 
 GROUP_ORDER = ["Confidently right", "Moderately confident", "Uncertain", "Confidently wrong"]
 GROUP_COLORS = {"Confidently right": CUSTOM_PALETTE[0], "Moderately confident": "#BBBBBB",
@@ -257,7 +275,124 @@ def make_probability_vs_suvr_figure(df: pd.DataFrame, cutoff: float, cutoffs: di
     plt.close(fig)
 
 
-def level_description(df: pd.DataFrame, cutoff: float) -> pd.DataFrame:
+def _logistic_crossing(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
+    """Plain (unpenalised) logistic regression y ~ x by Newton-Raphson on standardised x. Returns
+    (intercept, slope) on the original scale and the x at which the fitted probability is 0.5 (NaN
+    if the slope is not positive, i.e. no sensible crossing)."""
+    m, sd = x.mean(), x.std()
+    if sd == 0 or len(np.unique(y)) < 2:
+        return np.nan, np.nan, np.nan
+    X = np.column_stack([np.ones_like(x), (x - m) / sd])
+    b = np.zeros(2)
+    for _ in range(100):
+        prob = 1 / (1 + np.exp(-np.clip(X @ b, -30, 30)))
+        w = prob * (1 - prob)
+        step = np.linalg.solve(X.T @ (X * w[:, None]) + 1e-9 * np.eye(2), X.T @ (y - prob))
+        b += step
+        if np.abs(step).max() < 1e-8:
+            break
+    slope, intercept = b[1] / sd, b[0] - b[1] * m / sd
+    return intercept, slope, (-intercept / slope if slope > 0 else np.nan)
+
+
+def suvr_cutoffs(df: pd.DataFrame, seed: int = 0) -> dict:
+    """The Meta-temporal SUVR at which the visual read, and the model's call, become more likely
+    positive than not - with bootstrap 95% CIs and the paired difference (model - readers)."""
+    sub = df.dropna(subset=["_suvr"])
+    x = sub["_suvr"].to_numpy(float)
+    calls = {"Visual read": sub["y"].to_numpy(float), "Model": sub["pred"].to_numpy(float)}
+    fits = {k: _logistic_crossing(x, v) for k, v in calls.items()}
+    rng = np.random.default_rng(seed)
+    boot = {k: [] for k in calls}
+    for idx in rng.integers(0, len(x), size=(N_BOOT, len(x))):
+        for k, v in calls.items():
+            boot[k].append(_logistic_crossing(x[idx], v[idx]))
+    boot = {k: np.array(v) for k, v in boot.items()}
+    out = {"n": len(x), "fits": fits, "boot": boot}
+    for k in calls:
+        out[k] = (fits[k][2], *np.nanpercentile(boot[k][:, 2], [2.5, 97.5]))
+    diff = boot["Model"][:, 2] - boot["Visual read"][:, 2]
+    out["difference"] = (fits["Model"][2] - fits["Visual read"][2], *np.nanpercentile(diff, [2.5, 97.5]))
+    return out
+
+
+def make_suvr_cutoffs_figure(df: pd.DataFrame, cut: dict, ctrz2: float, out_path: Path):
+    """Two fitted curves against Meta-temporal SUVR: probability that the visual read calls a scan
+    positive, and that the model does. Where each crosses 0.5 is that judge's SUVR cut-off (dot,
+    with its 95% CI as a horizontal bar); dashed line = CTRz 2 for reference."""
+    x = df["_suvr"].dropna()
+    grid = np.linspace(x.quantile(0.01), x.quantile(0.97), 300)
+    colors = {"Visual read": CUSTOM_PALETTE[1], "Model": CUSTOM_PALETTE[0]}
+    fig, ax = plt.subplots(figsize=(7.2, 5.0))
+    ax.axvline(ctrz2, color="black", linestyle="--", linewidth=1.2, zorder=1)
+    ax.annotate(f"CTRz 2 ({ctrz2:.2f})", (ctrz2, 1.03), textcoords="offset points", xytext=(5, 0),
+                ha="left", va="bottom", fontsize=TICK_SIZE - 2)
+    ax.axhline(0.5, color="#999999", linestyle=":", linewidth=1.0, zorder=1)
+    for k, color in colors.items():
+        b0, b1, c = cut["fits"][k]
+        if not np.isfinite(c):
+            continue
+        boot = cut["boot"][k]
+        boot = boot[np.isfinite(boot[:, 1])]
+        curves = 1 / (1 + np.exp(-(boot[:, [0]] + boot[:, [1]] * grid[None, :])))
+        lo, hi = np.percentile(curves, [2.5, 97.5], axis=0)
+        ax.fill_between(grid, lo, hi, color=color, alpha=0.15, lw=0, zorder=2)
+        ax.plot(grid, 1 / (1 + np.exp(-(b0 + b1 * grid))), color=color, linewidth=2.2, zorder=3,
+                label=f"{k}: {c:.2f} [{cut[k][1]:.2f}-{cut[k][2]:.2f}]")
+        ax.hlines(0.5, cut[k][1], cut[k][2], color=color, linewidth=3, zorder=4)
+        ax.scatter([c], [0.5], s=70, color=color, edgecolor="white", linewidth=0.8, zorder=5)
+    ax.set_ylim(-0.03, 1.08)
+    ax.set_xlabel("Meta-temporal SUVR", fontsize=LABEL_SIZE - 2)
+    ax.set_ylabel("Probability of being called positive", fontsize=LABEL_SIZE - 2)
+    ax.set_title("SUVR cut-off of the visual read and the model", fontsize=TITLE_SIZE - 3, pad=22)
+    ax.legend(loc="lower right", fontsize=TICK_SIZE - 2, frameon=False, title="Cut-off [95% CI]",
+              title_fontsize=TICK_SIZE - 2)
+    ax.grid(alpha=0.25)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
+    save_figure(fig, out_path, dpi=300)
+    plt.close(fig)
+
+
+def confidently_wrong_cases(df: pd.DataFrame) -> pd.DataFrame:
+    """Step 3: one row per confidently wrong scan, plus median rows for the confidently right scans
+    of each visual read to read them against. "Regions >= CTRz 2" names every region whose SUVR is
+    at or above that region's own CTRz 2 equivalent."""
+    regions = [r for r in REGIONS if r in df.columns]
+    extra = [c for c in ["CL", "amyloid_status", "apoe", "age", "gender", "CDR_SB", "dx", "site"] if c in df.columns]
+
+    def row(r):
+        out = {"ID_ind": r["ID_ind"],
+               "case": confusion_display_label({(1, 0): "False Positive", (0, 1): "False Negative"}[(r["pred"], r["y"])]),
+               "probability": round(r["prob"], 3)}
+        for reg in regions:
+            out[f"{reg} SUVR"] = round(float(r[reg]), 2) if pd.notna(r[reg]) else np.nan
+        out["Regions >= CTRz 2"] = ", ".join(reg for reg in regions
+                                             if pd.notna(r[reg]) and r[reg] >= CENTAUR_FTP_CTRZ2_SUVR[reg]) or "none"
+        for c in extra:
+            out[c] = round(float(r[c]), 1) if c in ("CL", "age", "CDR_SB") and pd.notna(r[c]) else r[c]
+        return out
+
+    wrong = df[df["group"] == "Confidently wrong"].sort_values(["y", "prob"], ascending=[True, False])
+    rows = [row(r) for _, r in wrong.iterrows()]
+    for read in (0, 1):
+        ref = df[(df["group"] == "Confidently right") & (df["y"] == read)]
+        ref_row = {"ID_ind": "median", "case": f"Confidently right, Visual read {'+' if read else '−'} (n={len(ref)})",
+                   "probability": round(ref["prob"].median(), 3)}
+        for reg in regions:
+            ref_row[f"{reg} SUVR"] = round(pd.to_numeric(ref[reg], errors="coerce").median(), 2)
+        for c in ("CL", "age", "CDR_SB"):
+            if c in ref.columns:
+                ref_row[c] = round(pd.to_numeric(ref[c], errors="coerce").median(), 1)
+        if "amyloid_status" in ref.columns:
+            amy = pd.to_numeric(ref["amyloid_status"], errors="coerce").dropna()
+            ref_row["amyloid_status"] = f"{int(amy.sum())}/{len(amy)} positive"
+        rows.append(ref_row)
+    return pd.DataFrame(rows)
+
+
+def level_description(df: pd.DataFrame, cutoff: float, model_cutoff: float = np.nan) -> pd.DataFrame:
     """Descriptive table, one column per confidence level (all scans appear in exactly one): SUVR,
     distance from the cut-off, amyloid, diagnosis, site. Counts as k/n so missing data stays visible."""
     cols = {}
@@ -268,6 +403,8 @@ def level_description(df: pd.DataFrame, cutoff: float) -> pd.DataFrame:
         if len(suvr):
             col["Meta-temporal SUVR, median [IQR]"] = f"{suvr.median():.2f} [{suvr.quantile(.25):.2f}-{suvr.quantile(.75):.2f}]"
             col["Distance from CTRz 2, median"] = f"{(suvr - cutoff).abs().median():.2f}"
+            if np.isfinite(model_cutoff):
+                col["Distance from model's own cut-off, median"] = f"{(suvr - model_cutoff).abs().median():.2f}"
         if "amyloid_status" in sub.columns:
             amy = pd.to_numeric(sub["amyloid_status"], errors="coerce").dropna()
             col["Aβ positive"] = f"{int(amy.sum())}/{len(amy)}"
@@ -315,7 +452,7 @@ def main():
 
     # Step 2 (needs SUVR from the demographics)
     demo_path = resolve_path(args.demo_csv, lambda: find_dataset_demo_csv(args.dataset) or find_demo_csv())
-    corr_rows = []
+    corr_rows, model_corr_rows, cut, wrong = [], [], None, None
     cutoff = CENTAUR_FTP_CTRZ2_SUVR[SUVR_REGION]
     if demo_path is None:
         print("[skip] step 2: no demographics csv found - pass --demo_csv.")
@@ -330,9 +467,21 @@ def main():
             df["_suvr"] = pd.to_numeric(df[SUVR_REGION], errors="coerce")
             corr_rows = confidence_vs_suvr(df, cutoff)
             make_probability_vs_suvr_figure(df, cutoff, cutoffs, out_dir / "visual_read_probability_vs_suvr.png")
-            level_description(df, cutoff).to_csv(out_dir / "visual_read_confidence_by_level.csv")
+            cut = suvr_cutoffs(df)
+            model_cut = cut["Model"][0]
+            if np.isfinite(model_cut):
+                model_corr_rows = confidence_vs_suvr(df, model_cut)
+            make_suvr_cutoffs_figure(df, cut, cutoff, out_dir / "visual_read_suvr_cutoffs.png")
+            pd.DataFrame([{"judge": k, "suvr_cutoff": cut[k][0], "ci_lo": cut[k][1], "ci_hi": cut[k][2]}
+                          for k in ("Visual read", "Model", "difference")]
+                         + [{"judge": "CTRz 2 (reference)", "suvr_cutoff": cutoff}]
+                         ).to_csv(out_dir / "visual_read_suvr_cutoffs.csv", index=False)
+            level_description(df, cutoff, model_cut).to_csv(out_dir / "visual_read_confidence_by_level.csv")
         else:
             print(f"[skip] step 2: no {SUVR_REGION} column in {demo_path.name}.")
+        # Step 3 - works with whatever regional SUVR / demographic columns are present
+        wrong = confidently_wrong_cases(df)
+        wrong.to_csv(out_dir / "visual_read_confidently_wrong_cases.csv", index=False)
 
     keep = [c for c in ["ID_ind", "y", "prob", "pred", "group", "_suvr"] if c in df.columns]
     df[keep].rename(columns={"_suvr": f"{SUVR_REGION}_SUVR"}).to_csv(out_dir / "visual_read_confidence_groups.csv", index=False)
@@ -349,7 +498,13 @@ def main():
         group_lines.append(f"    {g.lower()}: {value}")
     summary += [("brier_score", f"{brier:.3f}"), ("expected_calibration_error", f"{ece:.3f}")]
     for r in corr_rows:
-        summary.append((f"confidence_vs_suvr_distance_rho ({r['scans']})",
+        summary.append((f"confidence_vs_suvr_distance_rho, CTRz 2 ({r['scans']})",
+                        f"{r['spearman_rho']:.2f} (p={r['p_value']:.2g}, n={r['n']})"))
+    if cut is not None:
+        for k in ("Visual read", "Model", "difference"):
+            summary.append((f"suvr_cutoff ({k})", f"{cut[k][0]:.3f} [{cut[k][1]:.3f}-{cut[k][2]:.3f}]"))
+    for r in model_corr_rows:
+        summary.append((f"confidence_vs_suvr_distance_rho, model's own cut-off ({r['scans']})",
                         f"{r['spearman_rho']:.2f} (p={r['p_value']:.2g}, n={r['n']})"))
     pd.DataFrame(summary, columns=["item", "value"]).to_csv(out_dir / "visual_read_confidence_summary.csv", index=False)
 
@@ -372,6 +527,22 @@ def main():
               "Spearman (positive = least sure where SUVR is borderline):")
         for r in corr_rows:
             print(f"    {r['scans']}: rho {r['spearman_rho']:.2f} (p={r['p_value']:.2g}, n={r['n']})")
+    if cut is not None:
+        print(f"[step 2] {SUVR_REGION} SUVR at which each judge becomes more likely positive than not (95% CI):")
+        for k in ("Visual read", "Model"):
+            print(f"    {k}: {cut[k][0]:.2f} [{cut[k][1]:.2f}-{cut[k][2]:.2f}]")
+        d = cut["difference"]
+        print(f"    model - visual read: {d[0]:+.2f} [{d[1]:+.2f} to {d[2]:+.2f}]  (CTRz 2 = {cutoff:.2f})")
+    if model_corr_rows:
+        print(f"[step 2] same correlation, distance from the model's own cut-off ({cut['Model'][0]:.2f}):")
+        for r in model_corr_rows:
+            print(f"    {r['scans']}: rho {r['spearman_rho']:.2f} (p={r['p_value']:.2g}, n={r['n']})")
+    if wrong is not None:
+        cases = wrong[wrong["ID_ind"] != "median"]
+        print(f"[step 3] {len(cases)} confidently wrong scans -> visual_read_confidently_wrong_cases.csv")
+        show = [c for c in ["ID_ind", "case", "probability", "MetaTemporal SUVR", "TemporoParietal SUVR",
+                            "Regions >= CTRz 2", "CL", "dx", "amyloid_status", "site"] if c in wrong.columns]
+        print(wrong[show].to_string(index=False))
     print(f"[done] saved to {out_dir}")
 
 
