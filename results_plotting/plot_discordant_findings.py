@@ -19,8 +19,7 @@ small groups visibly look uncertain.
 Produces, next to the run's other figures (<run_dir>/figures/, or
 <run_dir>/validation/figures/ for a zero-shot external validation run):
 
-1. visual_read_discordant_findings.png - left: 2x2 Model x Visual read agreement grid
-   (counts, % agreement). Right: dot plot, one row per characteristic (proportion in each of
+1. visual_read_discordant_findings.png - dot plot, one row per characteristic (proportion in each of
    the four groups, whiskers = Wilson 95% CI), rows sorted by how far Model +, Visual read -
    sits from Model -, Visual read -. n/N printed per discordant group, since the
    denominator differs per row when a variable is missing.
@@ -105,9 +104,12 @@ def load_scans(args, run_dir: Path):
     if demo_path is None:
         raise FileNotFoundError("Could not find a demographics csv - pass --demo_csv explicitly.")
 
-    df_preds = pd.read_csv(preds_path)[["ID_ind", "y", "pred"]]
+    df_preds = pd.read_csv(preds_path)
+    df_preds = df_preds[[c for c in ["ID_ind", "y", "pred", "prob"] if c in df_preds.columns]]
     df_demo = pd.read_csv(demo_path)
     df = pd.merge(df_preds, df_demo, left_on="ID_ind", right_on="ID", how="left")
+    if "prob" in df.columns:
+        df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
     df["pred"] = pd.to_numeric(df["pred"], errors="coerce")
     df = df.dropna(subset=["y", "pred"]).reset_index(drop=True)
@@ -150,39 +152,6 @@ def add_indicator_columns(df: pd.DataFrame, args) -> list[tuple[str, str]]:
     return indicators
 
 
-def make_agreement_grid(ax, df: pd.DataFrame):
-    counts = df["category"].value_counts()
-    n_total = len(df)
-    # rows: Visual read +/-, cols: Model -/+ (so the diagonal is agreement)
-    layout = [
-        [("False Negative", 0, 1), ("True Positive", 1, 1)],
-        [("True Negative", 0, 0), ("False Positive", 1, 0)],
-    ]
-    for r, row in enumerate(layout):
-        for c, (cat, _, _) in enumerate(row):
-            n = int(counts.get(cat, 0))
-            agree = cat not in DISCORDANT
-            ax.add_patch(plt.Rectangle((c, 1 - r), 1, 1, facecolor=CONFUSION_CATEGORY_PALETTE[cat],
-                                       alpha=0.85 if not agree else 0.35, edgecolor="white", linewidth=3))
-            ax.text(c + 0.5, 1 - r + 0.56, f"{n}", ha="center", va="center", fontsize=26, fontweight="bold")
-            ax.text(c + 0.5, 1 - r + 0.25, f"{n / n_total:.1%}", ha="center", va="center", fontsize=TICK_SIZE + 1)
-    ax.set_xlim(0, 2)
-    ax.set_ylim(0, 2)
-    ax.set_xticks([0.5, 1.5])
-    ax.set_xticklabels(["Model −", "Model +"], fontsize=LABEL_SIZE - 1)
-    ax.set_yticks([0.5, 1.5])
-    ax.set_yticklabels(["Visual\nread −", "Visual\nread +"], fontsize=LABEL_SIZE - 1)
-    ax.xaxis.set_ticks_position("top")
-    ax.tick_params(length=0)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    n_disc = int(counts.reindex(DISCORDANT).fillna(0).sum())
-    ax.set_title(
-        f"{n_total - n_disc}/{n_total} scans agree ({(n_total - n_disc) / n_total:.0%})\n"
-        f"{n_disc} discordant", fontsize=TITLE_SIZE - 3, pad=16,
-    )
-
-
 def group_proportions(df: pd.DataFrame, indicators) -> pd.DataFrame:
     rows = []
     for col, label in indicators:
@@ -207,7 +176,7 @@ def make_dot_plot(ax, df: pd.DataFrame, indicators):
     gap = {lab: np.nanmax([diff(lab, cat) for cat in DISCORDANT]) for lab in labels}
     labels = sorted(labels, key=lambda lab: gap[lab] if not np.isnan(gap[lab]) else -1)  # bottom -> top
 
-    offsets = np.linspace(-0.27, 0.27, len(GROUP_ORDER))
+    offsets = np.linspace(-0.3, 0.3, len(GROUP_ORDER))
     for cat, off in zip(GROUP_ORDER, offsets):
         sub = props.set_index("label").loc[labels].reset_index()
         sub = sub[sub["category"] == cat]
@@ -228,8 +197,10 @@ def make_dot_plot(ax, df: pd.DataFrame, indicators):
     ax.set_axisbelow(True)
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
-    ax.set_title("What the discordant groups look like", fontsize=TITLE_SIZE - 3, pad=16)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.12), ncol=2, frameon=False, fontsize=TICK_SIZE - 1)
+    n_disc = int(df["category"].isin(DISCORDANT).sum())
+    ax.set_title(f"What the discordant groups look like ({n_disc}/{len(df)} scans discordant)", fontsize=TITLE_SIZE - 3, pad=16)
+    ax.set_ylim(-0.6, len(labels) - 0.4)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.1), ncol=2, frameon=False, fontsize=TICK_SIZE - 1)
 
     # n/N for the discordant groups, in the right margin (denominator differs when data is missing).
     p_idx = props.set_index(["label", "category"])
@@ -244,11 +215,70 @@ def make_dot_plot(ax, df: pd.DataFrame, indicators):
 
 
 def make_findings_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: str):
-    fig = plt.figure(figsize=(15, 6.2))
-    gs = fig.add_gridspec(1, 2, width_ratios=[0.8, 2.0], wspace=0.55)
-    make_agreement_grid(fig.add_subplot(gs[0]), df)
-    make_dot_plot(fig.add_subplot(gs[1]), df, indicators)
-    fig.subplots_adjust(left=0.07, right=0.86, top=0.82, bottom=0.2)
+    # ~1.3 inches per row so the four dots of neighbouring rows don't crowd each other.
+    fig, ax = plt.subplots(figsize=(11, 2.0 + 1.05 * len(indicators)))
+    make_dot_plot(ax, df, indicators)
+    fig.subplots_adjust(left=0.2, right=0.80, top=0.93, bottom=0.16)
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+# ------------------------------
+# Regional SUVR: are the errors borderline, and do they share a regional pattern?
+# ------------------------------
+SUVR_REGIONS = ["Universal", "MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal"]
+# (numerator, denominator) - Mesial/Meta high with low Meta = medial-temporal-only uptake;
+# Frontal/Meta high = non-AD-like spread.
+SUVR_RATIOS = [("MesialTemporal", "MetaTemporal"), ("Frontal", "MetaTemporal")]
+CONFIDENT_DIST = 0.35  # |prob - 0.5| above this = "confident" error (outlined in black)
+
+
+def make_regional_pattern_figure(df: pd.DataFrame, out_dir: Path, filename: str):
+    """One strip panel per region SUVR plus the two ratios, all four groups side by side.
+    Dashed line = SUVR equivalent of CTRz 2 - a group-level CenTauR convention, drawn only as
+    a reference (list_discordant_cases.py explains why it is not a per-scan cutoff). Discordant
+    points with |prob - 0.5| > CONFIDENT_DIST are outlined in black."""
+    regions = [r for r in SUVR_REGIONS if r in df.columns]
+    ratios = [(a, b) for a, b in SUVR_RATIOS if a in df.columns and b in df.columns]
+    if not regions:
+        return
+    panels = [(r, pd.to_numeric(df[r], errors="coerce"), CENTAUR_FTP_CTRZ2_SUVR.get(r), f"{r} SUVR") for r in regions]
+    for a, b in ratios:
+        panels.append((f"{a}/{b}", pd.to_numeric(df[a], errors="coerce") / pd.to_numeric(df[b], errors="coerce"),
+                       None, f"{a} / {b}"))
+
+    n_cols = 3
+    n_rows = int(np.ceil(len(panels) / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.0 * n_cols, 4.6 * n_rows), squeeze=False)
+    rng = np.random.default_rng(seed=0)
+    confident = (df["prob"] - 0.5).abs() > CONFIDENT_DIST if "prob" in df.columns else pd.Series(False, index=df.index)
+
+    for ax, (name, vals, cutoff, ylabel) in zip(axes.flat, panels):
+        for i, cat in enumerate(GROUP_ORDER):
+            m = (df["category"] == cat) & vals.notna()
+            discordant = cat in DISCORDANT
+            xs = i + rng.normal(0, 0.07, size=int(m.sum()))
+            edge = np.where(confident[m] & discordant, "black", "white")
+            ax.scatter(xs, vals[m], s=60 if discordant else 22, color=CONFUSION_CATEGORY_PALETTE[cat],
+                       edgecolor=edge, linewidth=1.2 if discordant else 0.4,
+                       alpha=0.95 if discordant else 0.45, zorder=3 if discordant else 2)
+            if m.any():
+                ax.hlines(vals[m].median(), i - 0.3, i + 0.3, color="black", linewidth=1.6, zorder=4)
+        if cutoff is not None:
+            ax.axhline(cutoff, color="#555555", linestyle="--", linewidth=1.1, zorder=1)
+        ax.set_xticks(range(len(GROUP_ORDER)))
+        ax.set_xticklabels([confusion_display_label(c, multiline=True) for c in GROUP_ORDER], fontsize=TICK_SIZE - 3)
+        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 3)
+        ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+    for ax in list(axes.flat)[len(panels):]:
+        ax.set_visible(False)
+
+    fig.suptitle("Regional tau pattern by agreement group (black bar = median; dashed = CTRz 2 equivalent; "
+                 "black outline = confident error)", fontsize=TITLE_SIZE - 5)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.95))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
 
@@ -350,6 +380,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     make_findings_figure(df, indicators, out_dir, "visual_read_discordant_findings.png")
     make_findings_table(df, indicators, out_dir, "visual_read_discordant_findings_table.csv", args)
+    make_regional_pattern_figure(df, out_dir, "visual_read_discordant_regional_pattern.png")
 
     counts = df["category"].value_counts()
     print("[done] " + ", ".join(f"{int(counts.get(c, 0))} x [{confusion_display_label(c)}]" for c in GROUP_ORDER)

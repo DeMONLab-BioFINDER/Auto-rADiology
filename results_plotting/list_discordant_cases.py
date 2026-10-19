@@ -13,37 +13,43 @@ one near the threshold), demographics, and quantitative SUVR values (so you can
 see e.g. whether a false positive sits near the quantitative boundary too, or is
 a clear model error against a clearly-normal scan).
 
-There is no validated individual-scan SUVR cutoff for these regions (confirmed with
-Nadine's supervisor) - CenTauR's own CTR>2 threshold (Villemagne et al. 2023,
-https://doi.org/10.1002/dad2.12454) is a group-level validation statistic, not a
-clinical per-scan cutoff. So instead of thresholding against an invented number,
-discordant cases are ranked by COHORT-RELATIVE PERCENTILE: where each case's SUVR
-falls within the full set of scans for this run, for --quantitative_col (default
-Universal) and --mtl_col (default MesialTemporal). This is descriptive positioning
-within the sample, not a clinical claim, and will shift if the cohort changes (e.g.
-adding more validation scans) - fine for a one-off analysis, worth re-deriving if
-reused later on a different sample.
+"Quantitatively positive" means the region's SUVR is at or above the SUVR equivalent of
+CenTauRz = 2 (Villemagne et al. 2023, https://doi.org/10.1002/dad2.12454; per-region
+values in plot_utils.CENTAUR_FTP_CTRZ2_SUVR, ~1.34 for MetaTemporal, ~1.35 for
+MesialTemporal). CTRz 2 is a group-level CenTauR convention, not a validated per-scan
+clinical cutoff (confirmed with Nadine's supervisor), so treat the split as descriptive.
+The cohort-relative percentile of each case (quant_percentile / mtl_percentile) is also
+saved, for orientation only - it does not drive the split.
 
-Using the cohort median (50th percentile) as a neutral, non-arbitrary split point
-(not a diagnostic cutoff - just "above/below the middle of this sample"), discordant
-cases are split three ways (visual_read is graded against flortaucipir's separate
+The quantitative reference defaults to MetaTemporal, not Universal: Karagianni et al.
+2026 (J Nucl Med) found Meta Temporal gave slightly the best visual-read/CenTauRz
+concordance, and it matches the posterolateral temporal/parietal territory the visual
+read keys on (Universal also covers mesial and frontal signal the read does not credit).
+
+Discordant cases are split three ways (visual_read is graded against flortaucipir's separate
 FDA/EMA visual-read criterion, Moscoso et al. 2025,
 https://doi.org/10.1001/jama.2025.7817, which keys on posterolateral temporal/
-parietal signal and deliberately NOT on isolated mesial temporal signal, due to
-flortaucipir's known off-target binding there):
-  - model agrees with quantitative --quantitative_col (above/below the cohort
-    median), disagrees with the clinical visual read -> the model may be siding
+parietal signal and deliberately NOT on isolated mesial temporal signal). The split is
+a triage aid for picking cases to inspect, not a result. It is saved as the `bucket`
+column:
+  - "quant_agrees": model agrees with quantitative --quantitative_col (at/above or
+    below its CTRz 2 SUVR equivalent), disagrees with the clinical visual read -> the model may be siding
     with an independent quantitative signal against the human reader, not just
     "wrong."
-  - isolated --mtl_col (MesialTemporal) elevation: --mtl_col's percentile sits
-    at least --mtl_margin points above --quantitative_col's percentile for the
-    SAME case (a within-subject, relative comparison - no cohort-wide cutoff
-    needed), while --quantitative_col is still below the cohort median -> a
-    distinct pattern: possible early/isolated tau the visual-read criterion is
-    structurally not designed to credit, not necessarily a model or quantitative
-    disagreement in the usual sense.
-  - model disagrees with quantitative too, and no isolated MTL pattern -> a more
-    conventional, unexplained model error.
+  - "isolated_mesial": --mtl_col is at/above its own CTRz 2 SUVR equivalent while
+    --quantitative_col is below its -> possible early mesial tau the visual-read criterion is not
+    designed to credit. CenTauR's masks exclude known off-target regions, but the
+    mesial temporal lobe remains the most contamination-prone area (partial volume,
+    flortaucipir-specific limits; Villemagne 2023, Karagianni 2026), so this is
+    uncertain, not "real tau". Checked first, so a case lands in one bucket only.
+  - "unexplained": model disagrees with quantitative too, and no isolated mesial
+    pattern -> a more conventional, unexplained model error.
+
+Alongside `bucket`, the csv carries flags to cross-tabulate against it: amyloid_status
+(Karagianni: Vis+/CTRz- cases were 75-90% Abeta+, Vis-/CTRz+ only 50-67%),
+`confident_error` (|prob - threshold| > --confident_dist) and, when the quantitative
+column has a CenTauR equivalent, `near_ctrz2` (within --near_cutoff_margin SUVR of the
+CTRz 2 equivalent, i.e. a borderline case for the split).
 
 --baseline_n also prints the most-confidently-CORRECT TP/TN cases, for a
 comparison panel showing what attribution maps look like when the model is right.
@@ -61,6 +67,7 @@ from pathlib import Path
 import pandas as pd
 
 from plot_utils import (
+    CENTAUR_FTP_CTRZ2_SUVR,
     CONFUSION_CATEGORY_LABELS,
     confusion_display_label,
     find_demo_csv,
@@ -89,24 +96,27 @@ def parse_args():
         help="How many of the most-confidently-discordant cases to print to the console, per direction (Model +, Visual read - and Model -, Visual read +).",
     )
     parser.add_argument(
-        "--quantitative_col", default="Universal",
-        help="Demographics column to use as the quantitative positivity reference (default: Universal tau SUVR composite). "
-             "No validated cutoff exists, so this is ranked by cohort-relative percentile, not thresholded.",
+        "--quantitative_col", default="MetaTemporal",
+        help="Demographics column to use as the quantitative positivity reference (default: MetaTemporal tau SUVR; "
+             "best visual-read concordance in Karagianni 2026). Positive = at/above its CTRz 2 SUVR equivalent.",
+    )
+    parser.add_argument(
+        "--confident_dist", type=float, default=0.35,
+        help="|prob - threshold| above this marks a discordant case as a confident error (default: 0.35).",
+    )
+    parser.add_argument(
+        "--near_cutoff_margin", type=float, default=0.1,
+        help="SUVR distance from the CTRz 2 equivalent within which a case is flagged near_ctrz2 (default: 0.1).",
     )
     parser.add_argument(
         "--mtl_col", default="MesialTemporal",
-        help="Column to check for isolated elevation relative to --quantitative_col (same case, higher "
-             "percentile) - a pattern the FDA/EMA visual-read criterion is not designed to credit "
-             "(default: MesialTemporal).",
-    )
-    parser.add_argument(
-        "--mtl_margin", type=float, default=15.0,
-        help="Percentile-point margin by which --mtl_col's cohort-relative percentile must exceed "
-             "--quantitative_col's for the same case to count as 'isolated MTL elevation' (default: 15.0).",
+        help="Column to check for isolated elevation (at/above its CTRz 2 equivalent while "
+             "--quantitative_col is below its) - a pattern the FDA/EMA visual-read criterion is not "
+             "designed to credit (default: MesialTemporal).",
     )
     parser.add_argument(
         "--skip_quant_split", action="store_true",
-        help="Skip the quantitative-percentile three-way split entirely (just list FP/FN with raw "
+        help="Skip the quantitative three-way split entirely (just list FP/FN with raw "
              "SUVR values and percentiles shown, no automatic bucketing).",
     )
     parser.add_argument(
@@ -193,29 +203,45 @@ def main():
         if args.quantitative_col not in df.columns:
             print(f"[WARNING] '{args.quantitative_col}' not found; skipping quantitative-agreement split.")
         else:
-            # Cohort-relative percentile rank (0-100), computed across every subject in
-            # this run - not a clinical cutoff, just "where does this case's SUVR sit
-            # relative to everyone else here."
-            quant_pct = df[args.quantitative_col].rank(pct=True) * 100
-            df["quant_percentile"] = quant_pct
-            quant_above_median = (quant_pct >= 50).astype("Int64")
-            df["quant_above_median"] = quant_above_median
-            df["model_agrees_with_quant"] = (df["pred"] == quant_above_median)
-
-            if args.mtl_col in df.columns:
-                mtl_pct = df[args.mtl_col].rank(pct=True) * 100
-                df["mtl_percentile"] = mtl_pct
-                # Within-subject comparison (this case's MTL percentile vs. its own
-                # quantitative-composite percentile) - no cohort-wide cutoff needed.
-                df["isolated_mtl"] = (
-                    (mtl_pct - quant_pct >= args.mtl_margin) & (quant_above_median == 0)
-                )
+            quant_cutoff = CENTAUR_FTP_CTRZ2_SUVR.get(args.quantitative_col)
+            if quant_cutoff is None:
+                print(f"[WARNING] No CTRz 2 equivalent for '{args.quantitative_col}'; skipping quantitative-agreement split.")
             else:
-                print(f"[WARNING] '{args.mtl_col}' not found; skipping isolated-MTL split.")
+                # Cohort percentile is descriptive only (printed/saved for orientation); the split
+                # itself uses the CenTauR CTRz 2 SUVR equivalent per region.
+                df["quant_percentile"] = df[args.quantitative_col].rank(pct=True) * 100
+                quant_values = df[args.quantitative_col]
+                quant_positive = (quant_values >= quant_cutoff).where(quant_values.notna()).astype("Int64")
+                df["quant_positive"] = quant_positive
+                df["model_agrees_with_quant"] = (df["pred"] == quant_positive)
+
+                mtl_cutoff = CENTAUR_FTP_CTRZ2_SUVR.get(args.mtl_col)
+                if args.mtl_col in df.columns and mtl_cutoff is not None:
+                    df["mtl_percentile"] = df[args.mtl_col].rank(pct=True) * 100
+                    # Mesial at/above its own CTRz 2 equivalent while the quantitative column is below its.
+                    df["isolated_mtl"] = (df[args.mtl_col] >= mtl_cutoff) & (quant_positive == 0)
+                else:
+                    print(f"[WARNING] '{args.mtl_col}' not found or has no CTRz 2 equivalent; skipping isolated-mesial split.")
 
     df_discordant = df[df["category"].isin(["False Positive", "False Negative"])].copy()
     df_discordant = df_discordant.sort_values(["category", "dist_from_threshold"], ascending=[True, False])
     df_discordant = df_discordant.drop(columns=["ID"]).rename(columns={"ID_ind": "ID"})
+
+    df_discordant["confident_error"] = df_discordant["dist_from_threshold"] > args.confident_dist
+    cutoff = CENTAUR_FTP_CTRZ2_SUVR.get(args.quantitative_col)
+    if cutoff is not None and args.quantitative_col in df_discordant.columns:
+        df_discordant["near_ctrz2"] = (df_discordant[args.quantitative_col] - cutoff).abs() <= args.near_cutoff_margin
+
+    if "model_agrees_with_quant" in df_discordant.columns:
+        is_isolated_mesial = (
+            df_discordant["isolated_mtl"].fillna(False).astype(bool)
+            if "isolated_mtl" in df_discordant.columns else pd.Series(False, index=df_discordant.index)
+        )
+        agrees = (df_discordant["model_agrees_with_quant"] == True).fillna(False).astype(bool)  # noqa: E712
+        # Isolated mesial is checked first, so each case lands in exactly one bucket.
+        df_discordant["bucket"] = "unexplained"
+        df_discordant.loc[agrees, "bucket"] = "quant_agrees"
+        df_discordant.loc[is_isolated_mesial, "bucket"] = "isolated_mesial"
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_csv = Path(args.out_csv) if args.out_csv else out_dir / "visual_read_discordant_cases.csv"
@@ -232,29 +258,24 @@ def main():
 
     display_cols = ["ID", "prob", "dist_from_threshold"] + demo_cols
     percentile_cols = [c for c in ["quant_percentile", "mtl_percentile"] if c in df_discordant.columns]
-    display_cols = display_cols + percentile_cols
+    flag_cols = [c for c in ["confident_error", "near_ctrz2", "bucket"] if c in df_discordant.columns]
+    display_cols = display_cols + percentile_cols + flag_cols
 
-    if "model_agrees_with_quant" in df_discordant.columns:
-        has_mtl_split = "isolated_mtl" in df_discordant.columns
-        is_isolated_mtl = df_discordant["isolated_mtl"] if has_mtl_split else pd.Series(False, index=df_discordant.index)
-
-        human_read_questionable_all = df_discordant[(df_discordant["model_agrees_with_quant"] == True) & ~is_isolated_mtl]  # noqa: E712
-        mtl_driven_all = df_discordant[is_isolated_mtl]
-        model_error_all = df_discordant[(df_discordant["model_agrees_with_quant"] == False) & ~is_isolated_mtl]  # noqa: E712
-
-        buckets = [
-            (f"Model agrees with quantitative {args.quantitative_col} "
-             "(above/below this run's cohort median), disagrees with clinical read",
-             human_read_questionable_all),
+    if "bucket" in df_discordant.columns:
+        bucket_labels = [
+            ("quant_agrees",
+             f"Model agrees with quantitative {args.quantitative_col} "
+             "(at/above or below its CTRz 2 SUVR equivalent), disagrees with clinical read"),
+            ("isolated_mesial",
+             f"Isolated {args.mtl_col} elevation (>= its CTRz 2 equivalent while "
+             f"{args.quantitative_col} is below its) - possible "
+             "early mesial tau not credited by the visual-read criterion (uncertain: mesial SUVR is "
+             "partial-volume prone)"),
+            ("unexplained", "Model disagrees with quantitative too (unexplained model error)"),
         ]
-        if has_mtl_split:
-            buckets.append((
-                f"Isolated {args.mtl_col} elevation (percentile >= {args.mtl_margin:g} pts above "
-                f"{args.quantitative_col}'s, which itself is below the cohort median) - possible "
-                "early tau not credited by the visual-read criterion",
-                mtl_driven_all,
-            ))
-        buckets.append(("Model disagrees with quantitative too (unexplained model error)", model_error_all))
+        buckets = [(label, df_discordant[df_discordant["bucket"] == name]) for name, label in bucket_labels]
+        if "isolated_mtl" not in df_discordant.columns:
+            buckets = [b for b in buckets if not b[0].startswith("Isolated")]
 
         for label, bucket_all in buckets:
             bucket = bucket_all.head(args.top_n)
