@@ -437,10 +437,13 @@ def kappa_strata(df: pd.DataFrame, votes: pd.DataFrame) -> dict:
     dx = combine_dx_groups(df["dx"]).where(df["dx"].notna()) if "dx" in df.columns else pd.Series(np.nan, index=df.index)
     amyloid = pd.to_numeric(df["amyloid_status"], errors="coerce") if "amyloid_status" in df.columns \
         else pd.Series(np.nan, index=df.index)
+    def mask(m):
+        return m.fillna(False).astype(bool).reindex(votes.index, fill_value=False)
+
     return {"All": votes,
-            "Cog. unimpaired": votes[(dx == "CU").reindex(votes.index, fill_value=False)],
-            "Cog. impaired": votes[(dx.notna() & (dx != "CU")).reindex(votes.index, fill_value=False)],
-            "Amyloid positive": votes[(amyloid == 1).reindex(votes.index, fill_value=False)]}
+            "Cog. unimpaired": votes[mask(dx == "CU")],
+            "Cog. impaired": votes[mask(dx.notna() & (dx != "CU"))],
+            "Amyloid positive": votes[mask(amyloid == 1)]}
 
 
 def compute_kappa_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -513,8 +516,12 @@ def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path,
     scans in each cell, diagonal = agreement, kappa with bootstrap 95% CI in each title."""
     votes = kappa_votes(df)
     names = {"model": "Model", "human": "Visual read", "suvr": "SUVR"}
+    # Same orientation as the ROC/confusion-matrix panel: the reference on the rows, the model on the
+    # columns (visual read outranks SUVR as the reference).
+    reference_rank = {"human": 0, "suvr": 1, "model": 2}
     fig, axes = plt.subplots(1, len(KAPPA_PAIRS), figsize=(5.0 * len(KAPPA_PAIRS), 4.8))
-    for ax, (a, b, label) in zip(axes, KAPPA_PAIRS):
+    for ax, (p, q, label) in zip(axes, KAPPA_PAIRS):
+        a, b = sorted((p, q), key=reference_rank.get)  # a = rows (reference), b = columns
         counts = np.array([[int(((votes[a] == i) & (votes[b] == j)).sum()) for j in (0, 1)] for i in (0, 1)])
         frac = counts / max(counts.sum(), 1)
         ax.imshow(frac, cmap="Greys", vmin=0, vmax=max(frac.max(), 1e-9) * 1.6)

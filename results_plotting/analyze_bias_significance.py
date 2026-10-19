@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional output directory. Defaults to <run_dir>/bias_analysis.",
     )
     parser.add_argument(
+        "--demo_csv",
+        default=None,
+        help="Demographics csv whose ID column matches the run's ID_ind (defaults to data/demo.csv). "
+             "Set this for a dataset with its own demo file, e.g. demo_AVID_unseen.csv.",
+    )
+    parser.add_argument(
         "--min_group_n",
         type=int,
         default=5,
@@ -119,6 +125,12 @@ def get_target_frame(df_preds: pd.DataFrame, df_demo: pd.DataFrame, target: str)
 
     if "ID_ind" in target_df.columns and "ID" in df_demo.columns:
         merged = pd.merge(target_df, df_demo, left_on="ID_ind", right_on="ID", how="left")
+        # Scans with no demographics row would otherwise become an "NA" group inside every test.
+        unmatched = merged["ID"].isna()
+        if unmatched.any():
+            print(f"[WARNING] {target}: {int(unmatched.sum())}/{len(merged)} scans have no row in the "
+                  "demographics csv and are excluded - check --demo_csv matches this run.")
+            merged = merged.loc[~unmatched].copy()
     else:
         merged = target_df.copy()
 
@@ -393,7 +405,7 @@ def main() -> None:
     run_dir = Path(args.run_dir).resolve()
     out_dir = Path(args.out_dir).resolve() if args.out_dir else run_dir / "bias_analysis"
     results_csv = find_results_csv(run_dir)
-    demo_csv = find_demo_csv()
+    demo_csv = Path(args.demo_csv).resolve() if args.demo_csv else find_demo_csv()
 
     df_preds = load_prediction_table(results_csv)
     df_demo = normalize_demo_columns(load_demo_table(demo_csv))
@@ -424,13 +436,6 @@ def main() -> None:
     pairwise = add_fdr_columns(pairwise, ["target", "group_column"])
 
     write_outputs(out_dir, summary, omnibus, pairwise)
-
-    if not summary.empty:
-        summary.to_csv(out_dir / "group_summary.csv", index=False)
-    if not omnibus.empty:
-        omnibus.to_csv(out_dir / "omnibus_tests.csv", index=False)
-    if not pairwise.empty:
-        pairwise.to_csv(out_dir / "pairwise_tests.csv", index=False)
 
     print(f"Analyzed {len(targets)} targets from {results_csv.name}")
     print(f"Wrote outputs to {out_dir}")

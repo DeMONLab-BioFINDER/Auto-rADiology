@@ -45,7 +45,7 @@ def main():
     mod.sns.set_theme(style="whitegrid", palette=mod.CUSTOM_PALETTE)
 
     run_dir = Path(args.final_run_dir).resolve()
-    csv_path = find_results_csv(run_dir)
+    csv_path = find_results_csv(run_dir, args.dataset)
     df = load_prediction_table(csv_path)
     targets = mod.infer_targets(df)
     if not targets:
@@ -55,9 +55,6 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     combined_path = out_dir / "suvr_true_vs_predicted_avid_unseen.png"
-    if combined_path.exists():
-        print(f"[skip] {combined_path} exists")
-        return
 
     mod.make_true_vs_predicted_panel(
         df,

@@ -36,7 +36,9 @@ PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "
 # Formatting helpers
 # ------------------------------
 def combine_dx_groups(s: pd.Series) -> pd.Series:
-    s = s.astype("string").fillna("NA")
+    """CU / MCI / AlzCS dem kept as is; every other diagnosis (e.g. DLB, FTD) -> "Other".
+    A missing diagnosis stays missing rather than being counted as "Other"."""
+    s = s.astype("string")
     s_norm = s.str.strip().str.lower()
     dx_map = {
         "cu": "CU",
@@ -44,6 +46,7 @@ def combine_dx_groups(s: pd.Series) -> pd.Series:
         "alzcs dem": "AlzCS dem",
     }
     out = s_norm.map(dx_map).fillna("Other").astype("string")
+    out[s.isna()] = pd.NA
     return out
 
 
@@ -591,7 +594,7 @@ def _subgroup_order(subj: pd.DataFrame, col: str) -> list[str]:
         return list(subj.groupby("site", observed=False)["mae"].median().sort_values().index)
     if col == "dx_grouped":
         present = set(subj["dx_grouped"].unique())
-        return [d for d in ["CU", "MCI", "AlzCS dem"] if d in present]
+        return [d for d in ["CU", "MCI", "AlzCS dem", "Other"] if d in present]
     if col == "age_group":
         present = set(subj["age_group"].astype("string").dropna().unique())
         return [a for a in _AGE_BIN_LABELS if a in present]
