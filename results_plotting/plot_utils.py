@@ -1122,8 +1122,8 @@ def make_confusion_category_categorical_panel(
 
 
 SUBGROUP_METRICS = [
-    ("sensitivity", "Sensitivity", "Model + among visual read +"),
-    ("specificity", "Specificity", "Model − among visual read −"),
+    ("sensitivity", "Sensitivity", "Sensitivity"),
+    ("specificity", "Specificity", "Specificity"),
     ("auc", "AUC", "AUC"),
 ]
 
@@ -1194,8 +1194,7 @@ def make_subgroup_performance_panel(
         ax.yaxis.set_major_locator(plt.MultipleLocator(0.1 if 1 - y_min > 0.35 else 0.05))
         if metric != "auc":
             ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-        ax.set_title(label, fontsize=TITLE_SIZE - 4, pad=8)
-        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 3)
+        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 2)
         ax.tick_params(axis="y", labelleft=True)
         ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
         ax.set_axisbelow(True)
@@ -1340,7 +1339,7 @@ def _finish_subgroup_grid(fig, axes, n_panels: int, ylabel: str, title: str):
         ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 2)
     for ax in axes.ravel()[n_panels:]:
         ax.set_visible(False)
-    fig.suptitle(title, fontsize=TITLE_SIZE - 3)
+    fig.suptitle(title, fontsize=TITLE_SIZE)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))  # tight_layout already makes room for the suptitle
 
 
@@ -1350,33 +1349,36 @@ def make_value_by_group_figure(
     title: str,
     out_path: Path,
 ) -> bool:
-    """One panel per entry of `panels` = (panel title, {group label: values}). Every scan is a dot,
-    the black bar is the group median, n is printed under each group. Nothing else on it - the
-    test behind the figure is in the csv."""
+    """One panel per entry of `panels` = (panel title, {group label: values}): a box per group with
+    every scan as a jittered dot on top and n under each group - the same style as
+    make_subgroup_mae_panel, so the subgroup figures match the existing SUVR-error boxplots.
+    Nothing else on it - the test behind the figure is in the csv."""
     panels = [(t, groups) for t, groups in panels if groups]
     if not panels:
         return False
     widest = max(len(groups) for _, groups in panels)
     fig, axes = _subgroup_panel_grid(len(panels), panel_w=max(3.6, 0.95 * widest + 1.4), panel_h=4.2)
-    rng = np.random.default_rng(0)
-    for ax, (panel_title, groups) in zip(axes.ravel(), panels):
-        for x, (label, values) in enumerate(groups.items()):
-            values = np.asarray(values, dtype=float)
-            values = values[np.isfinite(values)]
-            ax.scatter(x + rng.uniform(-0.18, 0.18, len(values)), values, s=16, alpha=0.55,
-                       color=CUSTOM_PALETTE[x % len(CUSTOM_PALETTE)], edgecolor="none", zorder=2)
-            if len(values):
-                ax.hlines(np.median(values), x - 0.3, x + 0.3, color="black", linewidth=2, zorder=3)
-        ax.set_xticks(range(len(groups)))
-        ax.set_xticklabels([f"{label}\n(n={np.isfinite(np.asarray(v, dtype=float)).sum()})"
-                            for label, v in groups.items()], fontsize=TICK_SIZE - 1)
-        ax.set_xlim(-0.6, len(groups) - 0.4)
-        ax.set_title(panel_title, fontsize=TITLE_SIZE - 4, pad=8)
-        ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
-        ax.set_axisbelow(True)
-        for spine in ("top", "right"):
-            ax.spines[spine].set_visible(False)
-    _finish_subgroup_grid(fig, axes, len(panels), ylabel, title)  # black bar = median (say so in the caption)
+    for idx, (ax, (panel_title, groups)) in enumerate(zip(axes.ravel(), panels)):
+        groups = {str(k): np.asarray(v, dtype=float)[np.isfinite(np.asarray(v, dtype=float))]
+                  for k, v in groups.items()}
+        order = list(groups)
+        palette = get_category_palette(order)
+        long = pd.DataFrame([(k, v) for k, vals in groups.items() for v in vals], columns=["group", "value"])
+        sns.boxplot(data=long, x="group", y="value", order=order, ax=ax, palette=palette, width=0.6, fliersize=0)
+        rng = np.random.default_rng(seed=idx)
+        for i, grp in enumerate(order):
+            vals = groups[grp]
+            ax.scatter(np.full(len(vals), i) + rng.normal(0, 0.08, size=len(vals)), vals, color=palette[grp],
+                       edgecolor="white", linewidth=0.4, s=24, alpha=0.75, zorder=5)
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels([f"{grp}\n(n={len(groups[grp])})" for grp in order], fontsize=TICK_SIZE)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.set_title(panel_title, fontsize=LABEL_SIZE)
+        ax.grid(axis="y", alpha=0.25)
+    if len(panels) > 1:
+        add_panel_labels(axes, [chr(ord("A") + i) for i in range(len(panels))], xytext=(-10, 6), fontsize=13)
+    _finish_subgroup_grid(fig, axes, len(panels), ylabel, title)
     save_figure(fig, out_path, dpi=300)
     plt.close(fig)
     return True
