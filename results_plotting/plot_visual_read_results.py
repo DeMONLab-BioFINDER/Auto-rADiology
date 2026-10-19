@@ -16,12 +16,9 @@ from plot_utils import (
     make_agreement_by_value_panel,
     make_classification_breakdown_panel,
     make_classification_breakdown_violin_panel,
-    make_confusion_category_categorical_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
-    make_probability_vs_suvr_scatter,
     make_roc_confusion_panel,
-    make_value_by_outcome_violin_panel,
     resolve_existing_path,
     resolve_path,
 )
@@ -220,22 +217,6 @@ def main():
                 cutoff=CENTAUR_FTP_CTRZ2_SUVR[value_col],
                 cutoff_note=", CTRz = 2",
             )
-        # Model probability vs regional SUVR with the CenTauRz = 2 reference line: Meta and
-        # Mesial temporal (tests whether Model +, Visual read - cases are isolated mesial
-        # elevation, which the visual read deliberately ignores).
-        for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
-            if value_col in ("MetaTemporal", "MesialTemporal"):
-                make_probability_vs_suvr_scatter(
-                    df_preds, df_demo, out_dir, decision_threshold,
-                    value_col=value_col, value_label=value_label,
-                    suvr_cutoff=CENTAUR_FTP_CTRZ2_SUVR[value_col],
-                )
-        # Clinical context by outcome: Centiloid / CDR-SB / age violins and amyloid-status
-        # proportions for all 4 model-vs-visual-read outcomes.
-        make_value_by_outcome_violin_panel(df_preds, df_demo, out_dir)
-        make_confusion_category_categorical_panel(
-            df_preds, df_demo, out_dir, cat_col="amyloid_status", cat_label="Amyloid status",
-        )
     print(f"[done] figures saved to {out_dir}")
 
 

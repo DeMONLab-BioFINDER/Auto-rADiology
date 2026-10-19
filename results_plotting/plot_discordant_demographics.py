@@ -9,7 +9,7 @@ script's three-way quantitative-agreement/isolated-MTL/unexplained-error bucket 
 (see its docstring for why that split exists, and why no per-scan SUVR cutoff is used
 anywhere in this analysis - the same reasoning applies here).
 
-Produces two figures per run, saved next to list_discordant_cases.py's own output
+Produces a figure and a csv table per run, saved next to list_discordant_cases.py's own output
 (<run_dir>/figures/, or <run_dir>/validation/figures/ for a zero-shot external
 validation run):
 
@@ -18,13 +18,10 @@ validation run):
    computed across the full run cohort, not just the discordant subset), split by
    False Positive / False Negative. No SUVR cutoff line - there is no validated
    per-scan cutoff (see list_discordant_cases.py's docstring).
-2. visual_read_discordant_demographics_table.png - a descriptive (no p-values; groups
+2. visual_read_discordant_demographics_table.csv - a descriptive (no p-values; groups
    can be single digits) characteristics table comparing the False Positive group, the
    False Negative group, and the full run cohort as a reference column, across age,
    sex, site, diagnosis, APOE, amyloid status, CDR, and CDR-SB.
-3. visual_read_discordant_composition.png - the same variables as the table, as bars:
-   % of each discordant group vs the full cohort in each category (counts above the
-   bars), to show over/under-representation.
 
 Usage:
     python results_plotting/plot_discordant_demographics.py /path/to/run_dir --dataset Gothenburg
@@ -44,7 +41,6 @@ from list_discordant_cases import (
 from plot_utils import (
     confusion_display_label,
     find_demo_csv,
-    make_discordant_composition_panel,
     make_discordant_demographics_table,
     make_discordant_percentile_panel,
     resolve_existing_path,
@@ -132,7 +128,6 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     make_discordant_percentile_panel(df_cohort, df_discordant, out_dir, DEFAULT_SUVR_COLS)
     make_discordant_demographics_table(df_cohort, df_discordant, out_dir, CONTINUOUS_COLS, CATEGORICAL_COLS)
-    make_discordant_composition_panel(df_cohort, df_discordant, out_dir)
 
     n_fp = (df_discordant["category"] == "False Positive").sum()
     n_fn = (df_discordant["category"] == "False Negative").sum()
