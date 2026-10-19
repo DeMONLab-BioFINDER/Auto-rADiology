@@ -398,6 +398,151 @@ def make_meta_amyloid_figure(df: pd.DataFrame, out_dir: Path, filename: str):
 
 
 # ------------------------------
+# Agreement between the three "judges": model, visual read, Meta-temporal SUVR (CTRz 2)
+# ------------------------------
+KAPPA_PAIRS = [("model", "human", "Model vs visual read"),
+               ("human", "suvr", "Visual read vs SUVR"),
+               ("model", "suvr", "Model vs SUVR")]
+# CU vs impaired follows Karagianni 2026 (agreement differs a lot by clinical stage, partly through
+# prevalence). Amyloid positive only matches their Abeta+-restricted analysis and is the population a
+# tau-PET trial screen would actually be applied to.
+KAPPA_STRATA = [("All", "#333333"), ("Cog. unimpaired", "#4C78A8"), ("Cog. impaired", "#E4572E"),
+                ("Amyloid positive", "#7B4FA0")]
+# Inter-reader kappa for the FDA/EMA flortaucipir visual read vs fully manual external reads
+# (Moscoso et al. 2025), drawn as a reference band.
+HUMAN_HUMAN_KAPPA = (0.78, 0.94)
+N_BOOT = 2000
+
+
+def cohen_kappa(a: np.ndarray, b: np.ndarray) -> float:
+    if len(a) == 0:
+        return np.nan
+    po = np.mean(a == b)
+    pe = np.mean(a) * np.mean(b) + np.mean(1 - a) * np.mean(1 - b)
+    return np.nan if pe == 1 else (po - pe) / (1 - pe)
+
+
+def kappa_votes(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per scan with a Meta-temporal SUVR: the model's, the visual read's and the SUVR's
+    positive/negative call. All pairs use these same scans, so the kappas are comparable."""
+    suvr = pd.to_numeric(df.get("MetaTemporal"), errors="coerce")
+    return pd.DataFrame({
+        "model": df["pred"].astype(int),
+        "human": df["y"].astype(int),
+        "suvr": (suvr >= CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]).astype(int),
+    })[suvr.notna()]
+
+
+def kappa_strata(df: pd.DataFrame, votes: pd.DataFrame) -> dict:
+    dx = combine_dx_groups(df["dx"]).where(df["dx"].notna()) if "dx" in df.columns else pd.Series(np.nan, index=df.index)
+    amyloid = pd.to_numeric(df["amyloid_status"], errors="coerce") if "amyloid_status" in df.columns \
+        else pd.Series(np.nan, index=df.index)
+    return {"All": votes,
+            "Cog. unimpaired": votes[(dx == "CU").reindex(votes.index, fill_value=False)],
+            "Cog. impaired": votes[(dx.notna() & (dx != "CU")).reindex(votes.index, fill_value=False)],
+            "Amyloid positive": votes[(amyloid == 1).reindex(votes.index, fill_value=False)]}
+
+
+def compute_kappa_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Pairwise Cohen's kappa with bootstrap 95% CI, overall and per KAPPA_STRATA group."""
+    strata = kappa_strata(df, kappa_votes(df))
+
+    rng = np.random.default_rng(seed=0)
+    rows = []
+    for stratum, v in strata.items():
+        idx = rng.integers(0, len(v), size=(N_BOOT, len(v))) if len(v) else None
+        for a, b, label in KAPPA_PAIRS:
+            x, y = v[a].to_numpy(), v[b].to_numpy()
+            k = cohen_kappa(x, y)
+            boot = [cohen_kappa(x[i], y[i]) for i in idx] if idx is not None else []
+            lo, hi = (np.nanpercentile(boot, [2.5, 97.5]) if len(boot) else (np.nan, np.nan))
+            rows.append({"pair": label, "group": stratum, "n": len(v),
+                         "agree_pct": round(100 * np.mean(x == y), 1) if len(v) else np.nan,
+                         "kappa": round(k, 3), "ci_low": round(lo, 3), "ci_high": round(hi, 3)})
+    return pd.DataFrame(rows)
+
+
+def make_kappa_figure(kappa: pd.DataFrame, out_dir: Path, filename: str):
+    """One row per pair, one dot per group (all / cog. unimpaired / cog. impaired), whiskers =
+    bootstrap 95% CI. Shaded band = human-vs-human agreement range for the same visual read."""
+    fig, ax = plt.subplots(figsize=(9.5, 5.2))
+    ax.axvspan(*HUMAN_HUMAN_KAPPA, color="#DDDDDD", alpha=0.6, zorder=0)
+    ax.text(np.mean(HUMAN_HUMAN_KAPPA), len(KAPPA_PAIRS) - 0.45, "two human readers\n(Moscoso 2025)",
+            ha="center", va="bottom", fontsize=TICK_SIZE - 3, color="#555555")
+
+    labels = [label for _, _, label in KAPPA_PAIRS][::-1]  # first pair at the top
+    offsets = np.linspace(0.27, -0.27, len(KAPPA_STRATA))
+    for (stratum, color), off in zip(KAPPA_STRATA, offsets):
+        sub = kappa[kappa["group"] == stratum].set_index("pair").reindex(labels)
+        ys = np.arange(len(labels)) + off
+        ax.hlines(ys, sub["ci_low"], sub["ci_high"], color=color, linewidth=1.8, zorder=2)
+        n = int(sub["n"].dropna().iloc[0]) if sub["n"].notna().any() else 0
+        ax.scatter(sub["kappa"], ys, s=70, color=color, edgecolor="white", linewidth=0.8, zorder=3,
+                   label=f"{stratum} (n={n})")
+        # Value printed just right of each whisker, so it never sits on top of another dot.
+        for y_, k, hi in zip(ys, sub["kappa"], sub["ci_high"]):
+            if pd.notna(k):
+                ax.text((hi if pd.notna(hi) else k) + 0.015, y_, f"{k:.2f}", ha="left", va="center",
+                        fontsize=TICK_SIZE - 3, color=color)
+
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels, fontsize=LABEL_SIZE - 2)
+    ax.set_ylim(-0.6, len(labels) - 0.1)
+    # Extend left of 0 when a CI dips below it (small strata), so no whisker is clipped.
+    ax.set_xlim(min(-0.05, np.nanmin(kappa[["kappa", "ci_low"]].to_numpy()) - 0.05), 1.1)
+    x_left = ax.get_xlim()[0]
+    ax.set_xticks(np.round(np.arange(np.ceil(x_left * 5) / 5, 1.001, 0.2), 1) + 0.0)  # 0.2 grid, inside the axis
+    ax.set_xlim(x_left, 1.1)
+    ax.axvline(0, color="#999999", linewidth=0.8, zorder=1)
+    ax.set_xlabel("Cohen's kappa (whiskers: bootstrap 95% CI)", fontsize=LABEL_SIZE - 3)
+    ax.grid(axis="x", color="#EEEEEE", linewidth=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.17), ncol=2, frameon=False, fontsize=TICK_SIZE - 2)
+    ax.set_title(f"How often the model, the visual read and the SUVR agree\n"
+                 f"(SUVR positive = Meta-temporal ≥ {CENTAUR_FTP_CTRZ2_SUVR['MetaTemporal']:.2f})",
+                 fontsize=TITLE_SIZE - 5, pad=12)
+    fig.subplots_adjust(left=0.24, right=0.97, top=0.84, bottom=0.28)
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path, filename: str):
+    """Three 2x2 agreement tables (everyone), the format Karagianni 2026 used: counts and % of all
+    scans in each cell, diagonal = agreement, kappa with bootstrap 95% CI in each title."""
+    votes = kappa_votes(df)
+    names = {"model": "Model", "human": "Visual read", "suvr": "SUVR"}
+    fig, axes = plt.subplots(1, len(KAPPA_PAIRS), figsize=(5.0 * len(KAPPA_PAIRS), 4.8))
+    for ax, (a, b, label) in zip(axes, KAPPA_PAIRS):
+        counts = np.array([[int(((votes[a] == i) & (votes[b] == j)).sum()) for j in (0, 1)] for i in (0, 1)])
+        frac = counts / max(counts.sum(), 1)
+        ax.imshow(frac, cmap="Greys", vmin=0, vmax=max(frac.max(), 1e-9) * 1.6)
+        for i in (0, 1):
+            for j in (0, 1):
+                agree = i == j
+                ax.text(j, i, f"{counts[i, j]}\n({100 * frac[i, j]:.0f}%)", ha="center", va="center",
+                        fontsize=LABEL_SIZE - 1, fontweight="bold" if agree else "normal",
+                        color="#B2182B" if not agree else "black")
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels([f"{names[b]} −", f"{names[b]} +"], fontsize=TICK_SIZE)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels([f"{names[a]} −", f"{names[a]} +"], fontsize=TICK_SIZE)
+        ax.tick_params(length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        row = kappa[(kappa["pair"] == label) & (kappa["group"] == "All")].iloc[0]
+        ax.set_title(f"{label}\nκ = {row['kappa']:.2f} [{row['ci_low']:.2f}, {row['ci_high']:.2f}], "
+                     f"agree {row['agree_pct']:.0f}%", fontsize=TITLE_SIZE - 5)
+    fig.suptitle(f"Agreement between model, visual read and SUVR (n={len(votes)}; red = disagreement; "
+                 f"SUVR + = Meta-temporal ≥ {CENTAUR_FTP_CTRZ2_SUVR['MetaTemporal']:.2f})",
+                 fontsize=TITLE_SIZE - 5)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.9))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+# ------------------------------
 # Slim supplement table
 # ------------------------------
 def _mean_sd(s: pd.Series) -> str:
@@ -500,6 +645,11 @@ def main():
     make_findings_table(df, indicators, out_dir, "visual_read_discordant_findings_table.csv", args)
     make_regional_pattern_figure(df, out_dir, "visual_read_discordant_regional_pattern.png")
     make_meta_amyloid_figure(df, out_dir, "visual_read_discordant_meta_amyloid.png")
+    if "MetaTemporal" in df.columns:
+        kappa = compute_kappa_table(df)
+        kappa.to_csv(out_dir / "visual_read_kappa_table.csv", index=False)
+        make_kappa_figure(kappa, out_dir, "visual_read_kappa.png")
+        make_kappa_grid_figure(df, kappa, out_dir, "visual_read_kappa_grids.png")
 
     counts = df["category"].value_counts()
     print("[done] " + ", ".join(f"{int(counts.get(c, 0))} x [{confusion_display_label(c)}]" for c in GROUP_ORDER)
