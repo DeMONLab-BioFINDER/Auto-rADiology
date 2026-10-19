@@ -11,6 +11,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy import stats
 from sklearn.metrics import roc_auc_score, roc_curve, average_precision_score, precision_recall_curve
 
 CUSTOM_PALETTE = [
@@ -51,20 +52,72 @@ def combine_dx_groups(s: pd.Series) -> pd.Series:
 
 
 def fdr_bh(p_values: pd.Series) -> np.ndarray:
-    p = pd.to_numeric(p_values, errors="coerce").to_numpy(dtype=float)
-    n = len(p)
-    if n == 0:
-        return np.array([])
+    """Benjamini-Hochberg adjusted p-values, aligned with the input (NaN in -> NaN out).
 
+    NaN inputs are excluded from the correction rather than carried through it: a test that could
+    not be run (a subgroup with one level, an empty contingency column) must not change the
+    adjustment for the tests that did run. They also cannot simply be left in - np.argsort parks
+    NaN at the end, so the reversed np.minimum.accumulate below would start from NaN and return an
+    all-NaN array, silently voiding every adjusted p in the family.
+    """
+    p_all = pd.to_numeric(p_values, errors="coerce").to_numpy(dtype=float)
+    out = np.full(len(p_all), np.nan, dtype=float)
+    valid = np.flatnonzero(np.isfinite(p_all))
+    n = len(valid)
+    if n == 0:
+        return out
+
+    p = p_all[valid]
     order = np.argsort(p)
     ranked = p[order]
     adjusted = ranked * n / np.arange(1, n + 1)
     adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
     adjusted = np.clip(adjusted, 0, 1)
 
-    out = np.empty(n, dtype=float)
-    out[order] = adjusted
+    out[valid[order]] = adjusted
     return out
+
+
+def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson 95% interval for a proportion, as a (low, high) pair on the 0-1 scale.
+
+    Preferred over the normal approximation for the small groups this analysis keeps running
+    into (a site can contribute single-digit visual-read positives): it stays inside [0, 1]
+    and is still sensible at k = 0 or k = n, where the Wald interval collapses to zero width.
+    """
+    if n == 0:
+        return (np.nan, np.nan)
+    p = k / n
+    denom = 1 + z**2 / n
+    centre = (p + z**2 / (2 * n)) / denom
+    half = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def bootstrap_auc_ci(y_true: np.ndarray, y_prob: np.ndarray, n_boot: int = 2000,
+                     seed: int = 0) -> tuple[float, float, float]:
+    """AUC with a percentile bootstrap 95% CI, as (auc, low, high).
+
+    Bootstrap rather than DeLong for consistency with the kappa CIs in
+    plot_discordant_findings.py - one resampling convention across the repo, and at these group
+    sizes the two agree to about the second decimal anyway. Returns NaNs when a group has only
+    one class present, where AUC is undefined (common for a small site's read-positive count).
+    """
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    if len(np.unique(y_true)) < 2:
+        return (np.nan, np.nan, np.nan)
+    auc = roc_auc_score(y_true, y_prob)
+    rng = np.random.default_rng(seed)
+    boot = []
+    for idx in rng.integers(0, len(y_true), size=(n_boot, len(y_true))):
+        if len(np.unique(y_true[idx])) < 2:
+            continue
+        boot.append(roc_auc_score(y_true[idx], y_prob[idx]))
+    if not boot:
+        return (auc, np.nan, np.nan)
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    return (float(auc), float(lo), float(hi))
 
 
 def get_display_order(values: pd.Series, col: str):
@@ -1066,6 +1119,337 @@ def make_confusion_category_categorical_panel(
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / (filename or f"visual_read_{cat_col}_by_outcome.png"), dpi=300)
     plt.close(fig)
+
+
+SUBGROUP_METRICS = [
+    ("sensitivity", "Sensitivity", "of visual-read POSITIVE scans,\nthe model found"),
+    ("specificity", "Specificity", "of visual-read NEGATIVE scans,\nthe model cleared"),
+    ("auc", "AUC", "ranking quality,\nindependent of the 0.5 threshold"),
+]
+
+
+def make_subgroup_performance_panel(
+    stats_df: pd.DataFrame,
+    pooled: dict,
+    out_dir: Path,
+    filename: str = "visual_read_subgroup_performance.png",
+    metrics=None,
+    title: str | None = None,
+) -> bool:
+    """Forest plot of the visual-read model's performance in every demographic/clinical subgroup.
+
+    One row per subgroup level, grouped into bands by variable (site, cognitive status, amyloid
+    status, ...), and one column per metric. Reading rules built into the figure:
+
+    - Sensitivity and specificity get their own columns and are never collapsed into accuracy or
+      PPV, both of which move with the subgroup's positivity rate - a site can look worse on PPV
+      purely through case mix.
+    - AUC sits beside them because it is threshold-free: a subgroup where AUC matches the pooled
+      value but sensitivity does not has a THRESHOLD problem, not a harder-scans problem, and that
+      distinction changes what you would do about it. The figure is laid out so that comparison is
+      a left-to-right glance along one row.
+    - Whiskers are Wilson 95% intervals (percentile bootstrap for AUC) and k/n is printed per row,
+      because subgroup sizes here run from ~20 to ~170 scans and a wide interval is the honest
+      reading of a small cell. The intervals are what the figure says about uncertainty; the
+      hypothesis tests live in visual_read_subgroup_tests.csv and are reported in prose, not
+      marked on the figure.
+    - Levels with one class only (no read-positive scans, say) show "n.d." at their slot rather
+      than a dot at zero.
+
+    Passing a single variable's rows switches to the slide-shaped layout: the variable name moves
+    into the figure title and the left-margin band headers disappear. One variable per figure is
+    how this is meant to be used; passing several still works and stacks them into labelled bands.
+
+    `stats_df` needs columns: variable, level, n, plus <metric>, <metric>_lo, <metric>_hi,
+    <metric>_k, <metric>_n per metric. `pooled` maps metric -> the whole-cohort value, drawn as
+    the reference line.
+    """
+    metrics = metrics or SUBGROUP_METRICS
+    metrics = [m for m in metrics if m[0] in stats_df.columns]
+    if stats_df.empty or not metrics:
+        print(f"[skip] {filename}: no subgroup statistics to plot.")
+        return False
+
+    # Row layout: one slot per level, one blank slot between variables for the band header.
+    variables = list(dict.fromkeys(stats_df["variable"]))
+    single = len(variables) == 1
+    rows, bands = [], {}
+    for var in variables:
+        sub = stats_df[stats_df["variable"] == var]
+        start = len(rows)
+        rows.extend((var, lvl) for lvl in sub["level"])
+        bands[var] = (start, len(rows) - 1)
+        rows.append((None, None))  # spacer
+    rows = rows[:-1]
+    y_of = {(v, l): len(rows) - 1 - i for i, (v, l) in enumerate(rows) if v is not None}
+
+    # Single-variable figures need a height floor: a 2-level variable is only 2 rows, and the
+    # title block plus the pooled-value caption need ~3.1in regardless of how few rows there are.
+    fig_h = (1.9 + 0.36 * len(rows)) if not single else max(4.0, 1.6 + 0.52 * len(rows))
+    fig, axes = plt.subplots(1, len(metrics), figsize=(4.9 * len(metrics), fig_h), sharey=True)
+    axes = np.atleast_1d(axes)
+
+    for ax, (metric, metric_label, metric_gloss) in zip(axes, metrics):
+        for _, row in stats_df.iterrows():
+            y = y_of[(row["variable"], row["level"])]
+            value = row.get(metric, np.nan)
+            if not np.isfinite(value):
+                ax.text(0.5, y, "n.d.", ha="center", va="center", fontsize=TICK_SIZE - 2,
+                        color="#999999", style="italic")
+                continue
+            lo, hi = row.get(f"{metric}_lo", np.nan), row.get(f"{metric}_hi", np.nan)
+            if np.isfinite(lo) and np.isfinite(hi):
+                ax.hlines(y, lo, hi, color="#999999", linewidth=2.0, zorder=2)
+            ax.scatter(value, y, s=95, color=CUSTOM_PALETTE[0], edgecolor="white",
+                       linewidth=0.8, zorder=3)
+            k, n = row.get(f"{metric}_k", np.nan), row.get(f"{metric}_n", np.nan)
+            text = f"{int(k)}/{int(n)}" if np.isfinite(k) and np.isfinite(n) else f"n={int(row['n'])}"
+            ax.text(-0.02, y, text, ha="right", va="center", fontsize=TICK_SIZE - 3, color="#777777")
+
+        if metric in pooled and np.isfinite(pooled[metric]):
+            ax.axvline(pooled[metric], color="black", linestyle="--", linewidth=1.3, zorder=1)
+            ax.text(pooled[metric], -1.35, f"whole cohort {pooled[metric]:.0%}", ha="center",
+                    va="center", fontsize=TICK_SIZE - 2, color="black")
+
+        ax.set_xlim(-0.22, 1.08)
+        ax.set_ylim(-1.9, len(rows) - 0.3)
+        ax.set_xticks([0, 0.25, 0.5, 0.75, 1.0])
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}" if v >= 0 else ""))
+        ax.set_title(f"{metric_label}\n{metric_gloss}", fontsize=TITLE_SIZE - 5, pad=10)
+        ax.grid(axis="x", color="#DDDDDD", linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        for spine in ("top", "right", "left"):
+            ax.spines[spine].set_visible(False)
+        # The axis runs 0-100%; the negative x-space exists only to hold the k/n labels, so the
+        # spine must not extend into it and imply a coordinate there.
+        ax.spines["bottom"].set_bounds(0, 1)
+        ax.tick_params(axis="y", length=0)
+
+    # Shared row labels: level names on the axis, variable names as bold band headers to their left.
+    axes[0].set_yticks([y_of[(v, l)] for v, l in rows if v is not None])
+    axes[0].set_yticklabels([str(l) for v, l in rows if v is not None], fontsize=LABEL_SIZE - 3)
+    if not single:
+        for var in variables:
+            lo_i, _ = bands[var]
+            axes[0].text(-0.62, len(rows) - 1 - lo_i + 0.55, var, ha="left", va="center",
+                         fontsize=LABEL_SIZE - 3, fontweight="bold",
+                         transform=axes[0].get_yaxis_transform(which="grid"))
+
+    default_title = (f"Visual-read model performance by {variables[0].lower()}" if single else
+                     "Visual-read model performance by subgroup")
+    fig.suptitle((title or default_title) + "\nwhiskers: 95% CI"
+                 + ("" if single else "  ·  n.d. = metric undefined (one class only)"),
+                 fontsize=TITLE_SIZE - 4, y=1 - 0.22 / fig_h, va="top")
+    fig.subplots_adjust(left=0.17 if single else 0.23, right=0.98,
+                        top=1 - (1.55 if single else 1.65) / fig_h,
+                        bottom=(1.1 if single else 0.9) / fig_h, wspace=0.12)
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+    return True
+
+
+# ------------------------------
+# Subgroup analysis (shared by analyze_subgroup_performance_visual_read.py / _suvr.py)
+# ------------------------------
+SUBGROUP_MIN_LEVEL_N = 10  # a level below this is reported in the csv but left off the figures
+
+
+def resolve_predictions_csv(run_dir: Path, dataset: str) -> tuple[Path, Path]:
+    """(predictions csv, figure output dir) for a run, with the same priority as the other
+    results_plotting scripts: a run_val.py zero-shot external validation result first (figures to
+    <run_dir>/validation/figures), then the run's own held-out test result (figures to
+    <run_dir>/figures)."""
+    zeroshot = sorted((run_dir / "validation").glob(f"External_validation_{dataset}__*_zeroshot_results.csv"))
+    if zeroshot:
+        return zeroshot[0], run_dir / "validation" / "figures"
+    preds_path = resolve_existing_path(
+        [
+            run_dir / "validation" / dataset / f"Test_{dataset}_results.csv",
+            run_dir / "evaluation" / dataset / f"Eval_{dataset}_results.csv",
+        ],
+        "predictions csv",
+    )
+    return preds_path, run_dir / "figures"
+
+
+def add_subgroup_columns(df: pd.DataFrame, female_code: float = 2) -> list[tuple[str, str, list]]:
+    """Adds one categorical column per subgroup variable; returns [(column, display name, levels)].
+
+    The list is fixed in advance and chosen so no two variables mostly describe the same people:
+    diagnosis, sex, APOE e4, amyloid status, site. Cognitive status, CDR and cognitive x amyloid
+    are deliberately absent - they largely repeat diagnosis, and testing them too would both
+    inflate the FDR family and invite comparing overlapping groups as if they were separate.
+    Age is not here either: each script tests it as a continuous number, never in bands.
+
+    A variable is skipped when its source column is missing or it has a single level (e.g. site
+    in a single-site external cohort such as AVID).
+    """
+    out = []
+
+    def add(col, name, series, order):
+        series = series.astype("string")
+        df[col] = series
+        present = set(series.dropna().unique())
+        levels = [level for level in order if level in present]
+        if len(levels) >= 2:
+            out.append((col, name, levels))
+
+    if "dx" in df.columns:
+        dx = combine_dx_groups(df["dx"]).replace({"AlzCS dem": "AD dementia"})
+        add("_g_dx", "Diagnosis", dx, ["CU", "MCI", "AD dementia", "Other"])
+    if "gender" in df.columns:
+        sex = pd.to_numeric(df["gender"], errors="coerce")
+        add("_g_sex", "Sex", sex.map(lambda v: pd.NA if pd.isna(v) else ("Female" if v == female_code else "Male")),
+            ["Female", "Male"])
+    if "apoe" in df.columns:
+        apoe = pd.to_numeric(df["apoe"], errors="coerce")
+        add("_g_apoe", "APOE ε4", apoe.map({0: "Non-carrier", 1: "Carrier"}), ["Non-carrier", "Carrier"])
+    if "amyloid_status" in df.columns:
+        amy = pd.to_numeric(df["amyloid_status"], errors="coerce")
+        add("_g_amy", "Amyloid status", amy.map({0: "Aβ negative", 1: "Aβ positive"}),
+            ["Aβ negative", "Aβ positive"])
+    if "site" in df.columns:
+        site = df["site"].astype("string")
+        add("_g_site", "Site", site, sorted(site.dropna().unique()))
+    return out
+
+
+def within_strata_permutation_test(values, covariate, strata, n_perm: int = 10000, seed: int = 0):
+    """Is `values` associated with `covariate` once `strata` is accounted for?
+
+    Used for "does CDR-SB matter beyond diagnosis": both are ranked, each is compared only against
+    people in the same stratum (diagnosis), and the p-value comes from shuffling the covariate
+    within each stratum - so a difference that diagnosis alone explains cannot make it
+    significant. No model is fitted, so it copes with CDR-SB's pile of zeros and with a diagnosis
+    group where the model happens to be right every time.
+
+    Returns (statistic, p): the statistic is a within-stratum rank correlation (-1..1; positive =
+    higher covariate goes with higher values), the p-value is two-sided.
+    """
+    a = stats.rankdata(np.asarray(values, dtype=float))
+    c = stats.rankdata(np.asarray(covariate, dtype=float))
+    codes = pd.factorize(pd.Series(strata).astype("string"))[0]
+    a_c, c_c = a.copy(), c.copy()
+    for s in np.unique(codes):
+        idx = codes == s
+        a_c[idx] -= a[idx].mean()
+        c_c[idx] -= c[idx].mean()
+    denom = np.sqrt((a_c ** 2).sum() * (c_c ** 2).sum())
+    if denom == 0:
+        return np.nan, np.nan
+    observed = (a_c * c_c).sum() / denom
+
+    rng = np.random.default_rng(seed)
+    perms = np.empty((n_perm, len(c_c)))
+    for s in np.unique(codes):
+        idx = np.flatnonzero(codes == s)
+        perms[:, idx] = rng.permuted(np.tile(c_c[idx], (n_perm, 1)), axis=1)
+    null = perms @ a_c / denom
+    p_value = (1 + np.sum(np.abs(null) >= abs(observed) - 1e-12)) / (n_perm + 1)
+    return float(observed), float(p_value)
+
+
+def report_missing_by_site(df: pd.DataFrame, col: str, label: str) -> None:
+    """Print how many scans lack `col`, and name any site where it is missing for every scan
+    (e.g. a cohort that never collected CDR-SB) - those sites silently drop out of that test."""
+    missing = pd.to_numeric(df[col], errors="coerce").isna()
+    if not missing.any():
+        return
+    msg = f"[note] {label}: missing for {int(missing.sum())}/{len(df)} scans, which are left out of that test"
+    if "site" in df.columns:
+        by_site = missing.groupby(df["site"].astype("string")).mean()
+        absent = list(by_site[by_site == 1].index)
+        if absent:
+            msg += f" (no {label} at all for site: {', '.join(absent)})"
+    print(msg)
+
+
+def _subgroup_panel_grid(n_panels: int, panel_w: float, panel_h: float):
+    """At most two panels per row, so a 4-region figure stays readable on a slide."""
+    n_cols = min(2, n_panels)
+    n_rows = int(np.ceil(n_panels / n_cols))
+    if n_panels == 1:
+        panel_w = max(panel_w, 5.4)  # room for the two-line figure title
+    return plt.subplots(n_rows, n_cols, squeeze=False, sharey=True,
+                        figsize=(panel_w * n_cols, panel_h * n_rows + 0.9))
+
+
+def _finish_subgroup_grid(fig, axes, n_panels: int, ylabel: str, title: str):
+    for ax in axes[:, 0]:
+        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 2)
+    for ax in axes.ravel()[n_panels:]:
+        ax.set_visible(False)
+    fig.suptitle(title, fontsize=TITLE_SIZE - 3)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))  # tight_layout already makes room for the suptitle
+
+
+def make_value_by_group_figure(
+    panels: list[tuple[str, dict]],
+    ylabel: str,
+    title: str,
+    out_path: Path,
+) -> bool:
+    """One panel per entry of `panels` = (panel title, {group label: values}). Every scan is a dot,
+    the black bar is the group median, n is printed under each group. Nothing else on it - the
+    test behind the figure is in the csv."""
+    panels = [(t, groups) for t, groups in panels if groups]
+    if not panels:
+        return False
+    widest = max(len(groups) for _, groups in panels)
+    fig, axes = _subgroup_panel_grid(len(panels), panel_w=max(3.6, 0.95 * widest + 1.4), panel_h=4.2)
+    rng = np.random.default_rng(0)
+    for ax, (panel_title, groups) in zip(axes.ravel(), panels):
+        for x, (label, values) in enumerate(groups.items()):
+            values = np.asarray(values, dtype=float)
+            values = values[np.isfinite(values)]
+            ax.scatter(x + rng.uniform(-0.18, 0.18, len(values)), values, s=16, alpha=0.55,
+                       color=CUSTOM_PALETTE[x % len(CUSTOM_PALETTE)], edgecolor="none", zorder=2)
+            if len(values):
+                ax.hlines(np.median(values), x - 0.3, x + 0.3, color="black", linewidth=2, zorder=3)
+        ax.set_xticks(range(len(groups)))
+        ax.set_xticklabels([f"{label}\n(n={np.isfinite(np.asarray(v, dtype=float)).sum()})"
+                            for label, v in groups.items()], fontsize=TICK_SIZE - 1)
+        ax.set_xlim(-0.6, len(groups) - 0.4)
+        ax.set_title(panel_title, fontsize=TITLE_SIZE - 4, pad=8)
+        ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+    _finish_subgroup_grid(fig, axes, len(panels), ylabel, f"{title}\nblack bar = median")
+    save_figure(fig, out_path, dpi=300)
+    plt.close(fig)
+    return True
+
+
+def make_value_vs_continuous_figure(
+    panels: list[tuple[str, np.ndarray, np.ndarray]],
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    out_path: Path,
+) -> bool:
+    """One scatter panel per entry of `panels` = (panel title, x, y), with a straight-line fit as a
+    guide to the trend. For a continuous variable (age), so it never has to be cut into bands."""
+    panels = [(t, np.asarray(x, float), np.asarray(y, float)) for t, x, y in panels]
+    panels = [(t, x[m], y[m]) for t, x, y in panels if (m := np.isfinite(x) & np.isfinite(y)).sum() >= 2]
+    if not panels:
+        return False
+    fig, axes = _subgroup_panel_grid(len(panels), panel_w=4.6, panel_h=4.2)
+    for ax, (panel_title, x, y) in zip(axes.ravel(), panels):
+        ax.scatter(x, y, s=16, alpha=0.55, color=CUSTOM_PALETTE[0], edgecolor="none", zorder=2)
+        slope, intercept = np.polyfit(x, y, 1)
+        xs = np.linspace(x.min(), x.max(), 50)
+        ax.plot(xs, intercept + slope * xs, color="black", linewidth=1.8, zorder=3)
+        ax.set_title(f"{panel_title} (n={len(x)})", fontsize=TITLE_SIZE - 4, pad=8)
+        ax.set_xlabel(xlabel, fontsize=LABEL_SIZE - 2)
+        ax.grid(color="#DDDDDD", linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+    _finish_subgroup_grid(fig, axes, len(panels), ylabel, f"{title}\nline = straight-line fit")
+    save_figure(fig, out_path, dpi=300)
+    plt.close(fig)
+    return True
 
 
 def make_discordant_percentile_panel(
