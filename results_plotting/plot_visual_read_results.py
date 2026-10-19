@@ -15,7 +15,6 @@ from plot_utils import (
     make_agreement_by_centiloid_panel,
     make_agreement_by_value_panel,
     make_classification_breakdown_panel,
-    make_classification_breakdown_suvr_violin_panel,
     make_classification_breakdown_violin_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
@@ -178,7 +177,6 @@ def main():
     make_classification_breakdown_violin_panel(df_preds, out_dir, decision_threshold)
 
     if df_demo is not None:
-        make_classification_breakdown_suvr_violin_panel(df_preds, df_demo, out_dir, REGIONAL_SUVR_BY_OUTCOME)
         for value_col, value_label in REGIONAL_SUVR_BY_OUTCOME:
             make_agreement_by_value_panel(
                 df_preds, df_demo, out_dir,
