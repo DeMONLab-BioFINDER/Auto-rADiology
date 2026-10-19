@@ -42,6 +42,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
@@ -334,6 +335,68 @@ def make_regional_pattern_figure(df: pd.DataFrame, out_dir: Path, filename: str)
     plt.close(fig)
 
 
+def make_meta_amyloid_figure(df: pd.DataFrame, out_dir: Path, filename: str):
+    """Headline picture: who does the SUVR side with? One column per Model/Visual read group, every
+    scan a dot at its Meta-temporal SUVR, filled = amyloid positive, hollow = amyloid negative,
+    grey = amyloid unknown. Dashed line = CTRz 2 SUVR equivalent (reference only). Counts above each
+    column: how many sit above the line, and how many are amyloid positive."""
+    if "MetaTemporal" not in df.columns:
+        return
+    suvr = pd.to_numeric(df["MetaTemporal"], errors="coerce")
+    amyloid = pd.to_numeric(df["amyloid_status"], errors="coerce") if "amyloid_status" in df.columns \
+        else pd.Series(np.nan, index=df.index)
+    cutoff = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
+    rng = np.random.default_rng(seed=0)
+
+    fig, ax = plt.subplots(figsize=(10, 6.5))
+    y_top = np.nanmax(suvr.to_numpy()) if suvr.notna().any() else cutoff
+    for x, cat in enumerate(GROUP_ORDER):
+        in_cat = (df["category"] == cat) & suvr.notna()
+        color = CONFUSION_CATEGORY_PALETTE[cat]
+        for status, face, edge in ((1, color, "white"), (0, "white", color), (np.nan, "#BBBBBB", "white")):
+            m = in_cat & (amyloid.isna() if np.isnan(status) else (amyloid == status))
+            if not m.any():
+                continue
+            ax.scatter(x + rng.uniform(-0.28, 0.28, size=int(m.sum())), suvr[m], s=34,
+                       facecolor=face, edgecolor=edge, linewidth=1.1, alpha=0.85, zorder=3)
+        if in_cat.any():
+            ax.hlines(suvr[in_cat].median(), x - 0.34, x + 0.34, color="black", linewidth=2, zorder=4)
+        n = int(in_cat.sum())
+        above = int((suvr[in_cat] >= cutoff).sum())
+        amy = amyloid[df["category"] == cat].dropna()
+        ax.text(x, 1.02, f"above line: {above}/{n}\nAβ+: {int(amy.sum())}/{len(amy)}",
+                transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=TICK_SIZE - 1)
+
+    ax.axhline(cutoff, color="#555555", linestyle="--", linewidth=1.2, zorder=1)
+    ax.text(len(GROUP_ORDER) - 0.5, cutoff, f" CTRz 2 ≈ {cutoff:.2f}", va="bottom", ha="right",
+            fontsize=TICK_SIZE - 2, color="#555555")
+    ax.set_xticks(range(len(GROUP_ORDER)))
+    ax.set_xticklabels([f"{confusion_display_label(c, multiline=True)}\n(n={int((df['category'] == c).sum())})"
+                        for c in GROUP_ORDER], fontsize=TICK_SIZE)
+    ax.set_xlim(-0.6, len(GROUP_ORDER) - 0.4)
+    ax.set_ylabel("Meta-temporal SUVR", fontsize=LABEL_SIZE - 2)
+    ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+
+    handles = [
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7, markerfacecolor="#666666",
+               markeredgecolor="white", label="Amyloid positive"),
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7, markerfacecolor="white",
+               markeredgecolor="#666666", markeredgewidth=1.2, label="Amyloid negative"),
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7, markerfacecolor="#BBBBBB",
+               markeredgecolor="white", label="Amyloid unknown"),
+        Line2D([0], [0], color="black", linewidth=2, label="Median"),
+    ]
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False,
+              fontsize=TICK_SIZE - 1)
+    fig.suptitle("Where each group sits on Meta-temporal SUVR, and who has amyloid", fontsize=TITLE_SIZE - 3)
+    fig.subplots_adjust(left=0.1, right=0.97, top=0.8, bottom=0.25)
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
 # ------------------------------
 # Slim supplement table
 # ------------------------------
@@ -436,6 +499,7 @@ def main():
     make_continuous_figure(df, out_dir, "visual_read_discordant_continuous.png")
     make_findings_table(df, indicators, out_dir, "visual_read_discordant_findings_table.csv", args)
     make_regional_pattern_figure(df, out_dir, "visual_read_discordant_regional_pattern.png")
+    make_meta_amyloid_figure(df, out_dir, "visual_read_discordant_meta_amyloid.png")
 
     counts = df["category"].value_counts()
     print("[done] " + ", ".join(f"{int(counts.get(c, 0))} x [{confusion_display_label(c)}]" for c in GROUP_ORDER)
