@@ -50,6 +50,7 @@ import pandas as pd
 from list_discordant_cases import find_dataset_demo_csv, find_zeroshot_results_csv
 from plot_utils import (
     CENTAUR_FTP_CTRZ2_SUVR,
+    CENTAUR_FTP_EQUATIONS,
     CONFUSION_CATEGORY_LABELS,
     CONFUSION_CATEGORY_PALETTE,
     LABEL_SIZE,
@@ -287,7 +288,17 @@ KAPPA_PAIRS = [("model", "human", "Model vs visual read"),
 # amyloid - and + = everyone with amyloid status), so groups are only compared within a split.
 # CU vs impaired follows Karagianni 2026; amyloid positive is the population a tau-PET trial
 # screen would be applied to.
-KAPPA_STRATA = ["All", "Cog. unimpaired", "Cog. impaired", "Amyloid negative", "Amyloid positive"]
+KAPPA_STRATA = ["All", "Cog. unimpaired", "Cog. impaired", "Amyloid negative", "Amyloid positive",
+                "Borderline SUVR"]
+# Borderline band: one CTRz unit either side of the CTRz 2 cutoff, on the paper's own scale
+# (CTRz = slope * SUVR - intercept), ~1.26-1.42 for Meta-temporal. Inside it the SUVR's yes/no
+# call is close to a coin flip by construction - the question is whether the model does better.
+BORDERLINE_CTRZ = (1.0, 3.0)
+
+
+def borderline_suvr_range(region: str = "MetaTemporal") -> tuple[float, float]:
+    slope, intercept = CENTAUR_FTP_EQUATIONS[region]
+    return tuple((ctrz + intercept) / slope for ctrz in BORDERLINE_CTRZ)
 N_BOOT = 2000
 
 
@@ -314,6 +325,8 @@ def kappa_strata(df: pd.DataFrame, votes: pd.DataFrame) -> dict:
     dx = combine_dx_groups(df["dx"]).where(df["dx"].notna()) if "dx" in df.columns else pd.Series(np.nan, index=df.index)
     amyloid = pd.to_numeric(df["amyloid_status"], errors="coerce") if "amyloid_status" in df.columns \
         else pd.Series(np.nan, index=df.index)
+    suvr = pd.to_numeric(df["MetaTemporal"], errors="coerce")
+
     def mask(m):
         return m.fillna(False).astype(bool).reindex(votes.index, fill_value=False)
 
@@ -321,7 +334,8 @@ def kappa_strata(df: pd.DataFrame, votes: pd.DataFrame) -> dict:
             "Cog. unimpaired": votes[mask(dx == "CU")],
             "Cog. impaired": votes[mask(dx.notna() & (dx != "CU"))],
             "Amyloid negative": votes[mask(amyloid == 0)],
-            "Amyloid positive": votes[mask(amyloid == 1)]}
+            "Amyloid positive": votes[mask(amyloid == 1)],
+            "Borderline SUVR": votes[mask(suvr.between(*borderline_suvr_range()))]}
 
 
 def compute_kappa_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -343,10 +357,15 @@ def compute_kappa_table(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path, filename: str):
-    """Three 2x2 agreement tables (everyone), the format Karagianni 2026 used: counts and % of all
-    scans in each cell, diagonal = agreement, kappa with bootstrap 95% CI in each title."""
-    votes = kappa_votes(df)
+def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path, filename: str,
+                           stratum: str = "All", scope: str = ""):
+    """Three 2x2 agreement tables for one KAPPA_STRATA group, the format Karagianni 2026 used: counts
+    and % of the group's scans in each cell, diagonal = agreement, kappa with bootstrap 95% CI in
+    each title. `scope` is added to the figure title to say which scans are shown."""
+    votes = kappa_strata(df, kappa_votes(df))[stratum]
+    if votes.empty:
+        print(f"[skip] {filename}: no scans in group '{stratum}'.")
+        return
     names = {"model": "Model", "human": "Visual read", "suvr": "SUVR"}
     # Same orientation as the ROC/confusion-matrix panel: the reference on the rows, the model on the
     # columns (visual read outranks SUVR as the reference).
@@ -370,10 +389,11 @@ def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path,
         ax.tick_params(length=0)
         for spine in ax.spines.values():
             spine.set_visible(False)
-        row = kappa[(kappa["pair"] == label) & (kappa["group"] == "All")].iloc[0]
-        ax.set_title(f"{label}\nκ = {row['kappa']:.2f} [{row['ci_low']:.2f}, {row['ci_high']:.2f}], "
-                     f"agree {row['agree_pct']:.0f}%", fontsize=TITLE_SIZE - 5)
-    fig.suptitle(f"Agreement between model, visual read and SUVR (n={len(votes)}; red = disagreement; "
+        row = kappa[(kappa["pair"] == label) & (kappa["group"] == stratum)].iloc[0]
+        kappa_text = ("κ undefined (one answer only)" if pd.isna(row["kappa"]) else
+                      f"κ = {row['kappa']:.2f} [{row['ci_low']:.2f}, {row['ci_high']:.2f}]")
+        ax.set_title(f"{label}\n{kappa_text}, agree {row['agree_pct']:.0f}%", fontsize=TITLE_SIZE - 5)
+    fig.suptitle(f"Agreement between model, visual read and SUVR{scope} (n={len(votes)}; red = disagreement; "
                  f"SUVR + = Meta-temporal ≥ {CENTAUR_FTP_CTRZ2_SUVR['MetaTemporal']:.2f})",
                  fontsize=TITLE_SIZE - 5)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.9))
@@ -486,6 +506,11 @@ def main():
         kappa = compute_kappa_table(df)
         kappa.to_csv(out_dir / "visual_read_kappa_table.csv", index=False)
         make_kappa_grid_figure(df, kappa, out_dir, "visual_read_kappa_grids.png")
+        lo, hi = borderline_suvr_range()
+        make_kappa_grid_figure(df, kappa, out_dir, "visual_read_kappa_grids_borderline.png",
+                               stratum="Borderline SUVR",
+                               scope=f"\nonly scans near the cutoff: Meta-temporal SUVR {lo:.2f}–{hi:.2f} "
+                                     f"(CTRz {BORDERLINE_CTRZ[0]:g}–{BORDERLINE_CTRZ[1]:g})")
 
     counts = df["category"].value_counts()
     print("[done] " + ", ".join(f"{int(counts.get(c, 0))} x [{confusion_display_label(c)}]" for c in GROUP_ORDER)
