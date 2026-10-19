@@ -25,9 +25,11 @@ Produces, next to the run's other figures (<run_dir>/figures/, or
    with Wilson 95% CI, rows sorted by the larger discordant-vs-reference gap. n/N printed per
    discordant group, since the denominator differs per row when a variable is missing.
    Continuous variables are NOT thresholded here - see 3.
-3. visual_read_discordant_continuous.png - age, CDR-SB and Centiloid, every scan a dot with
-   the median marked, same two comparisons (top: false negatives vs true positives, bottom:
-   false positives vs true negatives).
+3. visual_read_discordant_continuous.png - age, CDR-SB, Centiloid and Meta-temporal SUVR, every
+   scan a dot with the median marked, same two comparisons (top: false negatives vs true
+   positives, bottom: false positives vs true negatives). The SUVR panel carries a dashed CTRz 2
+   line: it answers whether the discordant groups' tau burden actually moves, which the
+   thresholded n/N row in the table (4) can only answer yes/no.
 4. visual_read_kappa_grids.png - pairwise agreement between model, visual read and Meta-temporal
    SUVR at its CTRz 2 equivalent: three 2x2 tables for everyone, Cohen's kappa (bootstrap 95% CI)
    in each title. visual_read_kappa_table.csv has the same kappas for everyone and split by
@@ -35,6 +37,13 @@ Produces, next to the run's other figures (<run_dir>/figures/, or
 2. visual_read_discordant_findings_table.csv - slim supplement table: four agreement/
    discordance groups + overall cohort, one row per yes/no variable, diagnosis and CDR
    grouped, skewed variables as median [IQR], n/N shown wherever data is missing.
+5. visual_read_discordant_gradient.png - all four groups on one axis, concordant negative to
+   concordant positive: amyloid positive and APOE e4 carrier (proportion, Wilson 95% CI) and
+   Centiloid and Meta-temporal SUVR (median [IQR], CTRz 2 line on the SUVR panel).
+6. visual_read_discordant_suvr_threshold.png - % of each group with Meta-temporal SUVR at or
+   above its CTRz 2 equivalent (Wilson 95% CI): whether quantification backs each group's call.
+7. visual_read_discordant_stage_composition.png - diagnosis mix (CU / MCI / dementia / other)
+   of each group as stacked bars, normalised within group.
 
 Usage:
     python results_plotting/plot_discordant_findings.py /path/to/run_dir --dataset Gothenburg
@@ -53,6 +62,7 @@ from plot_utils import (
     CENTAUR_FTP_EQUATIONS,
     CONFUSION_CATEGORY_LABELS,
     CONFUSION_CATEGORY_PALETTE,
+    CUSTOM_PALETTE,
     LABEL_SIZE,
     TICK_SIZE,
     TITLE_SIZE,
@@ -63,6 +73,8 @@ from plot_utils import (
     resolve_existing_path,
     resolve_path,
     save_figure,
+    style_legend,
+    wilson_interval,
 )
 
 # Left-to-right order: each discordant group sits next to the group it is compared against.
@@ -81,16 +93,6 @@ def parse_args():
         help="Value of the `gender` column that means female (2 in this dataset).",
     )
     return parser.parse_args()
-
-
-def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    if n == 0:
-        return (np.nan, np.nan)
-    p = k / n
-    denom = 1 + z**2 / n
-    centre = (p + z**2 / (2 * n)) / denom
-    half = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denom
-    return (max(0.0, centre - half), min(1.0, centre + half))
 
 
 def load_scans(args, run_dir: Path):
@@ -233,13 +235,27 @@ def make_findings_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: 
 # ------------------------------
 # Continuous characteristics: every point shown, no cut-offs
 # ------------------------------
-CONTINUOUS_VARS = [("age", "Age (years)"), ("CDR_SB", "CDR-SB"), ("CL", "Centiloid")]
+# Meta-temporal only, not every CenTauR region: it is the region this script already thresholds
+# for the table's CTRz 2 row and for the SUVR vote in the kappa grids, so the panel is the
+# continuous view of a call made elsewhere in the same figure set. Per-region SUVR for the
+# discordant cases is plot_discordant_demographics.py's percentile panel.
+CONTINUOUS_VARS = [("age", "Age (years)"), ("CDR_SB", "CDR-SB"), ("CL", "Centiloid"),
+                   ("MetaTemporal", "Meta-temporal SUVR")]
+# Dashed reference line for the tau regions only: the region's own CTRz 2 equivalent, the same
+# value the table's "Meta-temporal SUVR >= CTRz 2" row and the kappa grids' SUVR call use. Drawn
+# here because the whole point of the panel is to show where the discordant groups sit RELATIVE
+# to it while keeping every scan's actual value visible - the thresholded version stays out of
+# the dot plot (see main()). Centiloid gets no line: amyloid positivity is not what the visual
+# read or the model is being asked about.
+CONTINUOUS_CUTOFFS = {region: value for region, value in CENTAUR_FTP_CTRZ2_SUVR.items()}
 
 
 def make_continuous_figure(df: pd.DataFrame, out_dir: Path, filename: str):
-    """Age / CDR-SB / Centiloid without dichotomising: one panel per variable, every scan a dot,
-    black bar = median. Top row compares false negatives to true positives, bottom row false
-    positives to true negatives (same pairs as the dot plot)."""
+    """Age / CDR-SB / Centiloid / regional tau SUVR without dichotomising: one panel per variable,
+    every scan a dot, black bar = median. Top row compares false negatives to true positives,
+    bottom row false positives to true negatives (same pairs as the dot plot). Tau regions get a
+    dashed CTRz 2 line (CONTINUOUS_CUTOFFS) - the discordant groups' position relative to that
+    line is the finding, so the line is shown without reducing the scans to above/below it."""
     variables = [(c, lab) for c, lab in CONTINUOUS_VARS if c in df.columns]
     if not variables:
         return
@@ -258,6 +274,11 @@ def make_continuous_figure(df: pd.DataFrame, out_dir: Path, filename: str):
                            alpha=0.95 if is_disc else 0.6, zorder=3 if is_disc else 2)
                 if len(v):
                     ax.hlines(v.median(), x - 0.3, x + 0.3, color="black", linewidth=1.8, zorder=4)
+            cutoff = CONTINUOUS_CUTOFFS.get(col)
+            if cutoff is not None:
+                ax.axhline(cutoff, color="black", linestyle="--", linewidth=1.3, zorder=1)
+                ax.text(1.62, cutoff, f"CTRz 2\n({cutoff:.2f})", ha="right", va="bottom",
+                        fontsize=TICK_SIZE - 3, color="black")
             ax.set_xlim(-0.6, 1.6)
             ax.set_xticks([0, 1])
             ax.set_xticklabels(
@@ -271,6 +292,189 @@ def make_continuous_figure(df: pd.DataFrame, out_dir: Path, filename: str):
                 ax.spines[spine].set_visible(False)
     fig.suptitle("Continuous characteristics by group (black bar = median)", fontsize=TITLE_SIZE - 3)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.95))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+# ------------------------------
+# All four groups on one axis: the gradient view
+# ------------------------------
+# Complementary to make_dot_plot, not a replacement. The dot plot answers "is this discordant group
+# different from the group that shares its visual read", which is the statistically careful
+# question. These three answer "where do the discordant groups sit on the whole spectrum", which is
+# the question a reader of a slide actually asks - all four groups on one axis, left to right from
+# concordant negative to concordant positive, so a monotone rise (or a break in it) is visible
+# without comparing two panels. Same numbers as the table, drawn.
+GRADIENT_PROPORTIONS = [("_amyloid", "Amyloid positive"), ("_apoe", "APOE ε4 carrier")]
+GRADIENT_CONTINUOUS = [("CL", "Centiloid"), ("MetaTemporal", "Meta-temporal SUVR")]
+
+
+def _group_xticklabels(ax, df, fontsize_delta: int = 2):
+    counts = df["category"].value_counts()
+    ax.set_xticks(range(len(GROUP_ORDER)))
+    ax.set_xticklabels(
+        [f"{confusion_display_label(c, multiline=True)}\n(n={int(counts.get(c, 0))})" for c in GROUP_ORDER],
+        fontsize=TICK_SIZE - fontsize_delta,
+    )
+    ax.set_xlim(-0.5, len(GROUP_ORDER) - 0.5)
+
+
+def _style_group_axes(ax, df, ylabel: str, title: str):
+    _group_xticklabels(ax, df)
+    ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 2)
+    ax.set_title(title, fontsize=TITLE_SIZE - 4, pad=10)
+    ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+
+
+def make_gradient_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: str):
+    """2x2: amyloid positivity, APOE ε4 carriage (proportion + Wilson 95% CI, k/N printed because the
+    denominator moves with missing data) and Centiloid, Meta-temporal SUVR (median + IQR), all four
+    groups side by side in GROUP_ORDER. The SUVR panel carries the CTRz 2 line - whether the tau
+    panel breaks the gradient the other three show is the finding this figure exists to make
+    visible."""
+    available = {col for col, _ in indicators}
+    props = group_proportions(df, [(c, l) for c, l in GRADIENT_PROPORTIONS if c in available])
+    continuous = [(c, l) for c, l in GRADIENT_CONTINUOUS if c in df.columns]
+    panels = [(c, l, "prop") for c, l in GRADIENT_PROPORTIONS if c in available]
+    panels += [(c, l, "cont") for c, l in continuous]
+    if not panels:
+        return
+
+    n_cols = 2 if len(panels) > 1 else 1
+    n_rows = int(np.ceil(len(panels) / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.6 * n_cols, 4.6 * n_rows), squeeze=False)
+    flat = axes.ravel()
+    xs = np.arange(len(GROUP_ORDER))
+
+    for ax, (col, label, kind) in zip(flat, panels):
+        if kind == "prop":
+            sub = props[props["label"] == label].set_index("category").reindex(GROUP_ORDER)
+            for x, cat in zip(xs, GROUP_ORDER):
+                row = sub.loc[cat]
+                if not np.isfinite(row["p"]):
+                    continue
+                ax.vlines(x, row["lo"], row["hi"], color="#999999", linewidth=2.2, zorder=2)
+                ax.scatter(x, row["p"], s=130, color=CONFUSION_CATEGORY_PALETTE[cat],
+                           edgecolor="white", linewidth=0.8, zorder=3)
+                ax.text(x, row["hi"] + 0.035, f"{int(row['k'])}/{int(row['n'])}", ha="center",
+                        va="bottom", fontsize=TICK_SIZE - 3, color="#555555")
+            ax.set_ylim(-0.03, 1.18)
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+            _style_group_axes(ax, df, "Proportion of group", label)
+        else:
+            values = pd.to_numeric(df[col], errors="coerce")
+            for x, cat in zip(xs, GROUP_ORDER):
+                v = values[df["category"] == cat].dropna()
+                if v.empty:
+                    continue
+                ax.vlines(x, v.quantile(0.25), v.quantile(0.75), color="#999999", linewidth=2.2, zorder=2)
+                ax.scatter(x, v.median(), s=130, color=CONFUSION_CATEGORY_PALETTE[cat],
+                           edgecolor="white", linewidth=0.8, zorder=3)
+                ax.annotate(f"{v.median():.2f}" if col != "CL" else f"{v.median():.1f}",
+                            (x, v.median()), textcoords="offset points", xytext=(13, -4),
+                            fontsize=TICK_SIZE - 3, color="#555555")
+            cutoff = CONTINUOUS_CUTOFFS.get(col)
+            if cutoff is not None:
+                ax.axhline(cutoff, color="black", linestyle="--", linewidth=1.3, zorder=1)
+                ax.text(-0.45, cutoff, f"CTRz 2 ({cutoff:.2f})", ha="left", va="bottom",
+                        fontsize=TICK_SIZE - 3, color="black")
+            _style_group_axes(ax, df, "Median [IQR]", label)
+
+    for ax in flat[len(panels):]:
+        ax.set_visible(False)
+    fig.suptitle("Where each group sits, concordant negative to concordant positive "
+                 f"(n={len(df)}; whiskers: Wilson 95% CI / IQR)", fontsize=TITLE_SIZE - 3)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.95))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+def make_threshold_figure(df: pd.DataFrame, out_dir: Path, filename: str,
+                          region: str = "MetaTemporal", region_label: str = "Meta-temporal"):
+    """The table's "<region> SUVR >= CTRz 2" row as a figure: % of each group over the threshold, with
+    Wilson 95% CI. Kept out of make_dot_plot deliberately (a thresholded continuous variable does not
+    belong next to genuinely binary characteristics) and kept out of make_continuous_figure, which
+    shows the same variable without dichotomising. It earns a figure of its own because the
+    comparison it makes - model-positive/read-negative against concordant-negative, on the
+    quantitative definition of tau positivity rather than on a risk factor - is the one that says
+    whether quantification backs the model's extra positive calls."""
+    values = pd.to_numeric(df[region], errors="coerce") if region in df.columns else None
+    if values is None or values.isna().all():
+        print(f"[skip] {filename}: no {region} SUVR values.")
+        return
+    cutoff = CENTAUR_FTP_CTRZ2_SUVR[region]
+    above = (values >= cutoff).where(values.notna())
+
+    fig, ax = plt.subplots(figsize=(8.4, 5.2))
+    for x, cat in enumerate(GROUP_ORDER):
+        v = above[df["category"] == cat].dropna()
+        if v.empty:
+            continue
+        k, n = int(v.sum()), len(v)
+        p, (lo, hi) = k / n, wilson_interval(k, n)
+        ax.vlines(x, 0, p, color="#CCCCCC", linewidth=2.0, zorder=1)
+        ax.vlines(x, lo, hi, color="#999999", linewidth=2.2, zorder=2)
+        ax.scatter(x, p, s=150, color=CONFUSION_CATEGORY_PALETTE[cat], edgecolor="white",
+                   linewidth=0.8, zorder=3)
+        ax.text(x, hi + 0.035, f"{p:.0%}\n({k}/{n})", ha="center", va="bottom",
+                fontsize=TICK_SIZE - 1, color="#555555")
+    ax.set_ylim(0, 1.18)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    _style_group_axes(ax, df, "Proportion of group",
+                      f"Tau positive by quantification ({region_label} SUVR ≥ CTRz 2 equivalent, {cutoff:.2f})")
+    finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.97))
+    save_figure(fig, out_dir / filename, dpi=300)
+    plt.close(fig)
+
+
+STAGE_ORDER = ["CU", "MCI", "Dementia (AD)", "Other"]
+
+
+def make_stage_composition_figure(df: pd.DataFrame, out_dir: Path, filename: str):
+    """Clinical stage composition of each group as stacked bars, normalised within group (the groups
+    differ in size by an order of magnitude, so raw counts would only show that). The dot plot
+    already carries cognitively-unimpaired as a yes/no row; this splits the remainder into MCI and
+    dementia, which is what shows whether a discordant group looks clinically like the concordant
+    negatives or sits partway toward the concordant positives."""
+    if "dx" not in df.columns:
+        return
+    stage = _dx_group(df["dx"])
+    present = [s for s in STAGE_ORDER if (stage == s).any()]
+    if not present:
+        return
+    palette = {"CU": CUSTOM_PALETTE[0], "MCI": CUSTOM_PALETTE[4],
+               "Dementia (AD)": CUSTOM_PALETTE[1], "Other": "#AAAAAA"}
+
+    fig, ax = plt.subplots(figsize=(8.4, 5.2))
+    xs = np.arange(len(GROUP_ORDER))
+    bottom = np.zeros(len(GROUP_ORDER))
+    for s in present:
+        fracs = []
+        for cat in GROUP_ORDER:
+            available = stage[(df["category"] == cat) & stage.notna()]
+            fracs.append((available == s).sum() / len(available) if len(available) else np.nan)
+        fracs = np.array(fracs, dtype=float)
+        ax.bar(xs, np.nan_to_num(fracs), bottom=bottom, width=0.62, color=palette[s],
+               edgecolor="white", linewidth=1.2, label=s, zorder=2)
+        for x, f, b in zip(xs, fracs, bottom):
+            # 3%: low enough that a small-but-notable slice still carries its number (Other runs
+            # ~1-10% across groups and the high one is the interesting one), high enough that the
+            # text still fits inside its segment.
+            if np.isfinite(f) and f >= 0.03:
+                ax.text(x, b + f / 2, f"{f:.0%}", ha="center", va="center", color="white",
+                        fontsize=TICK_SIZE - 1, zorder=3)
+        bottom += np.nan_to_num(fracs)
+    ax.set_ylim(0, 1.0)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    _style_group_axes(ax, df, "Proportion of group with a diagnosis",
+                      "Clinical stage composition by group")
+    # Tick labels here are three lines deep (Model x, Visual read y, n=), so the legend goes below
+    # them with an explicit bottom margin rather than tight_layout's.
+    style_legend(ax, title="Diagnosis", loc="upper center", bbox_to_anchor=(0.5, -0.30), ncol=len(present))
+    fig.subplots_adjust(left=0.13, right=0.97, top=0.92, bottom=0.34)
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
 
@@ -501,6 +705,10 @@ def main():
     dot_indicators = [i for i in indicators if i[0] != "_meta"]
     make_findings_figure(df, dot_indicators, out_dir, "visual_read_discordant_findings.png")
     make_continuous_figure(df, out_dir, "visual_read_discordant_continuous.png")
+    # All four groups on one axis (see the GRADIENT_* block): the spectrum view of the same numbers.
+    make_gradient_figure(df, indicators, out_dir, "visual_read_discordant_gradient.png")
+    make_threshold_figure(df, out_dir, "visual_read_discordant_suvr_threshold.png")
+    make_stage_composition_figure(df, out_dir, "visual_read_discordant_stage_composition.png")
     make_findings_table(df, indicators, out_dir, "visual_read_discordant_findings_table.csv", args)
     if "MetaTemporal" in df.columns:
         kappa = compute_kappa_table(df)
