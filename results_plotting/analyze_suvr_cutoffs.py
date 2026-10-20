@@ -34,6 +34,15 @@ Outputs (default <proj_path>/results/suvr_cutoffs, outside the repo):
                                       visual read (all scans) and the model (test set)
     suvr_cutoffs.csv                - region, method, data, n, cut-off, 95% CI
     suvr_cutoffs_gmm_details.csv    - per region: the two curves' means, SDs, weights, BIC 1 vs 2 curves
+    suvr_cutoffs_reference_tail_cases.csv   - the CU Aβ− people above the robust Meta-temporal reference
+                                              cut-off, one row each (site, age, sex, Centiloid, APOE, visual
+                                              read, every regional SUVR, which regions are above their own
+                                              robust cut-off) - to see whether they have a reason other than
+                                              tau to be set aside (borderline amyloid, one site, artefact)
+    suvr_cutoffs_reference_tail_summary.csv - those people vs the rest of CU Aβ−, and per site
+
+    Nobody is excluded on tau: choosing a reference group by low tau would make the tau cut-off
+    circular. The tail listing is descriptive only.
 
 Usage:
     python results_plotting/analyze_suvr_cutoffs.py --demo_csv /path/to/demo.csv \
@@ -66,6 +75,7 @@ from plot_utils import (
 )
 
 REGIONS = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal", "Universal"]
+TAIL_REGION = "MetaTemporal"
 N_BOOT = 2000
 N_BOOT_GMM = 500
 
@@ -287,6 +297,55 @@ def make_logistic_figure(curves: dict, table: pd.DataFrame, regions: list, out_p
 
 
 # ------------------------------
+# CU Aβ− people above the robust reference cut-off
+# ------------------------------
+def reference_tail(demo: pd.DataFrame, is_ref: pd.Series, robust_cuts: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(one row per CU Aβ− person above the robust TAIL_REGION cut-off, tail-vs-rest + per-site summary).
+    Expected count: if the CU Aβ− SUVRs were bell-shaped, ~2.3% would sit above median + 2 scaled MAD
+    by chance, so only an excess over that is a real tail."""
+    ref = demo[is_ref & demo[TAIL_REGION].notna()].copy()
+    ref["_tail"] = ref[TAIL_REGION] > robust_cuts[TAIL_REGION]
+    regions = [r for r in REGIONS if r in ref.columns and r in robust_cuts]
+    for c in ["age", "CL", "apoe", "gender"]:
+        if c in ref.columns:
+            ref[c] = pd.to_numeric(ref[c], errors="coerce")
+
+    cols = [c for c in ["ID", "site", "age", "gender", "CL", "apoe", "visual_read"] if c in ref.columns]
+    cases = ref[ref["_tail"]].sort_values(TAIL_REGION, ascending=False)[cols + regions].copy()
+    cases["regions_above_robust_cutoff"] = [
+        ", ".join(pretty_region_name(r) for r in regions if pd.notna(row[r]) and row[r] > robust_cuts[r]) or "none"
+        for _, row in cases.iterrows()]
+    cases[regions] = cases[regions].round(3)
+    for c in ("age", "CL"):
+        if c in cases.columns:
+            cases[c] = cases[c].round(1)
+
+    def describe(g: pd.DataFrame, label: str) -> dict:
+        out = {"group": label, "n": len(g), f"median_{TAIL_REGION}": round(g[TAIL_REGION].median(), 3)}
+        if "age" in g.columns:
+            out["median_age"] = round(g["age"].median(), 1)
+        if "CL" in g.columns:
+            out["median_CL"] = round(g["CL"].median(), 1)
+            out["share_CL_above_10"] = round((g["CL"] > 10).mean(), 3)
+        if "apoe" in g.columns:
+            out["share_APOE_e4"] = round(g["apoe"].eq(1).sum() / max(g["apoe"].notna().sum(), 1), 3)
+        if "gender" in g.columns:
+            out["share_female"] = round(g["gender"].eq(2).sum() / max(g["gender"].notna().sum(), 1), 3)
+        if "visual_read" in g.columns:
+            out["n_visual_read_positive"] = int(g["visual_read"].eq(1).sum())
+        return out
+
+    rows = [describe(ref[ref["_tail"]], f"Above robust cut-off ({robust_cuts[TAIL_REGION]:.2f})"),
+            describe(ref[~ref["_tail"]], "Rest of CU Aβ−")]
+    rows[0]["expected_n_if_bell_shaped"] = round(0.0228 * len(ref), 1)
+    if "site" in ref.columns:
+        for site, g in ref.groupby("site"):
+            rows.append({"group": f"Site: {site}", "n": len(g), "n_above": int(g["_tail"].sum()),
+                         "share_above": round(g["_tail"].mean(), 3)})
+    return cases, pd.DataFrame(rows)
+
+
+# ------------------------------
 # Main
 # ------------------------------
 def load_test_predictions(run_dir: Path, dataset: str) -> pd.DataFrame | None:
@@ -390,6 +449,13 @@ def main():
     make_distribution_figure(demo, table, gmm_fits, regions, out_dir / "suvr_cutoffs_distributions.png")
     make_logistic_figure(curves, table, regions, out_dir / "suvr_cutoffs_logistic.png")
 
+    robust = table[table["method"] == METHODS[2]].set_index("region")["cutoff"].to_dict()
+    tail_summary = None
+    if TAIL_REGION in robust and is_ref.any():
+        cases, tail_summary = reference_tail(demo, is_ref, robust)
+        cases.to_csv(out_dir / "suvr_cutoffs_reference_tail_cases.csv", index=False)
+        tail_summary.to_csv(out_dir / "suvr_cutoffs_reference_tail_summary.csv", index=False)
+
     print("\n[cut-offs] SUVR [95% CI]")
     for region in regions:
         print(f"  {pretty_region_name(region)}")
@@ -403,6 +469,14 @@ def main():
         print(f"  {pretty_region_name(g['region'])}: {'yes' if g['two_curves_fit_better'] else 'no'}; "
               f"curves at {g['mean_low']:.2f} (weight {g['weight_low']:.0%}) and {g['mean_high']:.2f} "
               f"(weight {g['weight_high']:.0%})")
+    if tail_summary is not None:
+        print(f"\n[reference tail] CU Aβ− above the robust {pretty_region_name(TAIL_REGION)} cut-off "
+              f"({robust[TAIL_REGION]:.2f}):")
+        is_site = tail_summary["group"].str.startswith("Site: ")
+        with pd.option_context("display.width", 200, "display.max_columns", 20):
+            for part in (tail_summary[~is_site], tail_summary[is_site]):
+                if len(part):
+                    print(part.dropna(axis=1, how="all").fillna("").to_string(index=False), end="\n\n")
     print(f"\n[done] saved to {out_dir}")
 
 
