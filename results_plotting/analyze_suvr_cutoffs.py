@@ -4,6 +4,11 @@
     1. CTRz 2 (published)      - the CenTauR CTRz 2 FTP SUVR equivalent, for reference (no data used).
     2. Reference group         - mean + 2 SD of the cognitively unimpaired, amyloid-negative people
                                  (whole dataset). Same logic as CTRz, but on this cohort.
+                                 Plus a robust version, median + 2 x scaled MAD (median absolute
+                                 deviation x 1.4826, which equals the SD for bell-shaped data): same
+                                 idea, but a few unusually high CU Aβ− scans (off-target binding, early
+                                 tau) barely move it. If the two agree, the reference cut-off is not
+                                 being driven by a handful of people. No scans are removed by either.
     3. Gaussian mixture        - assume the SUVRs come from two overlapping bell curves (tau-negative,
                                  tau-positive), fit both (whole dataset, no labels) and take the SUVR
                                  between their means where a scan is equally likely to belong to either.
@@ -64,9 +69,9 @@ REGIONS = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal", "Univ
 N_BOOT = 2000
 N_BOOT_GMM = 500
 
-METHODS = ["CTRz 2 (published)", "Reference: CU Aβ− mean + 2 SD", "Gaussian mixture",
-           "Visual read, all scans", "Visual read, test set", "Model, test set"]
-METHOD_COLORS = dict(zip(METHODS, ["black", CUSTOM_PALETTE[3], CUSTOM_PALETTE[4],
+METHODS = ["CTRz 2 (published)", "Reference: CU Aβ− mean + 2 SD", "Reference: CU Aβ− median + 2 MAD",
+           "Gaussian mixture", "Visual read, all scans", "Visual read, test set", "Model, test set"]
+METHOD_COLORS = dict(zip(METHODS, ["black", CUSTOM_PALETTE[3], "#2C7A65", CUSTOM_PALETTE[4],
                                    CUSTOM_PALETTE[1], CUSTOM_PALETTE[6], CUSTOM_PALETTE[0]]))
 READ_COLORS = {0: CUSTOM_PALETTE[0], 1: CUSTOM_PALETTE[1]}
 
@@ -92,10 +97,14 @@ def _ci(point: float, boot: np.ndarray) -> tuple[float, float, float]:
     return point, *np.percentile(boot, [2.5, 97.5])
 
 
-def reference_cutoff(x: np.ndarray, rng) -> tuple[float, float, float]:
-    point = x.mean() + 2 * x.std(ddof=1)
-    boot = np.array([(s.mean() + 2 * s.std(ddof=1)) for s in (x[i] for i in rng.integers(0, len(x), (N_BOOT, len(x))))])
-    return _ci(point, boot)
+def reference_cutoff(x: np.ndarray, rng, robust: bool = False) -> tuple[float, float, float]:
+    def cut(s):
+        if robust:
+            med = np.median(s)
+            return med + 2 * 1.4826 * np.median(np.abs(s - med))
+        return s.mean() + 2 * s.std(ddof=1)
+    boot = np.array([cut(x[i]) for i in rng.integers(0, len(x), (N_BOOT, len(x)))])
+    return _ci(cut(x), boot)
 
 
 def fit_gmm(x: np.ndarray, seed: int = 0) -> dict:
@@ -341,11 +350,12 @@ def main():
         x_ref = demo.loc[is_ref, region].dropna().to_numpy(float)
         if len(x_ref) >= 10:
             add(region, METHODS[1], "whole dataset, CU Aβ−", len(x_ref), reference_cutoff(x_ref, rng))
+            add(region, METHODS[2], "whole dataset, CU Aβ−", len(x_ref), reference_cutoff(x_ref, rng, robust=True))
 
         x_all = demo[region].dropna().to_numpy(float)
         est, fit, found = gmm_cutoff(x_all, rng)
         gmm_fits[region] = fit
-        add(region, METHODS[2], "whole dataset, no labels", len(x_all), est,
+        add(region, METHODS[3], "whole dataset, no labels", len(x_all), est,
             f"crossing found in {found:.0%} of bootstrap fits")
         gmm_rows.append({"region": region, "n": len(x_all),
                          "mean_low": fit["means"][0], "sd_low": fit["sds"][0], "weight_low": fit["weights"][0],
@@ -356,19 +366,19 @@ def main():
 
         d = demo[[region, "visual_read"]].dropna()
         x = d[region].to_numpy(float)
-        res = judge_cutoffs(x, {METHODS[3]: d["visual_read"].to_numpy(float)}, rng)
-        add(region, METHODS[3], "whole dataset", len(x), res[METHODS[3]])
-        curves[region][METHODS[3]] = (x, res["_fits"][METHODS[3]], res["_boot"][METHODS[3]])
+        res = judge_cutoffs(x, {METHODS[4]: d["visual_read"].to_numpy(float)}, rng)
+        add(region, METHODS[4], "whole dataset", len(x), res[METHODS[4]])
+        curves[region][METHODS[4]] = (x, res["_fits"][METHODS[4]], res["_boot"][METHODS[4]])
 
         if test is not None:
             t = test[[region, "visual_read", "pred"]].dropna()
             xt = t[region].to_numpy(float)
-            res = judge_cutoffs(xt, {METHODS[4]: t["visual_read"].to_numpy(float),
-                                     METHODS[5]: t["pred"].to_numpy(float)}, rng)
-            add(region, METHODS[4], "held-out test set", len(xt), res[METHODS[4]])
+            res = judge_cutoffs(xt, {METHODS[5]: t["visual_read"].to_numpy(float),
+                                     METHODS[6]: t["pred"].to_numpy(float)}, rng)
             add(region, METHODS[5], "held-out test set", len(xt), res[METHODS[5]])
+            add(region, METHODS[6], "held-out test set", len(xt), res[METHODS[6]])
             add(region, "Difference: Model − Visual read", "held-out test set, paired", len(xt), res["difference"])
-            curves[region][METHODS[5]] = (xt, res["_fits"][METHODS[5]], res["_boot"][METHODS[5]])
+            curves[region][METHODS[6]] = (xt, res["_fits"][METHODS[6]], res["_boot"][METHODS[6]])
 
     table = pd.DataFrame(rows)
     script_path = Path(__file__).resolve()
