@@ -93,6 +93,10 @@ N_BOOT = 2000
 GROUP_ORDER = ["Confidently right", "Moderately confident", "Uncertain", "Confidently wrong"]
 GROUP_COLORS = {"Confidently right": CUSTOM_PALETTE[0], "Moderately confident": "#BBBBBB",
                 "Uncertain": CUSTOM_PALETTE[4], "Confidently wrong": CUSTOM_PALETTE[1]}
+# What a viewer sees: the visual read is not ground truth, so figures say agrees/disagrees, not right/wrong.
+GROUP_DISPLAY_LABELS = {"Confidently right": "Confident, agrees with visual read",
+                        "Moderately confident": "Moderately confident", "Uncertain": "Uncertain",
+                        "Confidently wrong": "Confident, disagrees with visual read"}
 READ_COLORS = {0: CUSTOM_PALETTE[0], 1: CUSTOM_PALETTE[1]}
 
 
@@ -187,9 +191,10 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
     axes[-1].set_xlabel("Model probability of tau positive (dashed line = 0.5 threshold)", fontsize=LABEL_SIZE - 2)
     axes[-1].set_xlim(0, 1)
     handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLORS[g]) for g in GROUP_ORDER]
-    fig.legend(handles, GROUP_ORDER, loc="lower center", ncol=4, frameon=False, fontsize=TICK_SIZE - 1)
+    fig.legend(handles, [GROUP_DISPLAY_LABELS[g] for g in GROUP_ORDER], loc="lower center", ncol=2,
+               frameon=False, fontsize=TICK_SIZE - 1)
     fig.suptitle("Model confidence", fontsize=TITLE_SIZE)
-    finalize_figure(fig, rect=(0.0, 0.05, 1.0, 1.0))
+    finalize_figure(fig, rect=(0.0, 0.09, 1.0, 1.0))
     save_figure(fig, out_path, dpi=300)
     plt.close(fig)
 
