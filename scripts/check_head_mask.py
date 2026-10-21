@@ -14,11 +14,13 @@ Per site, for a sample of scans:
      recipe and for head_mask, plus the head size in mm each mask finds
   C) whether the replayed old recipe matches the cached input (correlation), i.e. whether the
      cache was made with this code
-  D) for the iso2 recipe (96x128x96 box at 2 mm): whether the head touches a side or the top of
+  D) for the iso2 recipe (112x128x96 box at 2 mm): whether the head touches a side or the top of
      the box (= the box is too small and cuts the head; should be 0 everywhere), and whether a
      too-tall head was cut at the bottom (neck; expected for some scans, harmless). For a touch:
      which side, and how far below the top of the head (shallow = brain level, deep = shoulders)
   E) share of the head that is pure white (clipped to 1) in the old and the iso2 recipe
+  F) whether the head is already cut in the original scan (touches a side of the scanner's
+     field of view): no box can bring that back, and the old inputs are cut the same way
 and one png per site: middle slices of the cached input, the old replay and the iso2 replay,
 plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
 (neckcut_*.png): front and side view of the whole iso2 head with the box edges marked.
@@ -41,7 +43,7 @@ import torch
 from monai.data import MetaTensor
 from monai.transforms import Compose
 
-from src.data import get_transforms
+from src.data import get_transforms, head_mask
 from scripts.check_image_geometry import load_sites
 
 
@@ -151,7 +153,8 @@ def main():
     print(f"cache: {cache_dir} ({len(pt_files)} .pt files, {pt_batch_size} per batch)")
 
     old = Compose(get_transforms(target_shape=(128, 128, 128)).transforms[1:])
-    new = Compose(get_transforms(target_shape=(96, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
+    to_ras = Compose(get_transforms().transforms[1:3])  # channel-first + RAS only, native voxels
+    new = Compose(get_transforms(target_shape=(112, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
                                  pct_inside_head=True).transforms[1:])
 
     rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
@@ -178,6 +181,12 @@ def main():
                    "replay_old_box_share": float((v_old > 0).mean()), "replay_old_shell_share": shell_share(v_old),
                    "replay_iso2_shell_share": shell_share(v_new)}
             row.update(edge_info(v_new))
+            v_native = (to_ras(MetaTensor(torch.as_tensor(img), meta=meta)) if "affine" in meta
+                        else torch.as_tensor(img).reshape(1, *np.squeeze(img).shape))
+            m_native = head_mask(v_native).squeeze().numpy() > 0
+            native_sides = [n for n, f in FACES.items() if f(m_native).any()]
+            row["native_cut_sides"] = "+".join(native_sides)
+            row["native_cut"] = bool(native_sides)
             row["old_white_share"], row["iso2_white_share"] = white_share(v_old), white_share(v_new)
             for ax, a, b in zip("xyz", head_mm(v_old, old_vox), head_mm(v_new, [2, 2, 2])):
                 row[f"old_head_mm_{ax}"], row[f"iso2_head_mm_{ax}"] = round(a, 1), round(b, 1)
@@ -221,6 +230,9 @@ def main():
     by_site["iso2_touch_min_mm_below_top"] = df.groupby("site")["iso2_touch_mm_below_top"].min()
     by_site["iso2_touch_sides"] = df.groupby("site")["iso2_touch_sides"].apply(
         lambda t: ",".join(sorted({x for v in t if v for x in v.split("+")})))
+    by_site["n_native_cut"] = df.groupby("site")["native_cut"].sum().astype(int)
+    by_site["native_cut_sides"] = df.groupby("site")["native_cut_sides"].apply(
+        lambda t: ",".join(sorted({x for v in t if v for x in v.split("+")})))
     by_site["old_white_share"] = df.groupby("site")["old_white_share"].median()
     by_site["iso2_white_share"] = df.groupby("site")["iso2_white_share"].median()
     if "cache_shell_share" in df.columns:
@@ -252,12 +264,14 @@ def main():
     print("\nshell_share = share of the box's outer 4-voxel shell that is non-zero: ~0 = mask removed the "
           "background; high = background got through. n_mask_failed_in_cache = scans with shell_share > 0.2.\n"
           "cache_vs_replay_r ~1 = the cached input is what this code makes.\n"
-          "n_iso2_touch_edge = iso2 heads touching a side or the top of the 96x128x96 box (edge_*.png). "
+          "n_iso2_touch_edge = iso2 heads touching a side or the top of the 112x128x96 box (edge_*.png). "
           "iso2_touch_min_mm_below_top = the highest touch of any scan, in mm below the top of the head: "
           "above ~120 = only neck/shoulders touch (harmless), below ~120 = the skull at brain level touches "
           "(box too small). n_iso2_bottom_cut = heads cut at the bottom (neckcut_*.png). "
-          "iso2_head_mm_*_max vs the box (192 x 256 x 192 mm) = how much room is left.\n"
-          "*_white_share = share of the head clipped to pure white (1), old vs iso2 recipe.")
+          "iso2_head_mm_*_max vs the box (224 x 256 x 192 mm) = how much room is left.\n"
+          "*_white_share = share of the head clipped to pure white (1), old vs iso2 recipe.\n"
+          "n_native_cut = heads already touching a side of the original scan's field of view (cut by the "
+          "scanner, before any of our steps); an iso2 touch on a scan that is also native_cut is not the box's fault.")
     print(f"Saved to {out_dir}")
 
 

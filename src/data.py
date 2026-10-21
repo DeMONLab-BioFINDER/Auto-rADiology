@@ -379,8 +379,8 @@ def get_transforms(target_shape=(128, 128, 128),
         None (default): stretch the crop box to target_shape (each axis by its own factor).
         A number: resample to cubic voxels of this size first, then pad/crop the box (centred) to
         target_shape instead of stretching, so proportions are true and 1 voxel = spacing_mm in
-        every scan. target_shape must then be big enough for a head (96x128x96 at 2 mm = 192x256x192
-        mm fits the real data); a head taller than the box loses its bottom (neck), not its top.
+        every scan. target_shape must then be big enough for a head (112x128x96 at 2 mm = 224x256x192
+        mm fits the real data; 96 wide was too narrow for some skulls); a head taller than the box loses its bottom (neck), not its top.
     pct_inside_head : bool
         Take the scaling percentiles over the non-zero (inside-the-head) voxels only. Needs the
         head already zeroed outside (head_crop), otherwise every voxel counts.

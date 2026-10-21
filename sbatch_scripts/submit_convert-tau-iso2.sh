@@ -8,8 +8,8 @@
 #                   1 voxel = ~1.2-3.2 mm depending on axis and site, proportions not true.
 #   tau_raw_iso2  - resampled to 2 mm cubic voxels, head masked on the native scan (threshold
 #                   relative to the 99th percentile, so it works for any field of view), box
-#                   cropped to the head and padded (centred, not stretched) to 96x128x96 =
-#                   192x256x192 mm; a head taller than 192 mm loses its bottom (neck), never its
+#                   cropped to the head and padded (centred, not stretched) to 112x128x96 =
+#                   224x256x192 mm (x widened from 96: some skulls reached 192 mm); a head taller than 192 mm loses its bottom (neck), never its
 #                   top (bottom_cut in tau_pt_scans.csv). 1 voxel = 2 mm in every scan, true proportions, about half
 #                   the voxels of 128^3. Scaling percentiles (1-99 -> 0-1) taken inside the head.
 #
@@ -53,4 +53,4 @@ if compgen -G "$OUT_DIR/tau_batch_*.pt" > /dev/null; then
   exit 0
 fi
 python scripts/convert_tau_pkl_to_pt.py --pkl_dir "$PKL_DIR" --out_dir "$OUT_DIR" --batch_size 50 \
-  --spacing_mm 2 --image_shape 96 128 96 --head_crop --crop_margin 2 --pct_inside_head
+  --spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2 --pct_inside_head
