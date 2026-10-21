@@ -300,7 +300,9 @@ def get_transforms(target_shape=(128, 128, 128),
                 out_range: tuple = (0.0, 1.0),
                 smooth_sigma_vox: tuple | None = None, 
                 apply_brain_mask: bool = True, 
-                process: bool = True) -> Compose:
+                process: bool = True,
+                head_crop: bool = False,
+                crop_margin: int = 0) -> Compose:
     """
     PET-optimized preprocessing pipeline using MONAI.
 
@@ -322,6 +324,12 @@ def get_transforms(target_shape=(128, 128, 128),
         mm-based smoothing → computed for *original* voxels)
     apply_brain_mask : bool
         Whether to apply a brain mask to zero out non-brain regions.
+    head_crop : bool
+        Zero everything outside the head mask on the native scan *before* CropForeground, so the
+        crop box is the head and not the whole field of view (PET background noise is > 0, so
+        the default crop keeps almost everything). Needs crop_foreground=True.
+    crop_margin : int
+        Native voxels of margin CropForeground keeps around the box.
     Returns
     -------
     monai.transforms.Compose
@@ -335,7 +343,8 @@ def get_transforms(target_shape=(128, 128, 128),
         steps.append(GaussianSmooth(sigma=smooth_sigma_vox))
 
     if process:
-        if crop_foreground: steps.append(CropForeground()) # Crop out huge empty regions
+        if head_crop: steps.append(Lambda(lambda x: x * brain_outer_mask(x))) # true zeros outside the head, so the crop below finds the head
+        if crop_foreground: steps.append(CropForeground(margin=crop_margin)) # Crop out huge empty regions
         steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
         # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
         steps.append(ScaleIntensityRangePercentiles(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True))
