@@ -384,6 +384,8 @@ def get_transforms(target_shape=(128, 128, 128),
     pct_inside_head : bool
         Take the scaling percentiles over the non-zero (inside-the-head) voxels only. Needs the
         head already zeroed outside (head_crop), otherwise every voxel counts.
+        Scaling then runs before the crop (the percentiles don't depend on the box), so the box is
+        placed around what is still visible after scaling.
     Returns
     -------
     monai.transforms.Compose
@@ -399,14 +401,18 @@ def get_transforms(target_shape=(128, 128, 128),
     if process:
         if spacing_mm: steps.append(Spacing(pixdim=(spacing_mm,) * 3, mode="bilinear")) # same cubic voxel size for every scan
         if head_crop: steps.append(Lambda(lambda x: x * head_mask(x))) # true zeros outside the head, so the crop below finds the head
+        # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
+        scale_cls = ScaleIntensityRangePercentilesInsideHead if pct_inside_head else ScaleIntensityRangePercentiles
+        scale = scale_cls(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True)
+        # inside-head percentiles don't depend on the box, so scale before cropping: faint voxels the mask
+        # kept but the scaling sets to 0 then can't widen the crop box and push the head to one side
+        if pct_inside_head: steps.append(scale)
         if crop_foreground: steps.append(CropForeground(margin=crop_margin)) # Crop out huge empty regions
         if spacing_mm:
             steps.append(Lambda(lambda x: keep_top(x, target_shape[2]))) # too tall: cut the neck, not the top of the head
             steps.append(ResizeWithPadOrCrop(spatial_size=target_shape)) # centre the box in a fixed grid, no stretching
         else: steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
-        # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
-        scale_cls = ScaleIntensityRangePercentilesInsideHead if pct_inside_head else ScaleIntensityRangePercentiles
-        steps.append(scale_cls(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True))
+        if not pct_inside_head: steps.append(scale)
 
         # ---- Force background = 0 (critical for model to focus on brain) ----
         if apply_brain_mask and not head_crop: # with head_crop the outside is already 0 (and stays 0 after clipping)

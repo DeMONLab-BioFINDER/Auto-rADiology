@@ -116,7 +116,7 @@ def main(args):
             # per-scan record: geometry (for true-proportion plots, mm-sized occlusion masks) and the
             # native values the scaling mapped to 0 and 1 (to turn e.g. SUVR 1.0 into a model-input value)
             has_affine = bool(meta) and "affine" in meta
-            # x_pre is already resized; its affine (updated by MONAI) gives the mm per output voxel
+            # x_pre is resized (old recipe) or resampled to --spacing_mm (iso2); its affine gives the mm per output voxel
             out_vox = np.asarray(x_pre.pixdim, dtype=float)[:3] if has_affine else np.ones(3)
             lo, hi = scale.bounds(x_pre) if hasattr(scale, "bounds") else np.percentile(np.asarray(x_pre), [scale.lower, scale.upper])
             # head extent in the output grid; touching the edge with --spacing_mm means the box cut the head
