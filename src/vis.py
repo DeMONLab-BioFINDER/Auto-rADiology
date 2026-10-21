@@ -45,6 +45,9 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     vis_dir = os.path.join(output_path, 'visualization', vis_name)
     os.makedirs(vis_dir, exist_ok=True)
 
+    # colour bar labels of the MIP pngs; pos_vs_neg is signed, so it gets a blue-red scale centred on 0
+    mip_labels = {'class': "drop in P(predicted class) when hidden" if vis_name == "occlusion" else vis_name,
+                  'pos_vs_neg': "drop in P(positive) minus drop in P(negative)\nred: supports positive, blue: supports negative"}
     vis_sum = {'class': None,'pos_vs_neg':None}
     vis_count = {'class': 0, 'pos_vs_neg': 0}
     img_sum, img_n = None, 0  # running mean of the input images, for the group-average MIP background
@@ -80,13 +83,13 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                         os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}.nii.gz"))
 
                 # MIP visualization
-                save_mip_png(img_np, heat, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_mip.png"))
+                save_mip_png(img_np, heat, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
                 
                 # Pseudo-surface visualization (no T1w available, no affine)
                 if use_pseudo_surface:
                     shell = pet_pseudo_surface(img_np, sigma=pseudo_surface_sigma, pct=pseudo_surface_pct)
                     shell_cam = heat * shell
-                    save_mip_png(img_np, shell_cam, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_pseudo_surface.png"))
+                    save_mip_png(img_np, shell_cam, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
 
                 vis_sum[vt] = heat if vis_sum[vt] is None else vis_sum[vt] + heat
                 vis_count[vt] += 1
@@ -103,11 +106,11 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
         vis_avg = vis_sum[vt] / vis_count[vt]
         nib.save(nib.Nifti1Image(vis_avg.astype(np.float32), np.eye(4)),
                 os.path.join(vis_dir, f"group_average_{vis_name}_{vt}.nii.gz"))
-        save_mip_png(img_avg, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"))
+        save_mip_png(img_avg, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
 
         if use_pseudo_surface:
             shell = pet_pseudo_surface(img_avg, pseudo_surface_sigma, pseudo_surface_pct)
-            save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"))
+            save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
 
 
 def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_mode="trilinear"):
@@ -299,21 +302,47 @@ def normalize_cam(cam, mode="zscore", eps=1e-6):
     return cam
 
 
-def save_mip_png(img, cam, out_png, cmap="hot"):
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+def _signed_max_projection(cam, axis):
+    """Along `axis`, keep the value with the largest absolute size (sign kept), so strong
+    negative values show up instead of being hidden behind small positive ones."""
+    idx = np.abs(cam).argmax(axis=axis)
+    return np.take_along_axis(cam, np.expand_dims(idx, axis), axis=axis).squeeze(axis)
 
-    views = [(img.max(0), cam.max(0), "Axial"),
-             (img.max(1), cam.max(1), "Coronal"),
-             (img.max(2), cam.max(2), "Sagittal")]
 
-    for ax, (im, hm, title) in zip(axes, views):
-        ax.imshow(im, cmap="gray")
-        ax.imshow(hm, cmap=cmap, alpha=0.6)
+def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None):
+    """Maximum-intensity projections of the PET (grey) with the map on top, in three views.
+
+    Arrays are (x, y, z) in RAS (left->right, back->front, bottom->top) after the pipeline's
+    Orientation step. Each view collapses one axis and is drawn upright: sagittal = seen from
+    the side (front on the right), coronal = seen from the front/back, axial = seen from above
+    (front at the top); left/right as in RAS, i.e. the subject's right on the right.
+
+    signed=False: map projected with max, colour scale `cmap` from its min to max.
+    signed=True (maps where the sign matters, e.g. pos_vs_neg): the value with the largest
+    absolute size along each line is kept, and a blue-white-red scale centred on 0 is used
+    (red = positive, blue = negative). Exactly-zero voxels (outside the brain) are transparent.
+    label: colour bar label."""
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
+
+    views = [(0, "Sagittal (side)"), (1, "Coronal (front/back)"), (2, "Axial (top)")]
+    if signed:
+        vmax = float(np.abs(cam).max()) or 1.0
+        norm = dict(cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+    else:
+        norm = dict(cmap=cmap, vmin=float(cam.min()), vmax=float(cam.max()))
+
+    for ax, (axis, title) in zip(axes, views):
+        im = img.max(axis)
+        hm = _signed_max_projection(cam, axis) if signed else cam.max(axis)
+        hm = np.ma.masked_where(hm == 0, hm)
+        # transpose so the remaining second axis is vertical, origin="lower" so it points up
+        ax.imshow(im.T, cmap="gray", origin="lower")
+        shown = ax.imshow(hm.T, alpha=0.6, origin="lower", **norm)
         ax.set_title(title)
         ax.axis("off")
+    fig.colorbar(shown, ax=axes, shrink=0.8, label=label)
 
-    plt.tight_layout()
-    plt.savefig(out_png, dpi=150)
+    plt.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close()
 
 
