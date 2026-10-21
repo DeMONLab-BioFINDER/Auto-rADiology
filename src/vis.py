@@ -392,10 +392,11 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
       1. PET only, no map: one slice per view, all three through the map's single strongest
          voxel, at full contrast, to see the uptake there (peak_slices=False: an average
          projection instead)
-      2. PET + map as projections: the map's strongest value along each line through the head
-         (overview of all strong spots at once) on an average projection of the PET
-      3. (peak_slices) PET + map on the same slices as row 1, to see where the spot sits in depth
-    so rows 1 and 3 are the same picture without and with the colours.
+      2. (peak_slices) PET + map on the same slices as row 1, directly under it: the same picture
+         without and with the colours, to compare uptake and map
+      3. PET + map as projections: the map's strongest value along each line through the head
+         (overview of all strong spots, also ones outside the row 1-2 slices) on an average
+         projection of the PET
 
     Arrays are (x, y, z) in RAS (left->right, back->front, bottom->top) after the pipeline's
     Orientation step. Views are drawn upright: sagittal = front on the right, coronal = the
@@ -436,8 +437,8 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
         # (PET, map or None, title, grey top): no map -> full contrast; under a map -> dimmed so the colours stand out
         if peak_slices:
             panels = [(pet_sl, None, f"{view_name}: PET only (slice through strongest point)", slice_win),
-                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection)", 1.6 * window(pet_proj)),
-                      (pet_sl, hm_sl, f"{view_name}: PET + map (same slice as top row)", 1.6 * slice_win)]
+                      (pet_sl, hm_sl, f"{view_name}: PET + map (same slice)", 1.6 * slice_win),
+                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection, all spots)", 1.6 * window(pet_proj))]
         else:
             panels = [(pet_proj, None, f"{view_name}: PET only (average projection)", window(pet_proj)),
                       (pet_proj, hm_proj, f"{view_name}: PET + map (projection)", 1.6 * window(pet_proj))]
