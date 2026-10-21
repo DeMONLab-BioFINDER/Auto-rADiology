@@ -8,6 +8,7 @@ import torch.nn as nn
 import nibabel as nib
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.colors as matplotlib_colors
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_gradient_magnitude
 from monai.visualize.class_activation_maps import GradCAM
@@ -340,6 +341,14 @@ def _signed_max_projection(cam, axis):
     return np.take_along_axis(cam, np.expand_dims(idx, axis), axis=axis).squeeze(axis)
 
 
+# bright = strong: red -> orange -> yellow for positive / supporting, blue -> light cyan for negative
+# (the usual brain-imaging overlay colours); weak values are faded out by the opacity anyway
+WARM = matplotlib_colors.LinearSegmentedColormap.from_list("warm", ["#c00000", "#ff3000", "#ff9900", "#ffff66"])
+WARM_COOL = matplotlib_colors.LinearSegmentedColormap.from_list(
+    "cool_warm_bright", [(0.0, "#a0ffff"), (0.25, "#2aa0ff"), (0.499, "#1040ff"),
+                         (0.501, "#c00000"), (0.75, "#ff9900"), (1.0, "#ffff66")])
+
+
 def robust_top(cam, signed=False, pct=99.0):
     """Top of the colour scale: the `pct` percentile of the map's (absolute, if signed) non-zero
     values, so one extreme voxel does not decide the scale; values above it are drawn solid."""
@@ -369,7 +378,7 @@ def _faded_colorbar(cax, cmap_obj, norm, signed, top, label):
         cax.set_ylabel(label, fontsize=8)
 
 
-def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title=None, vmax=None,
+def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=None, vmax=None,
                  scale_note=None, peak_slices=True):
     """PET (grey) and the map on top, in three views (side, front/back, top). Rows:
       1. the PET alone (maximum-intensity projection), to see what is under the colours
@@ -382,21 +391,21 @@ def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title
     stretched inputs, proportions are not true to scale).
 
     Opacity follows strength: 0 is fully transparent, solid at the top of the scale and above.
-    signed=False: white -> red (`cmap`) from 0 to the top; values <= 0 not shown.
+    signed=False: red -> yellow (`cmap`, bright = strong) from 0 to the top; values <= 0 not shown.
     signed=True (e.g. pos_vs_neg): the value with the largest absolute size along each line is
-    projected, blue-red scale centred on 0 (red = positive, blue = negative).
+    projected; positive red -> yellow, negative blue -> light cyan, centred on 0.
     vmax: top of the scale; None = this map's own 99th percentile (robust_top). scale_note: text
     on how the scale was set (e.g. shared across scans), shown under the title."""
     top = vmax if vmax is not None else robust_top(cam, signed)
     top = top if top > 0 else 1.0
     if signed:
-        cmap_obj, norm = plt.get_cmap("RdBu_r"), plt.Normalize(-top, top)
+        cmap_obj, norm = WARM_COOL, plt.Normalize(-top, top)
     else:
-        cmap_obj, norm = plt.get_cmap(cmap), plt.Normalize(0.0, top)
+        cmap_obj, norm = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap, plt.Normalize(0.0, top)
 
     nz = img[img > 0]
     pet_max = float(np.percentile(nz, 99.5)) if nz.size else 1.0
-    views = [(0, "side"), (1, "front/back"), (2, "top")]
+    views = [(0, "Sagittal"), (1, "Coronal"), (2, "Axial")]
     rows = 3 if peak_slices else 2
     fig = plt.figure(figsize=(12, 3.6 * rows + 0.6))
     gs = fig.add_gridspec(rows, 4, width_ratios=[1, 1, 1, 0.05], wspace=0.05, hspace=0.18)
@@ -405,12 +414,12 @@ def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title
     for c, (axis, view_name) in enumerate(views):
         im_mip = img.max(axis)
         hm_mip = _signed_max_projection(cam, axis) if signed else cam.max(axis)
-        panels = [(im_mip, None, f"PET ({view_name}, projection)", 1.6 * float(im_mip.max() or 1.0)),
-                  (im_mip, hm_mip, f"map ({view_name}, projection)", 1.6 * float(im_mip.max() or 1.0))]
+        panels = [(im_mip, None, f"{view_name}: PET (projection)", 1.6 * float(im_mip.max() or 1.0)),
+                  (im_mip, hm_mip, f"{view_name}: map (projection)", 1.6 * float(im_mip.max() or 1.0))]
         if peak_slices:
             sl = [slice(None)] * 3
             sl[axis] = peak[axis]
-            panels.append((img[tuple(sl)], cam[tuple(sl)], f"map ({view_name}, slice through strongest point)", 1.6 * pet_max))
+            panels.append((img[tuple(sl)], cam[tuple(sl)], f"{view_name}: map (single slice through strongest point)", 1.6 * pet_max))
         for r, (pet, hm, name, gmax) in enumerate(panels):
             ax = fig.add_subplot(gs[r, c])
             # transpose so the remaining second axis is vertical, origin="lower" so it points up
@@ -429,7 +438,7 @@ def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title
 
 
 MIP_LABELS = {"class": "drop in P(predicted class) when hidden",
-              "pos_vs_neg": "drop in P(positive) minus drop in P(negative)\nred: supports positive, blue: supports negative"}
+              "pos_vs_neg": "drop in P(positive) minus drop in P(negative)\nred-yellow: supports positive, blue-cyan: supports negative"}
 
 
 def redraw_map_pngs(vis_dir, vis_name="occlusion", shared_scale=False, load_input=None, peak_slices=True):
