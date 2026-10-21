@@ -378,17 +378,30 @@ def _faded_colorbar(cax, cmap_obj, norm, signed, top, label):
         cax.set_ylabel(label, fontsize=8)
 
 
+def _mean_projection(img, axis):
+    """Average of the non-zero (inside-the-head) voxels along `axis`, like an X-ray. A max
+    projection of a PET head is almost flat white (nearly every line passes some bright voxel, and
+    the input's top 1% is clipped to exactly 1); the average keeps the contrast."""
+    n = (img > 0).sum(axis)
+    return np.where(n > 0, img.sum(axis) / np.maximum(n, 1), 0.0)
+
+
 def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=None, vmax=None,
                  scale_note=None, peak_slices=True):
-    """PET (grey) and the map on top, in three views (side, front/back, top). Rows:
-      1. the PET alone (maximum-intensity projection), to see what is under the colours
-      2. the map on the PET, both as projections (each pixel = strongest value along that line)
-      3. (peak_slices) single slices through the map's strongest point, to see where it sits in depth
+    """PET (grey) and the map, in three views (sagittal, coronal, axial). Rows:
+      1. PET only, no map: one slice per view, all three through the map's single strongest
+         voxel, at full contrast, to see the uptake there (peak_slices=False: an average
+         projection instead)
+      2. PET + map as projections: the map's strongest value along each line through the head
+         (overview of all strong spots at once) on an average projection of the PET
+      3. (peak_slices) PET + map on the same slices as row 1, to see where the spot sits in depth
+    so rows 1 and 3 are the same picture without and with the colours.
 
     Arrays are (x, y, z) in RAS (left->right, back->front, bottom->top) after the pipeline's
-    Orientation step. Views are drawn upright: side = front on the right, front/back = the
-    subject's right on the right, top = front at the top. Squares = model voxels (with the old
-    stretched inputs, proportions are not true to scale).
+    Orientation step. Views are drawn upright: sagittal = front on the right, coronal = the
+    subject's right on the right, axial = front at the top. Squares = model voxels (with the old
+    stretched inputs, proportions are not true to scale). The PET grey scale is the scan's own
+    99.5th percentile, not the visual-read display (1.65 x cerebellum).
 
     Opacity follows strength: 0 is fully transparent, solid at the top of the scale and above.
     signed=False: red -> yellow (`cmap`, bright = strong) from 0 to the top; values <= 0 not shown.
@@ -403,28 +416,35 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
     else:
         cmap_obj, norm = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap, plt.Normalize(0.0, top)
 
-    nz = img[img > 0]
-    pet_max = float(np.percentile(nz, 99.5)) if nz.size else 1.0
+    def window(v):  # grey scale top = 99.5th percentile of the head voxels shown
+        v = v[v > 0]
+        return float(np.percentile(v, 99.5)) if v.size else 1.0
+
     views = [(0, "Sagittal"), (1, "Coronal"), (2, "Axial")]
     rows = 3 if peak_slices else 2
     fig = plt.figure(figsize=(12, 3.6 * rows + 0.6))
     gs = fig.add_gridspec(rows, 4, width_ratios=[1, 1, 1, 0.05], wspace=0.05, hspace=0.18)
 
     peak = np.unravel_index(int(np.argmax(np.abs(cam) if signed else cam)), cam.shape)
+    slice_win = window(img)
     for c, (axis, view_name) in enumerate(views):
-        im_mip = img.max(axis)
-        hm_mip = _signed_max_projection(cam, axis) if signed else cam.max(axis)
-        # row 1 at full contrast (no map on it, so the uptake pattern itself is visible); rows 2-3 dimmed under the map
-        panels = [(im_mip, None, f"{view_name}: PET only, no map (projection)", float(np.percentile(im_mip[im_mip > 0], 99.5)) if (im_mip > 0).any() else 1.0),
-                  (im_mip, hm_mip, f"{view_name}: PET + map (projection)", 1.6 * float(im_mip.max() or 1.0))]
+        pet_proj = _mean_projection(img, axis)
+        hm_proj = _signed_max_projection(cam, axis) if signed else cam.max(axis)
+        sl = [slice(None)] * 3
+        sl[axis] = peak[axis]
+        pet_sl, hm_sl = img[tuple(sl)], cam[tuple(sl)]
+        # (PET, map or None, title, grey top): no map -> full contrast; under a map -> dimmed so the colours stand out
         if peak_slices:
-            sl = [slice(None)] * 3
-            sl[axis] = peak[axis]
-            panels.append((img[tuple(sl)], cam[tuple(sl)], f"{view_name}: PET + map (one slice, through strongest point)", 1.6 * pet_max))
+            panels = [(pet_sl, None, f"{view_name}: PET only (slice through strongest point)", slice_win),
+                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection)", 1.6 * window(pet_proj)),
+                      (pet_sl, hm_sl, f"{view_name}: PET + map (same slice as top row)", 1.6 * slice_win)]
+        else:
+            panels = [(pet_proj, None, f"{view_name}: PET only (average projection)", window(pet_proj)),
+                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection)", 1.6 * window(pet_proj))]
         for r, (pet, hm, name, gmax) in enumerate(panels):
             ax = fig.add_subplot(gs[r, c])
             # transpose so the remaining second axis is vertical, origin="lower" so it points up
-            ax.imshow(pet.T, cmap="gray", origin="lower", vmin=0, vmax=gmax)  # dimmed PET, so the colours stand out
+            ax.imshow(pet.T, cmap="gray", origin="lower", vmin=0, vmax=gmax)
             if hm is not None:
                 ax.imshow(_overlay_rgba(hm, cmap_obj, norm, signed, top).transpose(1, 0, 2), origin="lower")
             ax.set_title(name, fontsize=8)
