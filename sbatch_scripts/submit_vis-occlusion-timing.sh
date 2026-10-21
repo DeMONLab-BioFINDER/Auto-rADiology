@@ -6,8 +6,10 @@
 # submit_vis-occlusion-benchmark.sh prints), so data loading, MONAI's masking
 # and saving are included. Runs the projection first for comparison, then the
 # full occlusion twice: whole volume, and only inside the brain bounding box
-# (--vis_brain_bbox). The maps are saved too, under
-# <best_model_folder>/validation/visualization/occlusion.
+# (--vis_brain_bbox). The maps are saved too, each run in its own folder
+# <best_model_folder>/validation/visualization/occlusion_mask<M>_ov<O>_<whole|bbox>
+# (run_vis.py always writes to .../occlusion, so each run's output is moved there
+# right after it finishes; otherwise runs overwrite each other).
 #
 # Mask size is in voxels of the 128^3 model input: 4 voxels ~ 8x8x5 mm on a
 # median raw scan.
@@ -54,6 +56,12 @@ args = parse_arguments()
 print(int(pd.read_csv(os.path.join(args.best_model_folder, 'splits', 'test_subjects.csv'))['ID'].iloc[0]))
 " | tail -n 1)
 fi
+VIS_DIR=$(python -c "
+import os, sys
+from src.params import parse_arguments
+sys.argv = ['x', '--best_model_folder', '$BEST_MODEL_FOLDER']
+print(os.path.join(parse_arguments().output_path, 'visualization'))
+" | tail -n 1)
 echo "Subject ID $SUBJECT_ID, mask $MASK_SIZE, overlap $OVERLAP"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
@@ -82,7 +90,11 @@ for BBOX in "" "--vis_brain_bbox"; do
   START=$SECONDS
   python ./run_vis.py "${COMMON_ARGS[@]}" $BBOX || RUN_STATUS=$?
   ELAPSED=$((SECONDS - START))
-  echo "[timing] real occlusion ${BBOX:-(whole volume)}: ${ELAPSED}s = $((ELAPSED / 60)) min $((ELAPSED % 60)) s for 1 scan (incl. loading model and data)"
+  echo "[timing] mask $MASK_SIZE, overlap $OVERLAP, ${BBOX:-(whole volume)}: ${ELAPSED}s = $((ELAPSED / 60)) min $((ELAPSED % 60)) s for 1 scan (incl. loading model and data)"
+  RUN_DIR="$VIS_DIR/occlusion_mask${MASK_SIZE}_ov${OVERLAP}_$([[ -n "$BBOX" ]] && echo bbox || echo whole)"
+  if [[ -d "$VIS_DIR/occlusion" ]]; then
+    rm -rf "$RUN_DIR" && mv "$VIS_DIR/occlusion" "$RUN_DIR" && echo "maps saved in $RUN_DIR"
+  fi
 done
 
 exit $RUN_STATUS
