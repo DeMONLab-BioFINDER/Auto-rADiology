@@ -7,6 +7,8 @@
 #
 # Usage:
 #   sbatch submit_check-image-geometry.sh
+# tau_raw_backup = the original tau_raw .pkl batches (native images + headers); tau_raw itself
+# only has the already-resized 128^3 .pt cache, which has no voxel sizes.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -29,4 +31,4 @@ fi
 
 python scripts/check_image_geometry.py \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
-  --data_types tau_raw,tau_T1,tau_T1MNI
+  --data_types tau_raw_backup,tau_T1,tau_T1MNI
