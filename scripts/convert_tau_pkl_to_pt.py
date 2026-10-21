@@ -122,7 +122,10 @@ def main(args):
             # head extent in the output grid; touching the edge with --spacing_mm means the box cut the head
             nz = np.nonzero(np.asarray(x).squeeze() > 0)
             head_vox = np.array([(a.max() - a.min() + 1) if a.size else 0 for a in nz])
-            touches_edge = any(a.size and (a.min() == 0 or a.max() == n - 1) for a, n in zip(nz, args.image_shape))
+            # sides and top only: with --spacing_mm a too-tall box is cut at the bottom (neck) on purpose
+            touches_edge = any(a.size and ((a.min() == 0 and i < 2) or a.max() == n - 1)
+                               for i, (a, n) in enumerate(zip(nz, args.image_shape)))
+            bottom_cut = bool(nz[2].size and nz[2].min() == 0)
             row = {"index": total, "file": Path(str((meta or {}).get("filename_or_obj", ""))).name,
                    "native_shape": "x".join(str(v) for v in np.squeeze(img).shape),
                    "scale_native_lo": float(lo), "scale_native_hi": float(hi)}
@@ -136,6 +139,7 @@ def main(args):
             for i, ax in enumerate("xyz"):
                 row[f"head_mm_{ax}"] = round(float(head_vox[i] * out_vox[i]), 1)
             row["head_touches_edge"] = bool(touches_edge)
+            row["bottom_cut"] = bottom_cut
             scan_rows.append(row)
 
             if isinstance(x, MetaTensor):
@@ -159,7 +163,7 @@ def main(args):
     scans = pd.DataFrame(scan_rows)
     scans.to_csv(scans_csv, index=False)
     if args.spacing_mm and scans["head_touches_edge"].any():
-        print(f"WARNING: {int(scans['head_touches_edge'].sum())} of {len(scans)} heads touch the edge of the "
+        print(f"WARNING: {int(scans['head_touches_edge'].sum())} of {len(scans)} heads touch a side or the top of the "
               f"{args.image_shape} box (possibly cut off): see head_touches_edge in {scans_csv.name}")
 
     recipe = {k: v for k, v in vars(args).items() if k not in ("out_dir", "batch_size")}

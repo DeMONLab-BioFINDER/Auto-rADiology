@@ -6,7 +6,7 @@
 #   data/tau_T1MNI         - exactly the tau_raw recipe (CropForeground + resize to 128^3),
 #                            so raw vs MNI differs only in the image space.
 #   data/tau_T1MNI_iso2    - the tau_raw_iso2 recipe (2 mm, head mask, percentiles inside the
-#                            head, 96x112x96) but NOT cropped: the 91x109x91 MNI grid is only
+#                            head, 96x128x96) but NOT cropped: the 91x109x91 MNI grid is only
 #                            padded by the same amount for every scan, so every voxel is the
 #                            same brain location in every scan (needed for atlas-based
 #                            occlusion / comparing maps). tau_raw_iso2 vs tau_T1MNI_iso2 then
@@ -58,5 +58,5 @@ convert() {
 
 STATUS=0
 convert "$DATA/tau_T1MNI" --image_shape 128 128 128 || STATUS=1
-convert "$DATA/tau_T1MNI_iso2" --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 96 112 96 --pct_inside_head || STATUS=1
+convert "$DATA/tau_T1MNI_iso2" --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 96 128 96 --pct_inside_head || STATUS=1
 exit $STATUS

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from monai.data import MetaTensor
 from monai.transforms import (LoadImage, EnsureChannelFirst, Orientation, Resize,
         ScaleIntensityRangePercentiles, Compose, CropForeground, GaussianSmooth,
-        Lambda, Spacing, ResizeWithPadOrCrop)
+        Lambda, Spacing, ResizeWithPadOrCrop, SpatialCrop)
 
 from src.utils import seed_worker
 # ------------------------------
@@ -324,6 +324,16 @@ def head_mask(x, frac: float = 0.1):
     return torch.from_numpy(filled).float().unsqueeze(0).to(x.device)
 
 
+def keep_top(x, height):
+    """If the box is taller than `height` voxels along the last axis (RAS z = bottom -> top), keep
+    the top `height` slices: a tall field of view goes down into the neck, so the cut should
+    remove neck, never the top of the brain (a centred crop would cut both ends)."""
+    z = x.shape[-1]
+    if z <= height:
+        return x
+    return SpatialCrop(roi_start=(0, 0, z - height), roi_end=(x.shape[1], x.shape[2], z))(x)
+
+
 def get_transforms(target_shape=(128, 128, 128), 
                 pct_lo: float = 1.0, 
                 pct_hi: float = 99.0,
@@ -369,7 +379,8 @@ def get_transforms(target_shape=(128, 128, 128),
         None (default): stretch the crop box to target_shape (each axis by its own factor).
         A number: resample to cubic voxels of this size first, then pad/crop the box (centred) to
         target_shape instead of stretching, so proportions are true and 1 voxel = spacing_mm in
-        every scan. target_shape must then be big enough for a head (e.g. 96x112x96 at 2 mm).
+        every scan. target_shape must then be big enough for a head (96x128x96 at 2 mm = 192x256x192
+        mm fits the real data); a head taller than the box loses its bottom (neck), not its top.
     pct_inside_head : bool
         Take the scaling percentiles over the non-zero (inside-the-head) voxels only. Needs the
         head already zeroed outside (head_crop), otherwise every voxel counts.
@@ -389,7 +400,9 @@ def get_transforms(target_shape=(128, 128, 128),
         if spacing_mm: steps.append(Spacing(pixdim=(spacing_mm,) * 3, mode="bilinear")) # same cubic voxel size for every scan
         if head_crop: steps.append(Lambda(lambda x: x * head_mask(x))) # true zeros outside the head, so the crop below finds the head
         if crop_foreground: steps.append(CropForeground(margin=crop_margin)) # Crop out huge empty regions
-        if spacing_mm: steps.append(ResizeWithPadOrCrop(spatial_size=target_shape)) # centre the box in a fixed grid, no stretching
+        if spacing_mm:
+            steps.append(Lambda(lambda x: keep_top(x, target_shape[2]))) # too tall: cut the neck, not the top of the head
+            steps.append(ResizeWithPadOrCrop(spatial_size=target_shape)) # centre the box in a fixed grid, no stretching
         else: steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
         # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
         scale_cls = ScaleIntensityRangePercentilesInsideHead if pct_inside_head else ScaleIntensityRangePercentiles

@@ -76,7 +76,7 @@ def main():
     print(f"cache: {cache_dir} ({len(pt_files)} .pt files, {pt_batch_size} per batch)")
 
     old = Compose(get_transforms(target_shape=(128, 128, 128)).transforms[1:])
-    new = Compose(get_transforms(target_shape=(96, 112, 96), head_crop=True, crop_margin=2, spacing_mm=2,
+    new = Compose(get_transforms(target_shape=(96, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
                                  pct_inside_head=True).transforms[1:])
 
     rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
