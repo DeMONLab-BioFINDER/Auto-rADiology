@@ -16,9 +16,12 @@ Per site, for a sample of scans:
      cache was made with this code
   D) for the iso2 recipe (96x128x96 box at 2 mm): whether the head touches a side or the top of
      the box (= the box is too small and cuts the head; should be 0 everywhere), and whether a
-     too-tall head was cut at the bottom (neck; expected for some scans, harmless)
+     too-tall head was cut at the bottom (neck; expected for some scans, harmless). For a touch:
+     which side, and how far below the top of the head (shallow = brain level, deep = shoulders)
+  E) share of the head that is pure white (clipped to 1) in the old and the iso2 recipe
 and one png per site: middle slices of the cached input, the old replay and the iso2 replay,
-plus one png for each scan (up to 3 per site) whose iso2 head touches the box edge.
+plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
+(neckcut_*.png): front and side view of the whole iso2 head with the box edges marked.
 
 Reads only, no GPU needed. Outputs (default <proj_path>/results/head_mask_check/, outside the repo).
 """
@@ -54,13 +57,72 @@ def head_mm(v, vox_mm):
     return [float((a.max() - a.min() + 1) * s) if a.size else 0.0 for a, s in zip(nz, vox_mm)]
 
 
-def edge_flags(v):
-    """(touches a side or the top, cut at the bottom) for a head in a box."""
-    nz = np.nonzero(v > 0)
-    if not nz[0].size:
-        return False, False
-    touches = any((a.min() == 0 and i < 2) or a.max() == n - 1 for i, (a, n) in enumerate(zip(nz, v.shape)))
-    return bool(touches), bool(nz[2].min() == 0)
+# box faces a head can touch (bottom left out: cutting the neck there is on purpose)
+FACES = {"left": lambda m: m[0], "right": lambda m: m[-1], "back": lambda m: m[:, 0], "front": lambda m: m[:, -1]}
+
+
+def edge_info(v, vox_mm=2.0):
+    """Where a head touches its box: the touching faces, how far below the top of the head the
+    highest touching point is (mm; small = brain level, large = neck/shoulders), and whether
+    the head was cut at the bottom."""
+    m = v > 0
+    zs = np.nonzero(m.any(axis=(0, 1)))[0]
+    out = {"iso2_touches_edge": False, "iso2_touch_sides": "", "iso2_touch_mm_below_top": np.nan,
+           "iso2_bottom_cut": bool(zs.size and zs.min() == 0)}
+    if not zs.size:
+        return out
+    top, sides, touch_z = zs.max(), [], []
+    for name, face in FACES.items():
+        z = np.nonzero(face(m).any(axis=0))[0]  # heights at which the head reaches this face
+        if z.size:
+            sides.append(name)
+            touch_z.append(z.max())
+    if m[:, :, -1].any():
+        sides.append("top")
+        touch_z.append(top)
+    if sides:
+        out.update(iso2_touches_edge=True, iso2_touch_sides="+".join(sides),
+                   iso2_touch_mm_below_top=float((top - max(touch_z)) * vox_mm))
+    return out
+
+
+def white_share(v):
+    """Share of the head (non-zero voxels) clipped to pure white (1)."""
+    h = v[v > 0]
+    return float((h >= 0.999).mean()) if h.size else np.nan
+
+
+def silhouette_png(v, out_png, title, vox_mm=2.0):
+    """Front and side view of a whole iso2 head: average PET along the view, the head outline,
+    the box edges, and a rough line where the brain ends (~120 mm below the top of the head)."""
+    m = v > 0
+    zs = np.nonzero(m.any(axis=(0, 1)))[0]
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4.6))
+    for ax, axis, name, (lft, rgt) in zip(axes, (1, 0), ("front view (left-right)", "side view (back-front)"),
+                                          (("left", "right"), ("back", "front"))):
+        n = np.maximum(m.sum(axis=axis), 1)
+        img = (v.sum(axis=axis) / n).T
+        ax.imshow(img, cmap="gray", origin="lower", vmin=0, vmax=np.percentile(img[img > 0], 99.5) if (img > 0).any() else 1)
+        ax.contour(m.any(axis=axis).T, levels=[0.5], colors="cyan", linewidths=0.8)
+        h, w = img.shape
+        ax.add_patch(plt.Rectangle((-0.5, -0.5), w, h, fill=False, edgecolor="orange", linewidth=2))
+        sil = m.any(axis=axis)  # (width, z)
+        for col, label in ((0, lft), (w - 1, rgt)):
+            z = np.nonzero(sil[col])[0]
+            if z.size:
+                ax.plot([col] * z.size, z, "r.", markersize=3)
+        if sil[:, -1].any():
+            x = np.nonzero(sil[:, -1])[0]
+            ax.plot(x, [h - 1] * x.size, "r.", markersize=3)
+        if zs.size:
+            ax.axhline(zs.max() - 120 / vox_mm, color="yellow", linestyle="--", linewidth=0.8)
+        ax.set_title(name, fontsize=8)
+        ax.axis("off")
+    fig.suptitle(title + "\norange = box edge, cyan = head outline, red = head touching the box, "
+                 "yellow dashed = ~120 mm below the top (roughly where the brain ends)", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=110)
+    plt.close(fig)
 
 
 def mid_slices(v):
@@ -92,7 +154,8 @@ def main():
     new = Compose(get_transforms(target_shape=(96, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
                                  pct_inside_head=True).transforms[1:])
 
-    rows, examples, edge_examples, n_site, batch_len, cached_batch = [], {}, [], {}, None, (None, None)
+    rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
+    edge_examples, cut_examples = [], []
     for pkl_path in sorted((input_path / args.pkl_type).glob("tau_batch_*.pkl")):
         batch_id = int(pkl_path.stem.split("_")[-1])
         with open(pkl_path, "rb") as f:
@@ -114,7 +177,8 @@ def main():
             row = {"ID": sid, "site": site,
                    "replay_old_box_share": float((v_old > 0).mean()), "replay_old_shell_share": shell_share(v_old),
                    "replay_iso2_shell_share": shell_share(v_new)}
-            row["iso2_touches_edge"], row["iso2_bottom_cut"] = edge_flags(v_new)
+            row.update(edge_info(v_new))
+            row["old_white_share"], row["iso2_white_share"] = white_share(v_old), white_share(v_new)
             for ax, a, b in zip("xyz", head_mm(v_old, old_vox), head_mm(v_new, [2, 2, 2])):
                 row[f"old_head_mm_{ax}"], row[f"iso2_head_mm_{ax}"] = round(a, 1), round(b, 1)
 
@@ -135,7 +199,10 @@ def main():
             if site not in examples:
                 examples[site] = (sid, v_cache, v_old, v_new)
             if row["iso2_touches_edge"] and sum(e[0] == site for e in edge_examples) < 3:
-                edge_examples.append((site, sid, v_cache, v_old, v_new))
+                edge_examples.append((site, sid, v_new, f"{row['iso2_touch_sides']} touch, highest "
+                                      f"{row['iso2_touch_mm_below_top']:.0f} mm below the top of the head"))
+            if row["iso2_bottom_cut"] and sum(e[0] == site for e in cut_examples) < 3:
+                cut_examples.append((site, sid, v_new, "cut at the bottom of the box"))
 
     df = pd.DataFrame(rows)
     df.round(4).to_csv(out_dir / "head_mask_per_scan.csv", index=False)
@@ -151,6 +218,11 @@ def main():
         by_site[f"iso2_head_mm_{ax}_max"] = df.groupby("site")[f"iso2_head_mm_{ax}"].max()
     by_site["n_iso2_touch_edge"] = df.groupby("site")["iso2_touches_edge"].sum().astype(int)
     by_site["n_iso2_bottom_cut"] = df.groupby("site")["iso2_bottom_cut"].sum().astype(int)
+    by_site["iso2_touch_min_mm_below_top"] = df.groupby("site")["iso2_touch_mm_below_top"].min()
+    by_site["iso2_touch_sides"] = df.groupby("site")["iso2_touch_sides"].apply(
+        lambda t: ",".join(sorted({x for v in t if v for x in v.split("+")})))
+    by_site["old_white_share"] = df.groupby("site")["old_white_share"].median()
+    by_site["iso2_white_share"] = df.groupby("site")["iso2_white_share"].median()
     if "cache_shell_share" in df.columns:
         by_site["n_mask_failed_in_cache"] = df.groupby("site")["cache_shell_share"].apply(lambda s: int((s > 0.2).sum()))
     by_site.round(3).to_csv(out_dir / "head_mask_by_site.csv")
@@ -159,8 +231,10 @@ def main():
 
     pngs = [(site, sid, vc, vo, vn, f"example_{str(site).replace(' ', '_')}.png")
             for site, (sid, vc, vo, vn) in examples.items()]
-    pngs += [(site, sid, vc, vo, vn, f"edge_{str(site).replace(' ', '_')}_ID{sid}.png")
-             for site, sid, vc, vo, vn in edge_examples]
+    for prefix, cases in (("edge", edge_examples), ("neckcut", cut_examples)):
+        for site, sid, v_new, note in cases:
+            silhouette_png(v_new, out_dir / f"{prefix}_{str(site).replace(' ', '_')}_ID{sid}.png",
+                           f"{site}, ID {sid}, iso2: {note}")
     for site, sid, v_cache, v_old, v_new, png_name in pngs:
         vols = [("cached input (trained on)", v_cache), ("old recipe, replayed", v_old), ("iso2 recipe", v_new)]
         vols = [(t, v) for t, v in vols if v is not None]
@@ -178,9 +252,12 @@ def main():
     print("\nshell_share = share of the box's outer 4-voxel shell that is non-zero: ~0 = mask removed the "
           "background; high = background got through. n_mask_failed_in_cache = scans with shell_share > 0.2.\n"
           "cache_vs_replay_r ~1 = the cached input is what this code makes.\n"
-          "n_iso2_touch_edge = iso2 heads touching a side or the top of the 96x128x96 box (should be 0; "
-          "edge_*.png shows them). n_iso2_bottom_cut = heads cut at the neck (fine). "
-          "iso2_head_mm_*_max vs the box (192 x 256 x 192 mm) = how much room is left.")
+          "n_iso2_touch_edge = iso2 heads touching a side or the top of the 96x128x96 box (edge_*.png). "
+          "iso2_touch_min_mm_below_top = the highest touch of any scan, in mm below the top of the head: "
+          "above ~120 = only neck/shoulders touch (harmless), below ~120 = the skull at brain level touches "
+          "(box too small). n_iso2_bottom_cut = heads cut at the bottom (neckcut_*.png). "
+          "iso2_head_mm_*_max vs the box (192 x 256 x 192 mm) = how much room is left.\n"
+          "*_white_share = share of the head clipped to pure white (1), old vs iso2 recipe.")
     print(f"Saved to {out_dir}")
 
 
