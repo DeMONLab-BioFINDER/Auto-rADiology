@@ -21,7 +21,7 @@ Per site, for a sample of scans:
   E) share of the head that is pure white (clipped to 1) in the old and the iso2 recipe
   F) whether the head is already cut in the original scan (touches a side of the scanner's
      field of view): no box can bring that back, and the old inputs are cut the same way
-and one png per site: middle slices of the cached input, the old replay and the iso2 replay,
+and one png per site: middle slices of the old input (cached, else replayed) and the iso2 replay,
 plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
 (neckcut_*.png): front and side view of the whole iso2 head with the box edges marked.
 
@@ -248,8 +248,9 @@ def main():
             silhouette_png(v_new, out_dir / f"{prefix}_{str(site).replace(' ', '_')}_ID{sid}.png",
                            f"{site}, ID {sid}, iso2: {note}")
     for site, sid, v_cache, v_old, v_new, png_name in pngs:
-        vols = [("cached input (trained on)", v_cache), ("old recipe, replayed", v_old), ("iso2 recipe", v_new)]
-        vols = [(t, v) for t, v in vols if v is not None]
+        # cached input == old recipe replayed (cache_vs_replay_r = 1), so show only one of them
+        vols = [("old input (trained on)", v_cache) if v_cache is not None else ("old recipe, replayed", v_old),
+                ("iso2 recipe", v_new)]
         fig, axes = plt.subplots(len(vols), 3, figsize=(9, 3 * len(vols)), squeeze=False)
         for r, (title, v) in enumerate(vols):
             for c, (sl, view) in enumerate(zip(mid_slices(v), ["side", "front", "top"])):
