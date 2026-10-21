@@ -414,12 +414,13 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
     for c, (axis, view_name) in enumerate(views):
         im_mip = img.max(axis)
         hm_mip = _signed_max_projection(cam, axis) if signed else cam.max(axis)
-        panels = [(im_mip, None, f"{view_name}: PET (projection)", 1.6 * float(im_mip.max() or 1.0)),
-                  (im_mip, hm_mip, f"{view_name}: map (projection)", 1.6 * float(im_mip.max() or 1.0))]
+        # row 1 at full contrast (no map on it, so the uptake pattern itself is visible); rows 2-3 dimmed under the map
+        panels = [(im_mip, None, f"{view_name}: PET only, no map (projection)", float(np.percentile(im_mip[im_mip > 0], 99.5)) if (im_mip > 0).any() else 1.0),
+                  (im_mip, hm_mip, f"{view_name}: PET + map (projection)", 1.6 * float(im_mip.max() or 1.0))]
         if peak_slices:
             sl = [slice(None)] * 3
             sl[axis] = peak[axis]
-            panels.append((img[tuple(sl)], cam[tuple(sl)], f"{view_name}: map (single slice through strongest point)", 1.6 * pet_max))
+            panels.append((img[tuple(sl)], cam[tuple(sl)], f"{view_name}: PET + map (one slice, through strongest point)", 1.6 * pet_max))
         for r, (pet, hm, name, gmax) in enumerate(panels):
             ax = fig.add_subplot(gs[r, c])
             # transpose so the remaining second axis is vertical, origin="lower" so it points up
