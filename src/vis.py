@@ -1,6 +1,7 @@
 import os
 import math
 import time
+from pathlib import Path
 import torch
 import numpy as np
 import torch.nn as nn
@@ -54,8 +55,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     os.makedirs(vis_dir, exist_ok=True)
 
     # colour bar labels of the MIP pngs; pos_vs_neg is signed, so it gets a blue-red scale centred on 0
-    mip_labels = {'class': "drop in P(predicted class) when hidden" if vis_name == "occlusion" else vis_name,
-                  'pos_vs_neg': "drop in P(positive) minus drop in P(negative)\nred: supports positive, blue: supports negative"}
+    mip_labels = {'class': MIP_LABELS['class'] if vis_name == "occlusion" else vis_name, 'pos_vs_neg': MIP_LABELS['pos_vs_neg']}
     vis_sum = {'class': None,'pos_vs_neg':None}
     vis_count = {'class': 0, 'pos_vs_neg': 0}
     img_sum, img_n = None, 0  # running mean of the input images, for the group-average MIP background
@@ -82,6 +82,9 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
             heat_class, heat_pos_vs_neg = vis_fn(model=model, x=xb, extra=extrab, **vis_kwargs)  # [D,H,W]
 
             img_np = xb[0, 0].detach().cpu().numpy()  # (D,H,W)
+            # the model input itself, so the pngs can be redrawn later from this folder alone (redraw_map_pngs)
+            nib.save(nib.Nifti1Image(img_np.astype(np.float32), affine_fn(pid_b) if affine_fn else np.eye(4)),
+                     os.path.join(vis_dir, f"{pid_b}_input.nii.gz"))
             img_sum = img_np.astype(np.float64) if img_sum is None else img_sum + img_np
             img_n += 1
 
@@ -128,11 +131,11 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
         vis_avg = vis_sum[vt] / vis_count[vt]
         nib.save(nib.Nifti1Image(vis_avg.astype(np.float32), np.eye(4)),
                 os.path.join(vis_dir, f"group_average_{vis_name}_{vt}.nii.gz"))
-        save_mip_png(img_avg, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max)
+        save_mip_png(img_avg, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max, scale_note=None if color_max is not None else "the average's own 99th percentile")
 
         if use_pseudo_surface:
             shell = pet_pseudo_surface(img_avg, pseudo_surface_sigma, pseudo_surface_pct)
-            save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max)
+            save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max, scale_note=None if color_max is not None else "the average's own 99th percentile")
 
 
 def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_mode="trilinear"):
@@ -337,50 +340,152 @@ def _signed_max_projection(cam, axis):
     return np.take_along_axis(cam, np.expand_dims(idx, axis), axis=axis).squeeze(axis)
 
 
-def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title=None, vmax=None):
-    """Maximum-intensity projections of the PET (grey) with the map on top, in three views.
+def robust_top(cam, signed=False, pct=99.0):
+    """Top of the colour scale: the `pct` percentile of the map's (absolute, if signed) non-zero
+    values, so one extreme voxel does not decide the scale; values above it are drawn solid."""
+    v = np.abs(cam) if signed else np.clip(cam, 0, None)
+    v = v[v > 0]
+    return float(np.percentile(v, pct)) if v.size else 1.0
+
+
+def _overlay_rgba(hm, cmap_obj, norm, signed, top):
+    """Colour the map; opacity follows strength: 0 transparent, solid (0.9) at `top` and above."""
+    rgba = cmap_obj(norm(hm))
+    strength = np.abs(hm) if signed else np.clip(hm, 0, None)
+    rgba[..., 3] = 0.9 * np.clip(strength / top, 0, 1)
+    return rgba
+
+
+def _faded_colorbar(cax, cmap_obj, norm, signed, top, label):
+    """Colour bar drawn with the same fading as the map, on the same grey as the PET."""
+    vals = np.linspace(norm.vmin, norm.vmax, 256)[:, None]
+    extent = [0, 1, norm.vmin, norm.vmax]
+    cax.imshow(np.full((256, 1, 3), 0.45), aspect="auto", origin="lower", extent=extent)
+    cax.imshow(_overlay_rgba(vals, cmap_obj, norm, signed, top), aspect="auto", origin="lower", extent=extent)
+    cax.set_xticks([])
+    cax.yaxis.tick_right()
+    cax.yaxis.set_label_position("right")
+    if label:
+        cax.set_ylabel(label, fontsize=8)
+
+
+def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title=None, vmax=None,
+                 scale_note=None, peak_slices=True):
+    """PET (grey) and the map on top, in three views (side, front/back, top). Rows:
+      1. the PET alone (maximum-intensity projection), to see what is under the colours
+      2. the map on the PET, both as projections (each pixel = strongest value along that line)
+      3. (peak_slices) single slices through the map's strongest point, to see where it sits in depth
 
     Arrays are (x, y, z) in RAS (left->right, back->front, bottom->top) after the pipeline's
-    Orientation step. Each view collapses one axis and is drawn upright: sagittal = seen from
-    the side (front on the right), coronal = seen from the front/back, axial = seen from above
-    (front at the top); left/right as in RAS, i.e. the subject's right on the right.
+    Orientation step. Views are drawn upright: side = front on the right, front/back = the
+    subject's right on the right, top = front at the top. Squares = model voxels (with the old
+    stretched inputs, proportions are not true to scale).
 
-    Transparency follows strength: 0 is fully transparent, the colour gets more solid towards
-    the top of the scale, so weak values fade away and only the strong regions show.
-    signed=False: map projected with max, colour scale `cmap` (white -> red) from 0 to its max;
-    values <= 0 are transparent.
-    signed=True (maps where the sign matters, e.g. pos_vs_neg): the value with the largest
-    absolute size along each line is kept, and a blue-red scale centred on 0 is used
-    (red = positive, blue = negative).
-    label: colour bar label. title: figure title.
-    vmax: fixed top of the colour scale (signed: -vmax..vmax, else 0..vmax); None = this map's own range."""
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
-
-    views = [(0, "Sagittal (side)"), (1, "Coronal (front/back)"), (2, "Axial (top)")]
+    Opacity follows strength: 0 is fully transparent, solid at the top of the scale and above.
+    signed=False: white -> red (`cmap`) from 0 to the top; values <= 0 not shown.
+    signed=True (e.g. pos_vs_neg): the value with the largest absolute size along each line is
+    projected, blue-red scale centred on 0 (red = positive, blue = negative).
+    vmax: top of the scale; None = this map's own 99th percentile (robust_top). scale_note: text
+    on how the scale was set (e.g. shared across scans), shown under the title."""
+    top = vmax if vmax is not None else robust_top(cam, signed)
+    top = top if top > 0 else 1.0
     if signed:
-        top = vmax if vmax is not None else (float(np.abs(cam).max()) or 1.0)
         cmap_obj, norm = plt.get_cmap("RdBu_r"), plt.Normalize(-top, top)
     else:
-        top = vmax if vmax is not None else (float(cam.max()) if cam.max() > 0 else 1.0)
         cmap_obj, norm = plt.get_cmap(cmap), plt.Normalize(0.0, top)
 
-    for ax, (axis, view_name) in zip(axes, views):
-        im = img.max(axis)
-        hm = _signed_max_projection(cam, axis) if signed else cam.max(axis)
-        rgba = cmap_obj(norm(hm))
-        strength = np.abs(hm) if signed else np.clip(hm, 0, None)
-        rgba[..., 3] = 0.9 * np.clip(strength / top, 0, 1)  # transparent at 0, solid at the top of the scale
-        # transpose so the remaining second axis is vertical, origin="lower" so it points up
-        ax.imshow(im.T, cmap="gray", origin="lower", vmin=0, vmax=1.6 * (float(im.max()) or 1.0))  # dimmed PET, so the colours stand out
-        ax.imshow(rgba.transpose(1, 0, 2), origin="lower")
-        ax.set_title(view_name)
-        ax.axis("off")
-    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap_obj), ax=axes, shrink=0.8, label=label)
-    if title:
-        fig.suptitle(title)
+    nz = img[img > 0]
+    pet_max = float(np.percentile(nz, 99.5)) if nz.size else 1.0
+    views = [(0, "side"), (1, "front/back"), (2, "top")]
+    rows = 3 if peak_slices else 2
+    fig = plt.figure(figsize=(12, 3.6 * rows + 0.6))
+    gs = fig.add_gridspec(rows, 4, width_ratios=[1, 1, 1, 0.05], wspace=0.05, hspace=0.18)
 
-    plt.savefig(out_png, dpi=150, bbox_inches="tight")
-    plt.close()
+    peak = np.unravel_index(int(np.argmax(np.abs(cam) if signed else cam)), cam.shape)
+    for c, (axis, view_name) in enumerate(views):
+        im_mip = img.max(axis)
+        hm_mip = _signed_max_projection(cam, axis) if signed else cam.max(axis)
+        panels = [(im_mip, None, f"PET ({view_name}, projection)", 1.6 * float(im_mip.max() or 1.0)),
+                  (im_mip, hm_mip, f"map ({view_name}, projection)", 1.6 * float(im_mip.max() or 1.0))]
+        if peak_slices:
+            sl = [slice(None)] * 3
+            sl[axis] = peak[axis]
+            panels.append((img[tuple(sl)], cam[tuple(sl)], f"map ({view_name}, slice through strongest point)", 1.6 * pet_max))
+        for r, (pet, hm, name, gmax) in enumerate(panels):
+            ax = fig.add_subplot(gs[r, c])
+            # transpose so the remaining second axis is vertical, origin="lower" so it points up
+            ax.imshow(pet.T, cmap="gray", origin="lower", vmin=0, vmax=gmax)  # dimmed PET, so the colours stand out
+            if hm is not None:
+                ax.imshow(_overlay_rgba(hm, cmap_obj, norm, signed, top).transpose(1, 0, 2), origin="lower")
+            ax.set_title(name, fontsize=8)
+            ax.axis("off")
+    _faded_colorbar(fig.add_subplot(gs[1:, 3]), cmap_obj, norm, signed, top, label)
+
+    sub = f"colour scale top = {top:.3g}" + (f" ({scale_note})" if scale_note else " (this scan's own 99th percentile)")
+    sub += f" | strongest value in this map = {float((np.abs(cam) if signed else cam).max()):.3g}"
+    fig.suptitle((title + "\n" if title else "") + sub, fontsize=9)
+    plt.savefig(out_png, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
+
+MIP_LABELS = {"class": "drop in P(predicted class) when hidden",
+              "pos_vs_neg": "drop in P(positive) minus drop in P(negative)\nred: supports positive, blue: supports negative"}
+
+
+def redraw_map_pngs(vis_dir, vis_name="occlusion", shared_scale=False, load_input=None, peak_slices=True):
+    """Redraw the per-scan pngs of a finished run from its saved maps ({ID}_{vis_name}_{type}.nii.gz),
+    without recomputing anything. The model input comes from {ID}_input.nii.gz (saved by runs from
+    now on) or, for older runs, from load_input(ID) -> (D,H,W) array. Titles use summary.csv if present.
+
+    shared_scale=False: each scan on its own scale (its 99th percentile), written as *_mip.png
+      (replacing the old ones) - for reading where the model looks within each scan.
+    shared_scale=True: one scale per map type for all scans (99th percentile of all their values
+      pooled), written as *_mip_shared.png - for comparing how much the model cares between scans."""
+    vis_dir = Path(vis_dir)
+    summary = pd.read_csv(vis_dir / "summary.csv") if (vis_dir / "summary.csv").exists() else None
+    info = {int(r.ID): r for r in summary.itertuples()} if summary is not None else {}
+
+    def title_of(pid):
+        r = info.get(pid)
+        if r is None or not hasattr(r, "P_positive"):
+            return f"ID {pid}"
+        vr = "n/a" if pd.isna(r.visual_read) else ("positive" if r.visual_read == 1 else "negative")
+        return f"ID {pid} | model P(positive) = {r.P_positive:.2f} | visual read: {vr}"
+
+    n_done = 0
+    for vt in ("class", "pos_vs_neg"):
+        files = sorted(f for f in vis_dir.glob(f"*_{vis_name}_{vt}.nii.gz") if not f.name.startswith("group_average"))
+        if not files:
+            continue
+        signed = vt == "pos_vs_neg"
+        top, note = None, None
+        if shared_scale:  # pooled 99th percentile, from a random sample of each map's non-zero values
+            rng, pooled = np.random.default_rng(0), []
+            for f in files:
+                v = nib.load(f).get_fdata(dtype=np.float32)
+                v = (np.abs(v) if signed else np.clip(v, 0, None)).ravel()
+                v = v[v > 0]
+                pooled.append(rng.choice(v, size=min(v.size, 50_000), replace=False) if v.size else v)
+            pooled = np.concatenate(pooled)
+            top = float(np.percentile(pooled, 99)) if pooled.size else 1.0
+            note = f"shared across {len(files)} scans"
+            print(f"[redraw] {vt}: shared colour scale top = {top:.4g} over {len(files)} scans")
+        for f in files:
+            pid = int(f.name.split("_")[0])
+            inp = vis_dir / f"{pid}_input.nii.gz"
+            if inp.exists():
+                img = nib.load(inp).get_fdata(dtype=np.float32)
+            elif load_input is not None:
+                img = np.asarray(load_input(pid), dtype=np.float32)
+            else:
+                raise FileNotFoundError(f"{inp} missing; pass load_input to read the model input from the cache")
+            cam = nib.load(f).get_fdata(dtype=np.float32)
+            out = vis_dir / f"{pid}_{vis_name}_{vt}_mip{'_shared' if shared_scale else ''}.png"
+            save_mip_png(img, cam, str(out), signed=signed, label=MIP_LABELS[vt], title=title_of(pid), vmax=top,
+                         scale_note=note, peak_slices=peak_slices)
+            n_done += 1
+    print(f"[redraw] {n_done} pngs written to {vis_dir}")
+    return n_done
 
 
 def pet_pseudo_surface(img, sigma=1.0, pct=90):
