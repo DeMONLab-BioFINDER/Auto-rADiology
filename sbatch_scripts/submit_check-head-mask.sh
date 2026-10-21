@@ -6,7 +6,8 @@
 # Reads only. A GPU is requested only because Berzelius jobs need one; the work is CPU.
 #
 # Usage:
-#   sbatch submit_check-head-mask.sh [scans_per_site=15]
+#   sbatch submit_check-head-mask.sh [scans_per_site=15] [line_mm=120]
+#   line_mm = how far below the top of the head counts as "low" (neck) in the brightness check
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -28,4 +29,4 @@ elif [[ ! -d "sbatch_scripts" ]]; then
 fi
 
 python scripts/check_head_mask.py --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
-  --cache_type tau_raw --pkl_type tau_raw_backup --max_per_site "${1:-15}"
+  --cache_type tau_raw --pkl_type tau_raw_backup --max_per_site "${1:-15}" --line_mm "${2:-120}"
