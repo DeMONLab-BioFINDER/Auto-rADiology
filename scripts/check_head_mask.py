@@ -19,8 +19,11 @@ Per site, for a sample of scans:
      too-tall head was cut at the bottom (neck; expected for some scans, harmless). For a touch:
      which side, and how far below the top of the head (shallow = brain level, deep = shoulders)
   E) share of the head that is pure white (clipped to 1) in the old and the iso2 recipe
-  F) whether the head is already cut in the original scan (touches a side of the scanner's
-     field of view): no box can bring that back, and the old inputs are cut the same way
+  F) whether the head is already cut in the original scan, before any of our steps: touches a
+     side or the top of the scanner's field of view, or the bottom (then native_head_mm_z = how
+     much of the head the scan shows; under ~130-140 mm the bottom of the brain may be missing).
+     No box can bring that back, and the old inputs are cut the same way. fovcut_*.png shows
+     up to 3 such scans per site (the whole scan at 2 mm, its edges in orange).
   G) does the lower head (neck) set the brightness scale? The scale top is the head's 99th
      percentile, so bright neck tissue can push it up and make the brain dimmer at sites whose
      scans show a lot of neck. Per scan: share of the brightest 1 % lying more than --line_mm
@@ -102,7 +105,7 @@ def white_share(v):
     return float((h >= 0.999).mean()) if h.size else np.nan
 
 
-def silhouette_png(v, out_png, title, vox_mm=2.0):
+def silhouette_png(v, out_png, title, vox_mm=2.0, edge_name="box", mark_bottom=False, tol=0):
     """Front and side view of a whole iso2 head: average PET along the view, the head outline,
     the box edges, and a rough line where the brain ends (~120 mm below the top of the head)."""
     m = v > 0
@@ -118,18 +121,22 @@ def silhouette_png(v, out_png, title, vox_mm=2.0):
         ax.add_patch(plt.Rectangle((-0.5, -0.5), w, h, fill=False, edgecolor="orange", linewidth=2))
         sil = m.any(axis=axis)  # (width, z)
         for col, label in ((0, lft), (w - 1, rgt)):
-            z = np.nonzero(sil[col])[0]
+            near = sil[:tol + 1] if col == 0 else sil[w - 1 - tol:]
+            z = np.nonzero(near.any(axis=0))[0]
             if z.size:
                 ax.plot([col] * z.size, z, "r.", markersize=3)
-        if sil[:, -1].any():
-            x = np.nonzero(sil[:, -1])[0]
-            ax.plot(x, [h - 1] * x.size, "r.", markersize=3)
+        for row in ((-1, 0) if mark_bottom else (-1,)):
+            near = sil[:, h - 1 - tol:] if row == -1 else sil[:, :tol + 1]
+            if near.any():
+                x = np.nonzero(near.any(axis=1))[0]
+                ax.plot(x, [row % h] * x.size, "r.", markersize=3)
         if zs.size:
             ax.axhline(zs.max() - 120 / vox_mm, color="yellow", linestyle="--", linewidth=0.8)
         ax.set_title(name, fontsize=8)
         ax.axis("off")
-    fig.suptitle(title + "\norange = box edge, cyan = head outline, red = head touching the box, "
-                 "yellow dashed = ~120 mm below the top (roughly where the brain ends)", fontsize=8)
+    note = "" if edge_name == "box" else " (the 2 mm resampling can leave a thin gap: a FLAT edge of the head = cut)"
+    fig.suptitle(title + f"\norange = {edge_name} edge, cyan = head outline, red = head touching the {edge_name}{note}"
+                 "\nyellow dashed = ~120 mm below the top (roughly where the brain ends)", fontsize=8)
     fig.tight_layout()
     fig.savefig(out_png, dpi=110)
     plt.close(fig)
@@ -204,7 +211,7 @@ def main():
     print(f"cache: {cache_dir} ({len(pt_files)} .pt files, {pt_batch_size} per batch)")
 
     old = Compose(get_transforms(target_shape=(128, 128, 128)).transforms[1:])
-    to_ras = Compose(get_transforms().transforms[1:3])  # channel-first + RAS only, native voxels
+    to_ras = Compose(get_transforms().transforms[1:3])  # channel-first + RAS only, original voxels
     new = Compose(get_transforms(target_shape=(112, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
                                  pct_inside_head=True).transforms[1:])
 
@@ -214,7 +221,7 @@ def main():
                                       if isinstance(t, ScaleIntensityRangePercentiles))])  # 2 mm, head masked, unscaled
     rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
     bright_cases = {}
-    edge_examples, cut_examples = [], []
+    edge_examples, cut_examples, fov_examples = [], [], []
     for pkl_path in sorted((input_path / args.pkl_type).glob("tau_batch_*.pkl")):
         batch_id = int(pkl_path.stem.split("_")[-1])
         with open(pkl_path, "rb") as f:
@@ -237,14 +244,20 @@ def main():
                    "replay_old_box_share": float((v_old > 0).mean()), "replay_old_shell_share": shell_share(v_old),
                    "replay_iso2_shell_share": shell_share(v_new)}
             row.update(edge_info(v_new))
-            v_native = (to_ras(MetaTensor(torch.as_tensor(img), meta=meta)) if "affine" in meta
-                        else torch.as_tensor(img).reshape(1, *np.squeeze(img).shape))
-            m_native = head_mask(v_native).squeeze().numpy() > 0
-            native_sides = [n for n, f in FACES.items() if f(m_native).any()]
-            row["native_cut_sides"] = "+".join(native_sides)
-            row["native_cut"] = bool(native_sides)
             row["old_white_share"], row["iso2_white_share"] = white_share(v_old), white_share(v_new)
             v_pre = new_pre(MetaTensor(torch.as_tensor(img), meta=meta)).squeeze().numpy()
+            # on the original grid (resampling would blur the scan's edge slices to 0)
+            v_native = (to_ras(MetaTensor(torch.as_tensor(img), meta=meta)) if "affine" in meta
+                        else torch.as_tensor(img).reshape(1, *np.squeeze(img).shape))
+            native_vox = np.asarray(v_native.pixdim, dtype=float)[:3] if "affine" in meta else np.ones(3)
+            m_native = head_mask(v_native).squeeze().numpy() > 0
+            native_sides = [n for n, f in FACES.items() if f(m_native).any()]
+            if m_native[:, :, -1].any():
+                native_sides.append("top")
+            row["native_cut_sides"] = "+".join(native_sides)
+            row["native_cut"] = bool(native_sides)
+            row["native_bottom_cut"] = bool(m_native[:, :, 0].any())
+            row["native_head_mm_z"] = head_mm(m_native.astype(np.float32), native_vox)[2]
             row["old_white_low_share"], _ = brightness_info(v_old, v_old >= 0.999, old_vox[2], args.line_mm)
             iso2_bright = v_pre >= np.percentile(v_pre[v_pre > 0], 99) if (v_pre > 0).any() else v_pre > 0
             row["iso2_white_low_share"], row["iso2_scale_top_vs_upper_head"] = brightness_info(
@@ -276,6 +289,11 @@ def main():
             if row["iso2_touches_edge"] and sum(e[0] == site for e in edge_examples) < 3:
                 edge_examples.append((site, sid, v_new, f"{row['iso2_touch_sides']} touch, highest "
                                       f"{row['iso2_touch_mm_below_top']:.0f} mm below the top of the head"))
+            if ((row["native_cut"] or (row["native_bottom_cut"] and row["native_head_mm_z"] < 150))
+                    and sum(e[0] == site for e in fov_examples) < 3):
+                where = row["native_cut_sides"] or "bottom"
+                fov_examples.append((site, sid, v_pre, f"original scan cut at: {where} "
+                                     f"(scan shows {row['native_head_mm_z']:.0f} mm of the head, top to bottom)"))
             if row["iso2_bottom_cut"] and sum(e[0] == site for e in cut_examples) < 3:
                 cut_examples.append((site, sid, v_new, "cut at the bottom of the box"))
 
@@ -299,6 +317,8 @@ def main():
     by_site["n_native_cut"] = df.groupby("site")["native_cut"].sum().astype(int)
     by_site["native_cut_sides"] = df.groupby("site")["native_cut_sides"].apply(
         lambda t: ",".join(sorted({x for v in t if v for x in v.split("+")})))
+    by_site["n_native_bottom_cut"] = df.groupby("site")["native_bottom_cut"].sum().astype(int)
+    by_site["native_head_mm_z_min"] = df.groupby("site")["native_head_mm_z"].min()
     for c in ("old_white_low_share", "iso2_white_low_share", "iso2_scale_top_vs_upper_head"):
         by_site[c] = df.groupby("site")[c].median()
     by_site["iso2_scale_top_vs_upper_head_max"] = df.groupby("site")["iso2_scale_top_vs_upper_head"].max()
@@ -309,12 +329,19 @@ def main():
     by_site.round(3).to_csv(out_dir / "head_mask_by_site.csv")
     with pd.option_context("display.width", 250, "display.max_columns", None):
         print(by_site.round(3).to_string())
+        print("\nIs any head cut off? (scanner = already in the original scan; iso2 = by our box)")
+        print(by_site[["n", "n_native_cut", "native_cut_sides", "n_native_bottom_cut", "native_head_mm_z_min",
+                       "n_iso2_touch_edge", "iso2_touch_sides", "iso2_touch_min_mm_below_top",
+                       "n_iso2_bottom_cut"]].to_string())
         print(f"\nBrightness scale and the neck (more than {args.line_mm:.0f} mm below the top of the head):")
         print(by_site[["n", "old_white_low_share", "iso2_white_low_share", "iso2_scale_top_vs_upper_head",
                        "iso2_scale_top_vs_upper_head_max", "n_iso2_bottom_cut", "iso2_head_mm_z"]].round(3).to_string())
 
     pngs = [(site, sid, vc, vo, vn, f"example_{str(site).replace(' ', '_')}.png")
             for site, (sid, vc, vo, vn) in examples.items()]
+    for site, sid, v_pre, note in fov_examples:
+        silhouette_png(v_pre, out_dir / f"fovcut_{str(site).replace(' ', '_')}_ID{sid}.png",
+                       f"{site}, ID {sid}: {note}", edge_name="scan", mark_bottom=True, tol=2)
     for prefix, cases in (("edge", edge_examples), ("neckcut", cut_examples)):
         for site, sid, v_new, note in cases:
             silhouette_png(v_new, out_dir / f"{prefix}_{str(site).replace(' ', '_')}_ID{sid}.png",
@@ -349,8 +376,10 @@ def main():
           "(box too small). n_iso2_bottom_cut = heads cut at the bottom (neckcut_*.png). "
           "iso2_head_mm_*_max vs the box (224 x 256 x 192 mm) = how much room is left.\n"
           "*_white_share = share of the head clipped to pure white (1), old vs iso2 recipe.\n"
-          "n_native_cut = heads already touching a side of the original scan's field of view (cut by the "
-          "scanner, before any of our steps); an iso2 touch on a scan that is also native_cut is not the box's fault.\n"
+          "n_native_cut = heads already touching a side or the top of the original scan (cut by the scanner, "
+          "before any of our steps); n_native_bottom_cut = scans that end inside the head or neck at the bottom, "
+          "native_head_mm_z_min = the least head any scan shows top to bottom (under ~130-140 mm the bottom of "
+          "the brain may be missing). fovcut_*.png shows them.\n"
           "*_white_low_share = share of the brightest 1 % of the head (what sets the top of the brightness scale) "
           "lying in the low part of the head (neck, but also the lowest brain: cerebellum, inferior temporal). "
           "iso2_scale_top_vs_upper_head = scale top over the whole head / over the top part only: 1.00 = the low "
