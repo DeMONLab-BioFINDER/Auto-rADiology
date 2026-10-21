@@ -14,7 +14,11 @@ Per site, for a sample of scans:
      recipe and for head_mask, plus the head size in mm each mask finds
   C) whether the replayed old recipe matches the cached input (correlation), i.e. whether the
      cache was made with this code
-and one png per site: middle slices of the cached input, the old replay and the iso2 replay.
+  D) for the iso2 recipe (96x128x96 box at 2 mm): whether the head touches a side or the top of
+     the box (= the box is too small and cuts the head; should be 0 everywhere), and whether a
+     too-tall head was cut at the bottom (neck; expected for some scans, harmless)
+and one png per site: middle slices of the cached input, the old replay and the iso2 replay,
+plus one png for each scan (up to 3 per site) whose iso2 head touches the box edge.
 
 Reads only, no GPU needed. Outputs (default <proj_path>/results/head_mask_check/, outside the repo).
 """
@@ -50,6 +54,15 @@ def head_mm(v, vox_mm):
     return [float((a.max() - a.min() + 1) * s) if a.size else 0.0 for a, s in zip(nz, vox_mm)]
 
 
+def edge_flags(v):
+    """(touches a side or the top, cut at the bottom) for a head in a box."""
+    nz = np.nonzero(v > 0)
+    if not nz[0].size:
+        return False, False
+    touches = any((a.min() == 0 and i < 2) or a.max() == n - 1 for i, (a, n) in enumerate(zip(nz, v.shape)))
+    return bool(touches), bool(nz[2].min() == 0)
+
+
 def mid_slices(v):
     """Side, front and top middle slices of a (x, y, z) RAS volume, upright."""
     return [v[v.shape[0] // 2].T, v[:, v.shape[1] // 2].T, v[:, :, v.shape[2] // 2].T]
@@ -79,7 +92,7 @@ def main():
     new = Compose(get_transforms(target_shape=(96, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
                                  pct_inside_head=True).transforms[1:])
 
-    rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
+    rows, examples, edge_examples, n_site, batch_len, cached_batch = [], {}, [], {}, None, (None, None)
     for pkl_path in sorted((input_path / args.pkl_type).glob("tau_batch_*.pkl")):
         batch_id = int(pkl_path.stem.split("_")[-1])
         with open(pkl_path, "rb") as f:
@@ -101,6 +114,7 @@ def main():
             row = {"ID": sid, "site": site,
                    "replay_old_box_share": float((v_old > 0).mean()), "replay_old_shell_share": shell_share(v_old),
                    "replay_iso2_shell_share": shell_share(v_new)}
+            row["iso2_touches_edge"], row["iso2_bottom_cut"] = edge_flags(v_new)
             for ax, a, b in zip("xyz", head_mm(v_old, old_vox), head_mm(v_new, [2, 2, 2])):
                 row[f"old_head_mm_{ax}"], row[f"iso2_head_mm_{ax}"] = round(a, 1), round(b, 1)
 
@@ -120,6 +134,8 @@ def main():
             rows.append(row)
             if site not in examples:
                 examples[site] = (sid, v_cache, v_old, v_new)
+            if row["iso2_touches_edge"] and sum(e[0] == site for e in edge_examples) < 3:
+                edge_examples.append((site, sid, v_cache, v_old, v_new))
 
     df = pd.DataFrame(rows)
     df.round(4).to_csv(out_dir / "head_mask_per_scan.csv", index=False)
@@ -131,13 +147,21 @@ def main():
         by_site[f"old_head_mm_{ax}"] = df.groupby("site")[f"old_head_mm_{ax}"].median()
     for ax in "xyz":
         by_site[f"iso2_head_mm_{ax}"] = df.groupby("site")[f"iso2_head_mm_{ax}"].median()
+    for ax in "xyz":
+        by_site[f"iso2_head_mm_{ax}_max"] = df.groupby("site")[f"iso2_head_mm_{ax}"].max()
+    by_site["n_iso2_touch_edge"] = df.groupby("site")["iso2_touches_edge"].sum().astype(int)
+    by_site["n_iso2_bottom_cut"] = df.groupby("site")["iso2_bottom_cut"].sum().astype(int)
     if "cache_shell_share" in df.columns:
         by_site["n_mask_failed_in_cache"] = df.groupby("site")["cache_shell_share"].apply(lambda s: int((s > 0.2).sum()))
     by_site.round(3).to_csv(out_dir / "head_mask_by_site.csv")
     with pd.option_context("display.width", 250, "display.max_columns", None):
         print(by_site.round(3).to_string())
 
-    for site, (sid, v_cache, v_old, v_new) in examples.items():
+    pngs = [(site, sid, vc, vo, vn, f"example_{str(site).replace(' ', '_')}.png")
+            for site, (sid, vc, vo, vn) in examples.items()]
+    pngs += [(site, sid, vc, vo, vn, f"edge_{str(site).replace(' ', '_')}_ID{sid}.png")
+             for site, sid, vc, vo, vn in edge_examples]
+    for site, sid, v_cache, v_old, v_new, png_name in pngs:
         vols = [("cached input (trained on)", v_cache), ("old recipe, replayed", v_old), ("iso2 recipe", v_new)]
         vols = [(t, v) for t, v in vols if v is not None]
         fig, axes = plt.subplots(len(vols), 3, figsize=(9, 3 * len(vols)), squeeze=False)
@@ -148,12 +172,15 @@ def main():
                 axes[r, c].axis("off")
         fig.suptitle(f"{site}, ID {sid} (squares = model voxels, so the old recipe is shown stretched)", fontsize=9)
         fig.tight_layout()
-        fig.savefig(out_dir / f"example_{str(site).replace(' ', '_')}.png", dpi=110)
+        fig.savefig(out_dir / png_name, dpi=110)
         plt.close(fig)
 
     print("\nshell_share = share of the box's outer 4-voxel shell that is non-zero: ~0 = mask removed the "
           "background; high = background got through. n_mask_failed_in_cache = scans with shell_share > 0.2.\n"
-          "cache_vs_replay_r ~1 = the cached input is what this code makes.")
+          "cache_vs_replay_r ~1 = the cached input is what this code makes.\n"
+          "n_iso2_touch_edge = iso2 heads touching a side or the top of the 96x128x96 box (should be 0; "
+          "edge_*.png shows them). n_iso2_bottom_cut = heads cut at the neck (fine). "
+          "iso2_head_mm_*_max vs the box (192 x 256 x 192 mm) = how much room is left.")
     print(f"Saved to {out_dir}")
 
 
