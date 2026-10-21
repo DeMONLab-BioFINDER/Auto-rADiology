@@ -21,6 +21,14 @@ Per site, for a sample of scans:
   E) share of the head that is pure white (clipped to 1) in the old and the iso2 recipe
   F) whether the head is already cut in the original scan (touches a side of the scanner's
      field of view): no box can bring that back, and the old inputs are cut the same way
+  G) does the lower head (neck) set the brightness scale? The scale top is the head's 99th
+     percentile, so bright neck tissue can push it up and make the brain dimmer at sites whose
+     scans show a lot of neck. Per scan: share of the brightest 1 % lying more than --line_mm
+     below the top of the head, old and iso2; and how much higher the iso2 scale top is than if
+     it were taken from the top --line_mm only (1.00 = the neck changes nothing; 1.20 = the
+     brain is shown 20 % dimmer because of what lies below the line). Nothing is cut for this,
+     it only measures. bright_*.png: side and front view of the whole iso2 head (before any
+     cut) with the brightest 1 % in magenta, for the 3 scans per site where most of it is low.
 and one png per site: middle slices of the old input (cached, else replayed) and the iso2 replay,
 plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
 (neckcut_*.png): front and side view of the whole iso2 head with the box edges marked.
@@ -41,7 +49,7 @@ import numpy as np
 import pandas as pd
 import torch
 from monai.data import MetaTensor
-from monai.transforms import Compose
+from monai.transforms import Compose, ScaleIntensityRangePercentiles
 
 from src.data import get_transforms, head_mask
 from scripts.check_image_geometry import load_sites
@@ -127,6 +135,47 @@ def silhouette_png(v, out_png, title, vox_mm=2.0):
     plt.close(fig)
 
 
+def brightness_info(v, bright, vox_z, line_mm, pct=99):
+    """For a head (v > 0, z = last axis bottom -> top) and its brightest voxels `bright`: share of
+    them more than line_mm below the top of the head, and (for an unscaled v) the 99th percentile
+    over the whole head divided by the one over the top line_mm only."""
+    m = v > 0
+    zs = np.nonzero(m.any(axis=(0, 1)))[0]
+    if not zs.size or not bright.any():
+        return np.nan, np.nan
+    below = ((zs.max() - np.arange(v.shape[2])) * vox_z > line_mm)[None, None, :]
+    share = float((bright & below).sum() / bright.sum())
+    upper = v[m & ~below]
+    ratio = float(np.percentile(v[m], pct) / np.percentile(upper, pct)) if upper.size else np.nan
+    return share, ratio
+
+
+def bright_png(v, out_png, title, line_mm, box_head_mm, vox_mm=2.0, pct=99):
+    """Side and front view of a whole head before scaling: average PET along the view, the
+    brightest 1 % in magenta, the --line_mm line and where the iso2 box ends at the bottom."""
+    m = v > 0
+    bright = v >= np.percentile(v[m], pct)
+    sl = tuple(slice(a.min(), a.max() + 1) for a in np.nonzero(m))
+    v, m, bright = v[sl], m[sl], bright[sl]
+    top = v.shape[2] - 1
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4.8))
+    for ax, axis, name in zip(axes, (0, 1), ("side view (back <- -> front)", "front view (left-right)")):
+        img = (v.sum(axis=axis) / np.maximum(m.sum(axis=axis), 1)).T
+        ax.imshow(img, cmap="gray", origin="lower", vmin=0, vmax=np.percentile(img[img > 0], 99.5))
+        b = np.ma.masked_where(~bright.any(axis=axis).T, np.ones_like(img))
+        ax.imshow(b, cmap=matplotlib.colors.ListedColormap(["magenta"]), origin="lower", alpha=0.8)
+        ax.axhline(top - line_mm / vox_mm, color="yellow", linestyle="--", linewidth=1)
+        if top - box_head_mm / vox_mm > 0:
+            ax.axhline(top - box_head_mm / vox_mm, color="orange", linewidth=1)
+        ax.set_title(name, fontsize=8)
+        ax.axis("off")
+    fig.suptitle(title + f"\nmagenta = brightest 1 % of the head (sets the top of the scale)\nyellow dashed = "
+                 f"{line_mm:.0f} mm below the top, orange = bottom of the iso2 box (below it is cut)", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=110)
+    plt.close(fig)
+
+
 def mid_slices(v):
     """Side, front and top middle slices of a (x, y, z) RAS volume, upright."""
     return [v[v.shape[0] // 2].T, v[:, v.shape[1] // 2].T, v[:, :, v.shape[2] // 2].T]
@@ -139,6 +188,8 @@ def main():
     p.add_argument("--cache_type", default="tau_raw", help="Folder with the tau_batch_*.pt the models trained on")
     p.add_argument("--pkl_type", default="tau_raw_backup", help="Folder with the native tau_batch_*.pkl")
     p.add_argument("--max_per_site", type=int, default=15)
+    p.add_argument("--line_mm", type=float, default=120,
+                   help="Height below the top of the head counted as 'low' (neck) for the brightness check")
     p.add_argument("--out_dir", default=str(repo.parent / "results" / "head_mask_check"))
     args = p.parse_args()
 
@@ -157,7 +208,12 @@ def main():
     new = Compose(get_transforms(target_shape=(112, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
                                  pct_inside_head=True).transforms[1:])
 
+    new_steps = get_transforms(target_shape=(112, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
+                               pct_inside_head=True).transforms[1:]
+    new_pre = Compose(new_steps[:next(i for i, t in enumerate(new_steps)
+                                      if isinstance(t, ScaleIntensityRangePercentiles))])  # 2 mm, head masked, unscaled
     rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
+    bright_cases = {}
     edge_examples, cut_examples = [], []
     for pkl_path in sorted((input_path / args.pkl_type).glob("tau_batch_*.pkl")):
         batch_id = int(pkl_path.stem.split("_")[-1])
@@ -188,6 +244,11 @@ def main():
             row["native_cut_sides"] = "+".join(native_sides)
             row["native_cut"] = bool(native_sides)
             row["old_white_share"], row["iso2_white_share"] = white_share(v_old), white_share(v_new)
+            v_pre = new_pre(MetaTensor(torch.as_tensor(img), meta=meta)).squeeze().numpy()
+            row["old_white_low_share"], _ = brightness_info(v_old, v_old >= 0.999, old_vox[2], args.line_mm)
+            iso2_bright = v_pre >= np.percentile(v_pre[v_pre > 0], 99) if (v_pre > 0).any() else v_pre > 0
+            row["iso2_white_low_share"], row["iso2_scale_top_vs_upper_head"] = brightness_info(
+                v_pre, iso2_bright, 2.0, args.line_mm)
             for ax, a, b in zip("xyz", head_mm(v_old, old_vox), head_mm(v_new, [2, 2, 2])):
                 row[f"old_head_mm_{ax}"], row[f"iso2_head_mm_{ax}"] = round(a, 1), round(b, 1)
 
@@ -207,6 +268,11 @@ def main():
             rows.append(row)
             if site not in examples:
                 examples[site] = (sid, v_cache, v_old, v_new)
+            if not np.isnan(row["iso2_white_low_share"]):
+                cases = bright_cases.setdefault(site, [])
+                cases.append((row["iso2_white_low_share"], sid, v_pre, row["iso2_scale_top_vs_upper_head"]))
+                cases.sort(key=lambda c: -c[0])
+                del cases[3:]
             if row["iso2_touches_edge"] and sum(e[0] == site for e in edge_examples) < 3:
                 edge_examples.append((site, sid, v_new, f"{row['iso2_touch_sides']} touch, highest "
                                       f"{row['iso2_touch_mm_below_top']:.0f} mm below the top of the head"))
@@ -233,6 +299,9 @@ def main():
     by_site["n_native_cut"] = df.groupby("site")["native_cut"].sum().astype(int)
     by_site["native_cut_sides"] = df.groupby("site")["native_cut_sides"].apply(
         lambda t: ",".join(sorted({x for v in t if v for x in v.split("+")})))
+    for c in ("old_white_low_share", "iso2_white_low_share", "iso2_scale_top_vs_upper_head"):
+        by_site[c] = df.groupby("site")[c].median()
+    by_site["iso2_scale_top_vs_upper_head_max"] = df.groupby("site")["iso2_scale_top_vs_upper_head"].max()
     by_site["old_white_share"] = df.groupby("site")["old_white_share"].median()
     by_site["iso2_white_share"] = df.groupby("site")["iso2_white_share"].median()
     if "cache_shell_share" in df.columns:
@@ -240,6 +309,9 @@ def main():
     by_site.round(3).to_csv(out_dir / "head_mask_by_site.csv")
     with pd.option_context("display.width", 250, "display.max_columns", None):
         print(by_site.round(3).to_string())
+        print(f"\nBrightness scale and the neck (more than {args.line_mm:.0f} mm below the top of the head):")
+        print(by_site[["n", "old_white_low_share", "iso2_white_low_share", "iso2_scale_top_vs_upper_head",
+                       "iso2_scale_top_vs_upper_head_max", "n_iso2_bottom_cut", "iso2_head_mm_z"]].round(3).to_string())
 
     pngs = [(site, sid, vc, vo, vn, f"example_{str(site).replace(' ', '_')}.png")
             for site, (sid, vc, vo, vn) in examples.items()]
@@ -247,6 +319,12 @@ def main():
         for site, sid, v_new, note in cases:
             silhouette_png(v_new, out_dir / f"{prefix}_{str(site).replace(' ', '_')}_ID{sid}.png",
                            f"{site}, ID {sid}, iso2: {note}")
+    for site, cases in bright_cases.items():
+        for share, sid, v_pre, ratio in cases:
+            bright_png(v_pre, out_dir / f"bright_{str(site).replace(' ', '_')}_ID{sid}.png",
+                       f"{site}, ID {sid}: {share:.0%} of the brightest 1 % lies more than {args.line_mm:.0f} mm "
+                       f"below the top\nscale top = {ratio:.2f}x what the top {args.line_mm:.0f} mm alone would give",
+                       args.line_mm, box_head_mm=188)
     for site, sid, v_cache, v_old, v_new, png_name in pngs:
         # cached input == old recipe replayed (cache_vs_replay_r = 1), so show only one of them
         vols = [("old input (trained on)", v_cache) if v_cache is not None else ("old recipe, replayed", v_old),
@@ -272,7 +350,11 @@ def main():
           "iso2_head_mm_*_max vs the box (224 x 256 x 192 mm) = how much room is left.\n"
           "*_white_share = share of the head clipped to pure white (1), old vs iso2 recipe.\n"
           "n_native_cut = heads already touching a side of the original scan's field of view (cut by the "
-          "scanner, before any of our steps); an iso2 touch on a scan that is also native_cut is not the box's fault.")
+          "scanner, before any of our steps); an iso2 touch on a scan that is also native_cut is not the box's fault.\n"
+          "*_white_low_share = share of the brightest 1 % of the head (what sets the top of the brightness scale) "
+          "lying in the low part of the head (neck, but also the lowest brain: cerebellum, inferior temporal). "
+          "iso2_scale_top_vs_upper_head = scale top over the whole head / over the top part only: 1.00 = the low "
+          "part changes nothing, 1.20 = the brain is shown 20 % dimmer because of it (bright_*.png shows where).")
     print(f"Saved to {out_dir}")
 
 
