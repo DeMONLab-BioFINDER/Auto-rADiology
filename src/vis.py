@@ -369,13 +369,16 @@ def _faded_colorbar(cax, cmap_obj, norm, signed, top, label):
     """Colour bar drawn with the same fading as the map, on the same grey as the PET."""
     vals = np.linspace(norm.vmin, norm.vmax, 256)[:, None]
     extent = [0, 1, norm.vmin, norm.vmax]
-    cax.imshow(np.full((256, 1, 3), 0.45), aspect="auto", origin="lower", extent=extent)
+    cax.imshow(np.full((256, 1, 3), 0.55), aspect="auto", origin="lower", extent=extent)
     cax.imshow(_overlay_rgba(vals, cmap_obj, norm, signed, top), aspect="auto", origin="lower", extent=extent)
     cax.set_xticks([])
     cax.yaxis.tick_right()
     cax.yaxis.set_label_position("right")
     if label:
         cax.set_ylabel(label, fontsize=8)
+
+
+PET_DIM = 1.3  # grey scale top = 1.3 x the PET's 99.5th percentile: its brightest parts at ~75% grey, in every row
 
 
 def _mean_projection(img, axis):
@@ -434,14 +437,15 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
         sl = [slice(None)] * 3
         sl[axis] = peak[axis]
         pet_sl, hm_sl = img[tuple(sl)], cam[tuple(sl)]
-        # (PET, map or None, title, grey top): no map -> full contrast; under a map -> dimmed so the colours stand out
+        # (PET, map or None, title, grey top): the same grey scale with and without the map, so the
+        # rows compare directly; mildly dimmed (brightest ~75% grey) so bright yellow still stands out
         if peak_slices:
-            panels = [(pet_sl, None, f"{view_name}: PET only (slice through strongest point)", slice_win),
-                      (pet_sl, hm_sl, f"{view_name}: PET + map (same slice)", 1.6 * slice_win),
-                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection, all spots)", 1.6 * window(pet_proj))]
+            panels = [(pet_sl, None, f"{view_name}: PET only (slice through strongest point)", PET_DIM * slice_win),
+                      (pet_sl, hm_sl, f"{view_name}: PET + map (same slice)", PET_DIM * slice_win),
+                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection, all spots)", PET_DIM * window(pet_proj))]
         else:
-            panels = [(pet_proj, None, f"{view_name}: PET only (average projection)", window(pet_proj)),
-                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection)", 1.6 * window(pet_proj))]
+            panels = [(pet_proj, None, f"{view_name}: PET only (average projection)", PET_DIM * window(pet_proj)),
+                      (pet_proj, hm_proj, f"{view_name}: PET + map (projection)", PET_DIM * window(pet_proj))]
         for r, (pet, hm, name, gmax) in enumerate(panels):
             ax = fig.add_subplot(gs[r, c])
             # transpose so the remaining second axis is vertical, origin="lower" so it points up
