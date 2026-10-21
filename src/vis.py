@@ -337,7 +337,7 @@ def _signed_max_projection(cam, axis):
     return np.take_along_axis(cam, np.expand_dims(idx, axis), axis=axis).squeeze(axis)
 
 
-def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None, title=None, vmax=None):
+def save_mip_png(img, cam, out_png, cmap="Reds", signed=False, label=None, title=None, vmax=None):
     """Maximum-intensity projections of the PET (grey) with the map on top, in three views.
 
     Arrays are (x, y, z) in RAS (left->right, back->front, bottom->top) after the pipeline's
@@ -345,10 +345,13 @@ def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None, title=
     the side (front on the right), coronal = seen from the front/back, axial = seen from above
     (front at the top); left/right as in RAS, i.e. the subject's right on the right.
 
-    signed=False: map projected with max, colour scale `cmap` from its min to max.
+    Transparency follows strength: 0 is fully transparent, the colour gets more solid towards
+    the top of the scale, so weak values fade away and only the strong regions show.
+    signed=False: map projected with max, colour scale `cmap` (white -> red) from 0 to its max;
+    values <= 0 are transparent.
     signed=True (maps where the sign matters, e.g. pos_vs_neg): the value with the largest
-    absolute size along each line is kept, and a blue-white-red scale centred on 0 is used
-    (red = positive, blue = negative). Exactly-zero voxels (outside the brain) are transparent.
+    absolute size along each line is kept, and a blue-red scale centred on 0 is used
+    (red = positive, blue = negative).
     label: colour bar label. title: figure title.
     vmax: fixed top of the colour scale (signed: -vmax..vmax, else 0..vmax); None = this map's own range."""
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
@@ -356,22 +359,23 @@ def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None, title=
     views = [(0, "Sagittal (side)"), (1, "Coronal (front/back)"), (2, "Axial (top)")]
     if signed:
         top = vmax if vmax is not None else (float(np.abs(cam).max()) or 1.0)
-        norm = dict(cmap="RdBu_r", vmin=-top, vmax=top)
-    elif vmax is not None:
-        norm = dict(cmap=cmap, vmin=0.0, vmax=vmax)
+        cmap_obj, norm = plt.get_cmap("RdBu_r"), plt.Normalize(-top, top)
     else:
-        norm = dict(cmap=cmap, vmin=float(cam.min()), vmax=float(cam.max()))
+        top = vmax if vmax is not None else (float(cam.max()) if cam.max() > 0 else 1.0)
+        cmap_obj, norm = plt.get_cmap(cmap), plt.Normalize(0.0, top)
 
     for ax, (axis, view_name) in zip(axes, views):
         im = img.max(axis)
         hm = _signed_max_projection(cam, axis) if signed else cam.max(axis)
-        hm = np.ma.masked_where(hm == 0, hm)
+        rgba = cmap_obj(norm(hm))
+        strength = np.abs(hm) if signed else np.clip(hm, 0, None)
+        rgba[..., 3] = 0.9 * np.clip(strength / top, 0, 1)  # transparent at 0, solid at the top of the scale
         # transpose so the remaining second axis is vertical, origin="lower" so it points up
-        ax.imshow(im.T, cmap="gray", origin="lower")
-        shown = ax.imshow(hm.T, alpha=0.6, origin="lower", **norm)
+        ax.imshow(im.T, cmap="gray", origin="lower", vmin=0, vmax=1.6 * (float(im.max()) or 1.0))  # dimmed PET, so the colours stand out
+        ax.imshow(rgba.transpose(1, 0, 2), origin="lower")
         ax.set_title(view_name)
         ax.axis("off")
-    fig.colorbar(shown, ax=axes, shrink=0.8, label=label)
+    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap_obj), ax=axes, shrink=0.8, label=label)
     if title:
         fig.suptitle(title)
 
