@@ -111,11 +111,10 @@ def site_summary(df, mask_sizes):
 def main():
     repo = Path(__file__).resolve().parent.parent
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--input_path", required=True, help="Folder holding the data_type folders and demographics.csv")
+    p.add_argument("--input_path", required=True, help="Folder holding the data_type folders and demo.csv")
     p.add_argument("--data_types", default="tau_raw,tau_T1,tau_T1MNI", help="Comma-separated folders under input_path")
-    p.add_argument("--demographics", default="", help="Demographics csv with ID and site (default: input_path/demographics.csv, "
-                                                      "else input_path/demographics_<dataset>.csv)")
-    p.add_argument("--dataset", default="Gothenburg", help="Only used to find demographics_<dataset>.csv")
+    p.add_argument("--demographics", default="", help="Csv with ID and site (default: input_path/demo.csv, the table "
+                                                      "the cached .pt pipeline reads)")
     p.add_argument("--image_shape", nargs=3, type=int, default=[128, 128, 128])
     p.add_argument("--mask_sizes", default="4,8,16", help="Occlusion mask sizes (model-input voxels) to convert to mm")
     p.add_argument("--out_dir", default=str(repo.parent / "results" / "image_geometry"))
@@ -124,10 +123,8 @@ def main():
     input_path, out_dir = Path(args.input_path), Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     mask_sizes = [int(m) for m in args.mask_sizes.split(",") if m.strip()]
-    demo_csv = Path(args.demographics) if args.demographics else input_path / "demographics.csv"
-    if not args.demographics and not demo_csv.exists():
-        demo_csv = input_path / f"demographics_{args.dataset}.csv"
-    demo = pd.read_csv(demo_csv, index_col=0)[["ID", "site"]] if demo_csv.exists() else None
+    demo_csv = Path(args.demographics) if args.demographics else input_path / "demo.csv"
+    demo = pd.read_csv(demo_csv)[["ID", "site"]] if demo_csv.exists() else None
     if demo is None:
         print(f"WARNING: {demo_csv} not found, per-site summary skipped")
     tfm = pre_resize_transform()
