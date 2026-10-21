@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 import nibabel as nib
+import pandas as pd
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_gradient_magnitude
@@ -15,7 +16,8 @@ from monai.visualize.occlusion_sensitivity import OcclusionSensitivity
 def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                       vis_kwargs=None, affine_fn=None, # optional: get affine per subject
                       vis_norm="zscore", skull_suppress_pct=20,      # PET intensity percentile
-                      use_pseudo_surface=False, pseudo_surface_sigma=1.0, pseudo_surface_pct=90):
+                      use_pseudo_surface=False, pseudo_surface_sigma=1.0, pseudo_surface_pct=90,
+                      color_max=None, show_prob=False):
     """
     Run volumetric explainability visualizations for 3D PET models.
 
@@ -32,6 +34,12 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
 
     All visualizations are performed in the model input (preprocessed PET)
     space without registration to standard templates.
+
+    color_max: fixed colour scale for the MIP pngs (class: 0..color_max, pos_vs_neg:
+      -color_max..color_max), so colours mean the same in every scan's picture. None = each
+      picture is scaled to its own strongest value.
+    show_prob: classifier only - put the model's P(positive) and the visual read in each
+      picture's title and in summary.csv (one row per subject, with each map's min/max).
     """
     vis_type = ['class','pos_vs_neg']
     VIS_REGISTRY = {
@@ -51,14 +59,24 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     vis_sum = {'class': None,'pos_vs_neg':None}
     vis_count = {'class': 0, 'pos_vs_neg': 0}
     img_sum, img_n = None, 0  # running mean of the input images, for the group-average MIP background
-    for x, _, _, extra, pid in loader:
+    summary = []
+    for x, y_cls, _, extra, pid in loader:
         x = x.to(device)
         extra = extra.to(device)
         
         for b in range(x.shape[0]):
             xb = x[b:b+1] # [1, C, D, H, W]
             extrab = extra[b:b+1] if extra is not None else None
-            pid_b = pid[b]
+            pid_b = int(pid[b])
+            title, row = f"ID {pid_b}", {"ID": pid_b}
+            if show_prob:
+                with torch.no_grad():
+                    out = model(xb, extra=extrab)
+                p_pos = float(out.softmax(1)[0, 1] if out.shape[1] == 2 else torch.sigmoid(out)[0, 0])
+                vr = float(y_cls[b, 0])
+                vr_txt = "n/a" if np.isnan(vr) else ("positive" if vr == 1 else "negative")
+                title += f" | model P(positive) = {p_pos:.2f} | visual read: {vr_txt}"
+                row.update({"visual_read": vr, "P_positive": round(p_pos, 4), "pred": int(p_pos >= 0.5)})
 
             # visualize
             heat_class, heat_pos_vs_neg = vis_fn(model=model, x=xb, extra=extrab, **vis_kwargs)  # [D,H,W]
@@ -76,6 +94,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                 heat = heat * brain_mask
 
                 if vis_norm is not None: heat = normalize_cam(heat, vis_norm)
+                row[f"{vt}_min"], row[f"{vt}_max"] = round(float(heat.min()), 4), round(float(heat.max()), 4)
 
                 # save to NIFTI
                 affine = affine_fn(pid_b) if affine_fn else np.eye(4)
@@ -83,16 +102,19 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                         os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}.nii.gz"))
 
                 # MIP visualization
-                save_mip_png(img_np, heat, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
+                save_mip_png(img_np, heat, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=title, vmax=color_max)
                 
                 # Pseudo-surface visualization (no T1w available, no affine)
                 if use_pseudo_surface:
                     shell = pet_pseudo_surface(img_np, sigma=pseudo_surface_sigma, pct=pseudo_surface_pct)
                     shell_cam = heat * shell
-                    save_mip_png(img_np, shell_cam, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
+                    save_mip_png(img_np, shell_cam, os.path.join(vis_dir, f"{pid_b}_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=title, vmax=color_max)
 
                 vis_sum[vt] = heat if vis_sum[vt] is None else vis_sum[vt] + heat
                 vis_count[vt] += 1
+            summary.append(row)
+
+    pd.DataFrame(summary).to_csv(os.path.join(vis_dir, "summary.csv"), index=False)
     
     print('saving average image to', vis_dir)
     # Brains are not registered to a common space (model input space is native/unregistered PET),
@@ -106,11 +128,11 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
         vis_avg = vis_sum[vt] / vis_count[vt]
         nib.save(nib.Nifti1Image(vis_avg.astype(np.float32), np.eye(4)),
                 os.path.join(vis_dir, f"group_average_{vis_name}_{vt}.nii.gz"))
-        save_mip_png(img_avg, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
+        save_mip_png(img_avg, vis_avg, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_mip.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max)
 
         if use_pseudo_surface:
             shell = pet_pseudo_surface(img_avg, pseudo_surface_sigma, pseudo_surface_pct)
-            save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt])
+            save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max)
 
 
 def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_mode="trilinear"):
@@ -141,10 +163,16 @@ def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_
     return cam_np, None
 
 
-def _parse_occlusion_mode(mode):
+def _parse_occlusion_mode(mode, x=None):
     """MONAI's OcclusionSensitivity `mode`: 'gaussian' (its default: the patch is dimmed by a
-    Gaussian-weighted mask, not blanked outright), 'mean_img', 'mean_patch', or a constant
-    float fill (e.g. 0.0 to blank the patch to zero). A numeric string becomes a float."""
+    Gaussian-weighted mask, not blanked outright; only the centre goes fully to 0), 'mean_img',
+    'mean_patch', or a constant float fill (e.g. 0.0 to blank the patch to zero). A numeric
+    string becomes a float.
+    Ours: 'median_brain' = fill with this scan's median over its non-zero (inside-the-head)
+    voxels, i.e. "what if this patch looked like ordinary uptake in this scan"; needs x."""
+    if mode == "median_brain":
+        vals = x[0, 0][x[0, 0] != 0]
+        return float(vals.median()) if vals.numel() else 0.0
     if isinstance(mode, str):
         try:
             return float(mode)
@@ -200,7 +228,7 @@ def occlusion_vis_fn(model, x, extra, **kwargs):
         mask_size = tuple(mask_size)
     occ = OcclusionSensitivity(nn_module=model, mask_size=mask_size,
                                n_batch=kwargs.get("n_batch", 16), overlap=kwargs.get("overlap", 0.75),
-                               mode=_parse_occlusion_mode(kwargs.get("mode", "gaussian")),
+                               mode=_parse_occlusion_mode(kwargs.get("mode", "gaussian"), x),
                                activate=activate if activate is not None else False,)
 
     b_box = _brain_bbox(x) if kwargs.get("brain_bbox", False) else None
@@ -309,7 +337,7 @@ def _signed_max_projection(cam, axis):
     return np.take_along_axis(cam, np.expand_dims(idx, axis), axis=axis).squeeze(axis)
 
 
-def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None):
+def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None, title=None, vmax=None):
     """Maximum-intensity projections of the PET (grey) with the map on top, in three views.
 
     Arrays are (x, y, z) in RAS (left->right, back->front, bottom->top) after the pipeline's
@@ -321,26 +349,31 @@ def save_mip_png(img, cam, out_png, cmap="hot", signed=False, label=None):
     signed=True (maps where the sign matters, e.g. pos_vs_neg): the value with the largest
     absolute size along each line is kept, and a blue-white-red scale centred on 0 is used
     (red = positive, blue = negative). Exactly-zero voxels (outside the brain) are transparent.
-    label: colour bar label."""
+    label: colour bar label. title: figure title.
+    vmax: fixed top of the colour scale (signed: -vmax..vmax, else 0..vmax); None = this map's own range."""
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
 
     views = [(0, "Sagittal (side)"), (1, "Coronal (front/back)"), (2, "Axial (top)")]
     if signed:
-        vmax = float(np.abs(cam).max()) or 1.0
-        norm = dict(cmap="RdBu_r", vmin=-vmax, vmax=vmax)
+        top = vmax if vmax is not None else (float(np.abs(cam).max()) or 1.0)
+        norm = dict(cmap="RdBu_r", vmin=-top, vmax=top)
+    elif vmax is not None:
+        norm = dict(cmap=cmap, vmin=0.0, vmax=vmax)
     else:
         norm = dict(cmap=cmap, vmin=float(cam.min()), vmax=float(cam.max()))
 
-    for ax, (axis, title) in zip(axes, views):
+    for ax, (axis, view_name) in zip(axes, views):
         im = img.max(axis)
         hm = _signed_max_projection(cam, axis) if signed else cam.max(axis)
         hm = np.ma.masked_where(hm == 0, hm)
         # transpose so the remaining second axis is vertical, origin="lower" so it points up
         ax.imshow(im.T, cmap="gray", origin="lower")
         shown = ax.imshow(hm.T, alpha=0.6, origin="lower", **norm)
-        ax.set_title(title)
+        ax.set_title(view_name)
         ax.axis("off")
     fig.colorbar(shown, ax=axes, shrink=0.8, label=label)
+    if title:
+        fig.suptitle(title)
 
     plt.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close()

@@ -111,7 +111,12 @@ def parse_arguments():
     parser.add_argument("--vis_n_batch", type=int, default=16, help="Occlusion: occluded volumes per forward batch.")
     parser.add_argument("--vis_occlusion_mode", type=str, default="gaussian",
                         help="Occlusion fill: 'gaussian' (MONAI default, soft Gaussian dimming of the patch), 'mean_img', "
-                             "'mean_patch', or a constant such as 0 to blank the patch to zero.")
+                             "'mean_patch', 'median_brain' (this scan's median inside the head), or a constant such as 0 "
+                             "to blank the patch to zero.")
+    parser.add_argument("--vis_color_max", type=float, default=None,
+                        help="Fixed top of the colour scale of the MIP pngs (e.g. 0.3 = a 0.3 drop in probability), so "
+                             "colours are comparable between scans. Default: each picture scaled to its own strongest "
+                             "value. Each run's summary.csv lists every map's min/max to help pick it.")
     parser.add_argument("--vis_brain_bbox", action="store_true",
                         help="Occlusion: only occlude inside the bounding box of the (non-zero) brain, skipping empty "
                              "background. Output outside the box is 0.")

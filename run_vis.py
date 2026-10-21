@@ -54,7 +54,8 @@ def main(args):
         vis_kwargs = dict(mask_size=args.vis_mask_size, overlap=args.vis_overlap, n_batch=args.vis_n_batch,
                           mode=args.vis_occlusion_mode, brain_bbox=args.vis_brain_bbox)
     run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name,
-                      vis_kwargs=vis_kwargs, vis_norm=None)
+                      vis_kwargs=vis_kwargs, vis_norm=None, color_max=args.vis_color_max,
+                      show_prob='visual_read' in targets_list)
 
     print('DONE!')
 
