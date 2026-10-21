@@ -12,7 +12,7 @@
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
-#SBATCH -t 01:00:00
+#SBATCH -t 02:00:00
 #SBATCH -J check-image-geometry
 #SBATCH -o ../../logs/check-image-geometry-slurm-%j.out
 #SBATCH -e ../../logs/check-image-geometry-slurm-%j.err
@@ -29,6 +29,9 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
+# tau_raw_backup = your copy of the original tau_raw pkl batches (the model's training data);
+# tau_T1 / tau_T1MNI = the shared pkl batches in /proj/berzelius-2024-156/dataset/tau-PET.
+SHARED=/proj/berzelius-2024-156/dataset/tau-PET
 python scripts/check_image_geometry.py \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
-  --data_types tau_raw_backup,tau_T1,tau_T1MNI
+  --data_types tau_raw_backup,$SHARED/tau_T1,$SHARED/tau_T1MNI

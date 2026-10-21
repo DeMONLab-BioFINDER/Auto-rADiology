@@ -13,7 +13,7 @@ and reports, per scan and per site:
     the physical size of a few occlusion mask sizes (in model-input voxels)
 
 Run it on several folders (e.g. tau_raw and tau_T1MNI) to compare them; folders without
-tau_batch_*.pkl files are skipped. Reads only, no GPU needed.
+tau_batch_*.pkl files are skipped (the .pt caches are already resized and keep no voxel sizes). Reads only, no GPU needed.
 
 Outputs (default <proj_path>/results/image_geometry/, outside the repo):
     image_geometry_<data_type>.csv          - one row per scan
@@ -108,13 +108,28 @@ def site_summary(df, mask_sizes):
     return pd.DataFrame(out)
 
 
+def load_sites(csv):
+    """ID -> site from a demographics csv, or None if it is missing or lacks the columns."""
+    if not csv.exists():
+        return None
+    df = pd.read_csv(csv)
+    df = df.drop(columns=[c for c in df.columns if str(c).startswith("Unnamed")])
+    if not {"ID", "site"} <= set(df.columns):
+        print(f"WARNING: {csv} has no ID/site columns, per-site summary skipped")
+        return None
+    return df[["ID", "site"]]
+
+
 def main():
     repo = Path(__file__).resolve().parent.parent
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--input_path", required=True, help="Folder holding the data_type folders and demo.csv")
-    p.add_argument("--data_types", default="tau_raw,tau_T1,tau_T1MNI", help="Comma-separated folders under input_path")
-    p.add_argument("--demographics", default="", help="Csv with ID and site (default: input_path/demo.csv, the table "
-                                                      "the cached .pt pipeline reads)")
+    p.add_argument("--input_path", default="", help="Folder that relative --data_types are under (and holding demo.csv)")
+    p.add_argument("--data_types", default="tau_raw,tau_T1,tau_T1MNI",
+                   help="Comma-separated folders with tau_batch_*.pkl: names under --input_path, or absolute paths")
+    p.add_argument("--demographics", default="",
+                   help="Csv with ID and site for every folder. Default per folder: its own demographics_<dataset>.csv "
+                        "(made together with its pkl batches, so its IDs follow their order), else input_path/demo.csv")
+    p.add_argument("--dataset", default="Gothenburg", help="Used to find each folder's demographics_<dataset>.csv")
     p.add_argument("--image_shape", nargs=3, type=int, default=[128, 128, 128])
     p.add_argument("--mask_sizes", default="4,8,16", help="Occlusion mask sizes (model-input voxels) to convert to mm")
     p.add_argument("--out_dir", default=str(repo.parent / "results" / "image_geometry"))
@@ -123,24 +138,39 @@ def main():
     input_path, out_dir = Path(args.input_path), Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     mask_sizes = [int(m) for m in args.mask_sizes.split(",") if m.strip()]
-    demo_csv = Path(args.demographics) if args.demographics else input_path / "demo.csv"
-    demo = pd.read_csv(demo_csv)[["ID", "site"]] if demo_csv.exists() else None
-    if demo is None:
-        print(f"WARNING: {demo_csv} not found, per-site summary skipped")
     tfm = pre_resize_transform()
 
     for dt in [d.strip() for d in args.data_types.split(",") if d.strip()]:
-        rows = scan_rows(input_path / dt, tfm, args.image_shape, mask_sizes)
+        data_dir = Path(dt) if Path(dt).is_absolute() else input_path / dt
+        name = data_dir.name
+        rows = scan_rows(data_dir, tfm, args.image_shape, mask_sizes)
         if not rows:
             continue
         df = pd.DataFrame(rows)
-        if demo is not None:
+
+        if args.demographics:
+            demo_csv = Path(args.demographics)
+        else:
+            demo_csv = data_dir / f"demographics_{args.dataset}.csv"
+            if not demo_csv.exists():
+                demo_csv = input_path / "demo.csv"
+        demo = load_sites(demo_csv)
+        if demo is None:
+            print(f"[{name}] no usable demographics csv ({demo_csv}), per-site summary skipped")
+        else:
+            print(f"[{name}] sites from {demo_csv}")
             df = df.merge(demo, on="ID", how="left")
             df.insert(1, "site", df.pop("site"))
-        df.to_csv(out_dir / f"image_geometry_{dt}.csv", index=False)
+            n_missing = int(df["site"].isna().sum())
+            if n_missing:
+                print(f"[{name}] WARNING: {n_missing} of {len(df)} scans have no site (IDs don't line up with that csv)")
+        df.to_csv(out_dir / f"image_geometry_{name}.csv", index=False)
 
-        print(f"\n===== {dt}: {len(df)} scans =====")
+        print(f"\n===== {name}: {len(df)} scans =====")
         print(f"native shapes: {df['native_shape'].nunique()} different, most common {df['native_shape'].mode().iat[0]}")
+        for ax in AXES:
+            v = df[f"native_vox_mm_{ax}"]
+            print(f"native voxel, {ax}: median {v.median():.2f} mm (range {v.min():.2f}-{v.max():.2f})")
         for ax in AXES:
             v = df[f"model_vox_mm_{ax}"]
             print(f"model-input voxel, {ax}: median {v.median():.2f} mm (range {v.min():.2f}-{v.max():.2f})")
@@ -148,7 +178,7 @@ def main():
             print(f"mask {m} voxels ~ " + " x ".join(f"{m * df[f'model_vox_mm_{ax}'].median():.0f}" for ax in AXES) + " mm (median scan)")
         if demo is not None:
             s = site_summary(df, mask_sizes)
-            s.to_csv(out_dir / f"image_geometry_{dt}_by_site.csv", index=False)
+            s.to_csv(out_dir / f"image_geometry_{name}_by_site.csv", index=False)
             show = ["site", "n", "most_common_native_shape", "n_native_shapes"] + \
                    [f"native_vox_mm_{ax}_median" for ax in AXES] + [f"model_vox_mm_{ax}_median" for ax in AXES] + \
                    [f"mask{m}_mm_median" for m in mask_sizes]
