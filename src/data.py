@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from monai.data import MetaTensor
 from monai.transforms import (LoadImage, EnsureChannelFirst, Orientation, Resize,
         ScaleIntensityRangePercentiles, Compose, CropForeground, GaussianSmooth,
-        Lambda)
+        Lambda, Spacing, ResizeWithPadOrCrop)
 
 from src.utils import seed_worker
 # ------------------------------
@@ -291,6 +291,39 @@ def brain_outer_mask(x):
     mask = torch.from_numpy(filled).float().unsqueeze(0)
     return mask.to(x.device)
 
+class ScaleIntensityRangePercentilesInsideHead(ScaleIntensityRangePercentiles):
+    """ScaleIntensityRangePercentiles with the percentiles taken over the non-zero voxels only
+    (= inside the head, once everything outside it has been zeroed), so they do not depend on how
+    much empty box surrounds the head. Zeros stay 0 (clipped)."""
+
+    def bounds(self, img):
+        v = np.asarray(torch.as_tensor(img).detach().cpu()).ravel()
+        v = v[v > 0] if (v > 0).any() else v
+        lo, hi = np.percentile(v, [self.lower, self.upper])
+        return float(lo), float(hi)
+
+    def __call__(self, img):
+        lo, hi = self.bounds(img)
+        if hi <= lo:
+            return img * 0
+        out = (img - lo) / (hi - lo) * (self.b_max - self.b_min) + self.b_min
+        return out.clamp(self.b_min, self.b_max) if self.clip else out
+
+
+def head_mask(x, frac: float = 0.1):
+    """Like brain_outer_mask, but the threshold is a share of the 99th percentile instead of
+    the volume mean. The mean depends on how much empty field of view surrounds the head (a big
+    FOV -> low mean -> background noise passes the threshold and the "head" becomes the whole
+    box); the 99th percentile sits inside the head for any FOV. Used by head_crop."""
+    vol = x.squeeze().cpu().numpy()
+    init_mask = vol > frac * np.percentile(vol, 99)
+    lbl, n = ndi.label(init_mask)
+    if n < 1: return torch.ones_like(x)
+    largest = (lbl == np.argmax(np.bincount(lbl.flat)[1:]) + 1)
+    filled = ndi.binary_fill_holes(largest)
+    return torch.from_numpy(filled).float().unsqueeze(0).to(x.device)
+
+
 def get_transforms(target_shape=(128, 128, 128), 
                 pct_lo: float = 1.0, 
                 pct_hi: float = 99.0,
@@ -302,7 +335,9 @@ def get_transforms(target_shape=(128, 128, 128),
                 apply_brain_mask: bool = True, 
                 process: bool = True,
                 head_crop: bool = False,
-                crop_margin: int = 0) -> Compose:
+                crop_margin: int = 0,
+                spacing_mm: float | None = None,
+                pct_inside_head: bool = False) -> Compose:
     """
     PET-optimized preprocessing pipeline using MONAI.
 
@@ -325,11 +360,19 @@ def get_transforms(target_shape=(128, 128, 128),
     apply_brain_mask : bool
         Whether to apply a brain mask to zero out non-brain regions.
     head_crop : bool
-        Zero everything outside the head mask on the native scan *before* CropForeground, so the
+        Zero everything outside the head (head_mask) on the native scan *before* CropForeground, so the
         crop box is the head and not the whole field of view (PET background noise is > 0, so
         the default crop keeps almost everything). Needs crop_foreground=True.
     crop_margin : int
-        Native voxels of margin CropForeground keeps around the box.
+        Voxels of margin CropForeground keeps around the box.
+    spacing_mm : float or None
+        None (default): stretch the crop box to target_shape (each axis by its own factor).
+        A number: resample to cubic voxels of this size first, then pad/crop the box (centred) to
+        target_shape instead of stretching, so proportions are true and 1 voxel = spacing_mm in
+        every scan. target_shape must then be big enough for a head (e.g. 96x112x96 at 2 mm).
+    pct_inside_head : bool
+        Take the scaling percentiles over the non-zero (inside-the-head) voxels only. Needs the
+        head already zeroed outside (head_crop), otherwise every voxel counts.
     Returns
     -------
     monai.transforms.Compose
@@ -343,14 +386,17 @@ def get_transforms(target_shape=(128, 128, 128),
         steps.append(GaussianSmooth(sigma=smooth_sigma_vox))
 
     if process:
-        if head_crop: steps.append(Lambda(lambda x: x * brain_outer_mask(x))) # true zeros outside the head, so the crop below finds the head
+        if spacing_mm: steps.append(Spacing(pixdim=(spacing_mm,) * 3, mode="bilinear")) # same cubic voxel size for every scan
+        if head_crop: steps.append(Lambda(lambda x: x * head_mask(x))) # true zeros outside the head, so the crop below finds the head
         if crop_foreground: steps.append(CropForeground(margin=crop_margin)) # Crop out huge empty regions
-        steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
+        if spacing_mm: steps.append(ResizeWithPadOrCrop(spatial_size=target_shape)) # centre the box in a fixed grid, no stretching
+        else: steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
         # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
-        steps.append(ScaleIntensityRangePercentiles(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True))
+        scale_cls = ScaleIntensityRangePercentilesInsideHead if pct_inside_head else ScaleIntensityRangePercentiles
+        steps.append(scale_cls(lower=pct_lo, upper=pct_hi, b_min=float(out_range[0]), b_max=float(out_range[1]), clip=True))
 
         # ---- Force background = 0 (critical for model to focus on brain) ----
-        if apply_brain_mask:
+        if apply_brain_mask and not head_crop: # with head_crop the outside is already 0 (and stays 0 after clipping)
             steps.append(Lambda(lambda x: x * brain_outer_mask(x))) # apply brain mask by threshold
     
     return Compose(steps)

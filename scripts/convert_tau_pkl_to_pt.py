@@ -41,6 +41,8 @@ def _build_transform(args):
         process=True,
         head_crop=bool(args.head_crop),
         crop_margin=int(args.crop_margin),
+        spacing_mm=args.spacing_mm,
+        pct_inside_head=bool(args.pct_inside_head),
     )
     # remove LoadImage (first step) since we already have arrays; split at the intensity scaling so
     # the per-scan record can keep the native values that became 0 and 1
@@ -116,7 +118,11 @@ def main(args):
             has_affine = bool(meta) and "affine" in meta
             # x_pre is already resized; its affine (updated by MONAI) gives the mm per output voxel
             out_vox = np.asarray(x_pre.pixdim, dtype=float)[:3] if has_affine else np.ones(3)
-            lo, hi = np.percentile(np.asarray(x_pre), [scale.lower, scale.upper])
+            lo, hi = scale.bounds(x_pre) if hasattr(scale, "bounds") else np.percentile(np.asarray(x_pre), [scale.lower, scale.upper])
+            # head extent in the output grid; touching the edge with --spacing_mm means the box cut the head
+            nz = np.nonzero(np.asarray(x).squeeze() > 0)
+            head_vox = np.array([(a.max() - a.min() + 1) if a.size else 0 for a in nz])
+            touches_edge = any(a.size and (a.min() == 0 or a.max() == n - 1) for a, n in zip(nz, args.image_shape))
             row = {"index": total, "file": Path(str((meta or {}).get("filename_or_obj", ""))).name,
                    "native_shape": "x".join(str(v) for v in np.squeeze(img).shape),
                    "scale_native_lo": float(lo), "scale_native_hi": float(hi)}
@@ -127,6 +133,9 @@ def main(args):
                 row[f"crop_box_mm_{ax}"] = round(float(out_vox[i] * args.image_shape[i]), 1)
             for i, ax in enumerate("xyz"):
                 row[f"out_vox_mm_{ax}"] = round(float(out_vox[i]), 3)
+            for i, ax in enumerate("xyz"):
+                row[f"head_mm_{ax}"] = round(float(head_vox[i] * out_vox[i]), 1)
+            row["head_touches_edge"] = bool(touches_edge)
             scan_rows.append(row)
 
             if isinstance(x, MetaTensor):
@@ -147,7 +156,11 @@ def main(args):
         batch_id += 1
 
     scans_csv = out_dir / "tau_pt_scans.csv"
-    pd.DataFrame(scan_rows).to_csv(scans_csv, index=False)
+    scans = pd.DataFrame(scan_rows)
+    scans.to_csv(scans_csv, index=False)
+    if args.spacing_mm and scans["head_touches_edge"].any():
+        print(f"WARNING: {int(scans['head_touches_edge'].sum())} of {len(scans)} heads touch the edge of the "
+              f"{args.image_shape} box (possibly cut off): see head_touches_edge in {scans_csv.name}")
 
     recipe = {k: v for k, v in vars(args).items() if k not in ("out_dir", "batch_size")}
     recipe["git_commit"] = _git_commit()
@@ -183,7 +196,11 @@ if __name__ == "__main__":
     parser.add_argument("--apply_brain_mask", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--head_crop", action=argparse.BooleanOptionalAction, default=False,
                         help="Mask the head on the native scan before cropping, so the crop box is the head, not the field of view")
-    parser.add_argument("--crop_margin", type=int, default=0, help="Native voxels kept around the crop box")
+    parser.add_argument("--crop_margin", type=int, default=0, help="Voxels kept around the crop box")
+    parser.add_argument("--spacing_mm", type=float, default=None,
+                        help="Resample to cubic voxels of this size and pad/crop to --image_shape instead of stretching")
+    parser.add_argument("--pct_inside_head", action=argparse.BooleanOptionalAction, default=False,
+                        help="Scaling percentiles over inside-the-head voxels only (use with --head_crop)")
 
     args = parser.parse_args()
     main(args)
