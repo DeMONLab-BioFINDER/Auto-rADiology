@@ -49,6 +49,9 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
         "occlusion": occlusion_vis_fn,
         }
     vis_fn = VIS_REGISTRY[vis_name]
+    # eval mode BEFORE the P(positive) below: the vis functions only switch it on inside, so the first scan's
+    # title probability used to come from train mode (dropout + BatchNorm over a batch of 1) and was wrong
+    model.eval()
     print('vis_fn:',vis_fn)
     vis_kwargs = vis_kwargs or {}
 

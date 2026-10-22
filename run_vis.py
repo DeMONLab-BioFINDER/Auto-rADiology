@@ -41,6 +41,7 @@ def main(args):
     sd = torch.load(ckpt, map_location=args.device, weights_only=True)
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
     model.load_state_dict(state_dict, strict=False)
+    model.eval()  # before anything runs the model: in train mode, dropout and batch-of-1 BatchNorm give wrong probabilities
 
     if args.vis_benchmark:
         x, _, _, extra, pid = next(iter(dl_va))
