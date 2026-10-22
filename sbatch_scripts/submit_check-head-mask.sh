@@ -8,6 +8,8 @@
 # Usage:
 #   sbatch submit_check-head-mask.sh [scans_per_site=15, 0 = all scans] [line_mm=120]
 #   line_mm = how far below the top of the head counts as "low" (neck) in the brightness check
+#   sbatch submit_check-head-mask.sh ids <ID1,ID2,...>
+#     only these scans (IDs from the edge_*.png names), an edge png for each, in head_mask_check/ids
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -28,5 +30,10 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
-python scripts/check_head_mask.py --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
-  --cache_type tau_raw --pkl_type tau_raw_backup --max_per_site "${1:-15}" --line_mm "${2:-120}"
+if [[ "$1" == "ids" ]]; then
+  python scripts/check_head_mask.py --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
+    --cache_type tau_raw --pkl_type tau_raw_backup --ids "$2"
+else
+  python scripts/check_head_mask.py --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
+    --cache_type tau_raw --pkl_type tau_raw_backup --max_per_site "${1:-15}" --line_mm "${2:-120}"
+fi
