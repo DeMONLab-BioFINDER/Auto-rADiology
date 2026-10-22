@@ -113,6 +113,10 @@ def parse_arguments():
                         help="Occlusion fill: 'gaussian' (MONAI default, soft Gaussian dimming of the patch), 'mean_img', "
                              "'mean_patch', 'median_brain' (this scan's median inside the head), or a constant such as 0 "
                              "to blank the patch to zero.")
+    parser.add_argument("--vis_occlusion_target", type=str, default="prob", choices=["prob", "logit"],
+                        help="Occlusion: what the map measures. 'prob' = drop in class probability; 'logit' = drop in "
+                             "the model's log-odds (logit of positive minus logit of negative), which does not get stuck "
+                             "when the probability is ~1 or ~0, so very confident scans still get a map.")
     parser.add_argument("--vis_color_max", type=float, default=None,
                         help="Fixed top of the colour scale of the MIP pngs (e.g. 0.3 = a 0.3 drop in probability), so "
                              "colours are comparable between scans. Default: each picture scaled to its own strongest "

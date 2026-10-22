@@ -56,7 +56,9 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     os.makedirs(vis_dir, exist_ok=True)
 
     # colour bar labels of the MIP pngs; pos_vs_neg is signed, so it gets a blue-red scale centred on 0
-    mip_labels = {'class': MIP_LABELS['class'] if vis_name == "occlusion" else vis_name, 'pos_vs_neg': MIP_LABELS['pos_vs_neg']}
+    target = vis_kwargs.get("target", "prob") if vis_name == "occlusion" else "prob"
+    labels = MIP_LABELS_LOGIT if target == "logit" else MIP_LABELS
+    mip_labels = {'class': labels['class'] if vis_name == "occlusion" else vis_name, 'pos_vs_neg': labels['pos_vs_neg']}
     vis_sum = {'class': None,'pos_vs_neg':None}
     vis_count = {'class': 0, 'pos_vs_neg': 0}
     img_sum, img_n = None, 0  # running mean of the input images, for the group-average MIP background
@@ -69,7 +71,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
             xb = x[b:b+1] # [1, C, D, H, W]
             extrab = extra[b:b+1] if extra is not None else None
             pid_b = int(pid[b])
-            title, row = f"ID {pid_b}", {"ID": pid_b}
+            title, row = f"ID {pid_b}", {"ID": pid_b, "target": target}
             if show_prob:
                 with torch.no_grad():
                     out = model(xb, extra=extrab)
@@ -218,10 +220,15 @@ def occlusion_vis_fn(model, x, extra, **kwargs):
     kwargs: mask_size (int or 3-tuple, default 8), overlap (default 0.75), n_batch (default
     16), mode (see _parse_occlusion_mode, default 'gaussian'), activate (default: softmax
     over classes; False = raw logits, or pass your own callable), brain_bbox (default False:
-    only occlude inside the bounding box of the brain, the map outside is 0)."""
+    only occlude inside the bounding box of the brain, the map outside is 0), target (default
+    'prob'; 'logit' = both maps are the drop in the model's log-odds of positive, logit(pos) -
+    logit(neg) = log(P(pos)/P(neg)), with the class map's sign flipped when the prediction is
+    negative. A probability near 1 or 0 is saturated: hiding a patch cannot move it measurably
+    (2026-10-22: a P = 1.00 scan gave a largest drop of 1e-8, i.e. noise), the log-odds still move.)"""
     model.eval()
 
-    activate = kwargs.get("activate", _softmax_over_classes)
+    target = kwargs.get("target", "prob")
+    activate = None if target == "logit" else kwargs.get("activate", _softmax_over_classes)
     if activate is True:
         activate = _softmax_over_classes
     elif activate is False:
@@ -253,6 +260,12 @@ def occlusion_vis_fn(model, x, extra, **kwargs):
         d, h, w = heat.shape[1:]
         full[:, start[0]:start[0] + d, start[1]:start[1] + h, start[2]:start[2] + w] = heat
         heat = full
+
+    if target == "logit":
+        # raw logits: heat = drop in each logit; positive minus negative = drop in log-odds of positive
+        log_odds_drop = heat[1] - heat[0] if heat.shape[0] > 1 else heat[0]
+        heat_class = log_odds_drop if pred_class == 1 or heat.shape[0] == 1 else -log_odds_drop
+        return heat_class, log_odds_drop
 
     heat_class = heat[pred_class] # Why did the model predict this class?
     heat_pos_vs_neg = heat[1] - heat[0]
@@ -429,7 +442,13 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
     fig = plt.figure(figsize=(12, 3.6 * rows + 0.6))
     gs = fig.add_gridspec(rows, 4, width_ratios=[1, 1, 1, 0.05], wspace=0.05, hspace=0.18)
 
-    peak = np.unravel_index(int(np.argmax(np.abs(cam) if signed else cam)), cam.shape)
+    strength = np.abs(cam) if signed else np.clip(cam, 0, None)
+    strongest = float(strength.max())
+    if strongest > 0:
+        peak = np.unravel_index(int(np.argmax(strength)), cam.shape)
+    else:  # nothing to show: slice through the middle of the head instead of the box corner
+        head = np.argwhere(img > 0)
+        peak = tuple(int(v) for v in (head.mean(0) if head.size else np.array(cam.shape) / 2))
     slice_win = window(img)
     for c, (axis, view_name) in enumerate(views):
         pet_proj = _mean_projection(img, axis)
@@ -457,7 +476,11 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
     _faded_colorbar(fig.add_subplot(gs[1:, 3]), cmap_obj, norm, signed, top, label)
 
     sub = f"colour scale top = {top:.3g}" + (f" ({scale_note})" if scale_note else " (this scan's own 99th percentile)")
-    sub += f" | strongest value in this map = {float((np.abs(cam) if signed else cam).max()):.3g}"
+    sub += f" | strongest value in this map = {strongest:.3g}"
+    if strongest == 0:
+        sub += "\nMAP IS EMPTY: no hidden patch changed the prediction in this direction (slices through the head centre)"
+    elif strongest < 1e-6:
+        sub += "\nMAP IS NOISE: changes are below what the computer can measure (probability stuck near 1 or 0? try --vis_occlusion_target logit)"
     fig.suptitle((title + "\n" if title else "") + sub, fontsize=9)
     plt.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -465,6 +488,8 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
 
 MIP_LABELS = {"class": "drop in P(predicted class) when hidden",
               "pos_vs_neg": "drop in P(positive) minus drop in P(negative)\nred-yellow: supports positive, blue-cyan: supports negative"}
+MIP_LABELS_LOGIT = {"class": "drop in log-odds of the predicted class when hidden",
+                    "pos_vs_neg": "drop in log-odds of positive when hidden\nred-yellow: supports positive, blue-cyan: supports negative"}
 
 
 def redraw_map_pngs(vis_dir, vis_name="occlusion", shared_scale=False, load_input=None, peak_slices=True):
@@ -493,6 +518,8 @@ def redraw_map_pngs(vis_dir, vis_name="occlusion", shared_scale=False, load_inpu
         if not files:
             continue
         signed = vt == "pos_vs_neg"
+        logit = summary is not None and "target" in summary.columns and (summary["target"] == "logit").any()
+        label = (MIP_LABELS_LOGIT if logit else MIP_LABELS)[vt]
         top, note = None, None
         if shared_scale:  # pooled 99th percentile, from a random sample of each map's non-zero values
             rng, pooled = np.random.default_rng(0), []
@@ -516,7 +543,7 @@ def redraw_map_pngs(vis_dir, vis_name="occlusion", shared_scale=False, load_inpu
                 raise FileNotFoundError(f"{inp} missing; pass load_input to read the model input from the cache")
             cam = nib.load(f).get_fdata(dtype=np.float32)
             out = vis_dir / f"{pid}_{vis_name}_{vt}_mip{'_shared' if shared_scale else ''}.png"
-            save_mip_png(img, cam, str(out), signed=signed, label=MIP_LABELS[vt], title=title_of(pid), vmax=top,
+            save_mip_png(img, cam, str(out), signed=signed, label=label, title=title_of(pid), vmax=top,
                          scale_note=note, peak_slices=peak_slices)
             n_done += 1
     print(f"[redraw] {n_done} pngs written to {vis_dir}")

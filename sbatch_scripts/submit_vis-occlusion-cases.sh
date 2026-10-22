@@ -7,12 +7,16 @@
 # Pick the IDs from <best_model_folder>/figures/visual_read_confidence_groups.csv
 # (column ID_ind, with prob and group) or visual_read_confidently_wrong_cases.csv,
 # written by results_plotting/analyze_model_confidence_visual_read.py.
-# Maps go to <best_model_folder>/validation/visualization/occlusion_cases_<fill>_mask<M>_ov<O>
+# target: prob = drop in probability (default), logit = drop in the model's log-odds, needed for
+# very confident scans (P ~1 or ~0), where the probability cannot move and the map is noise.
+# Maps go to <best_model_folder>/validation/visualization/occlusion_cases_<target>_<fill>_mask<M>_ov<O>
 # (earlier output of the same settings there is replaced).
 #
 # Usage:
-#   sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [mask_size] [overlap] [fill]
-# Defaults: mask 4, overlap 0.5, fill gaussian. Time: ~6 min per scan.
+#   sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [target] [mask_size] [overlap] [fill]
+# Defaults: target prob, mask 4, overlap 0.5, fill gaussian.
+#   e.g. sbatch submit_vis-occlusion-cases.sh <folder> 2021,201,1922 logit
+# Time: ~6 min per scan.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -36,12 +40,13 @@ fi
 BEST_MODEL_FOLDER="$1"
 SUBJECT_IDS="$2"
 if [[ -z "$BEST_MODEL_FOLDER" || -z "$SUBJECT_IDS" ]]; then
-  echo "Usage: sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [mask_size] [overlap] [fill]"
+  echo "Usage: sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [target] [mask_size] [overlap] [fill]"
   exit 1
 fi
-MASK_SIZE="${3:-4}"
-OVERLAP="${4:-0.5}"
-FILL="${5:-gaussian}"
+TARGET="${3:-prob}"
+MASK_SIZE="${4:-4}"
+OVERLAP="${5:-0.5}"
+FILL="${6:-gaussian}"
 
 # Relative folder names resolve under <proj_path>/results, same as src/params.py does.
 VIS_DIR=$(python -c "
@@ -50,7 +55,7 @@ from src.params import parse_arguments
 sys.argv = ['x', '--best_model_folder', '$BEST_MODEL_FOLDER']
 print(os.path.join(parse_arguments().output_path, 'visualization'))
 " | tail -n 1)
-echo "Subjects $SUBJECT_IDS, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
+echo "Subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
@@ -71,11 +76,12 @@ python ./run_vis.py \
   --vis_n_batch 16 \
   --vis_occlusion_mode "$FILL" \
   --vis_brain_bbox \
+  --vis_occlusion_target "$TARGET" \
   || RUN_STATUS=$?
 ELAPSED=$((SECONDS - START))
 echo "[timing] ${ELAPSED}s = $((ELAPSED / 60)) min for all subjects"
 
-RUN_DIR="$VIS_DIR/occlusion_cases_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
+RUN_DIR="$VIS_DIR/occlusion_cases_${TARGET}_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
 if [[ -d "$VIS_DIR/occlusion" ]]; then
   rm -rf "$RUN_DIR" && mv "$VIS_DIR/occlusion" "$RUN_DIR" && echo "maps saved in $RUN_DIR"
 fi
