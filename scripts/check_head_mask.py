@@ -354,15 +354,15 @@ def main():
                        args.line_mm, box_head_mm=188)
     for site, sid, v_cache, v_old, v_new, png_name in pngs:
         # cached input == old recipe replayed (cache_vs_replay_r = 1), so show only one of them
-        vols = [("old input (trained on)", v_cache) if v_cache is not None else ("old recipe, replayed", v_old),
-                ("iso2 recipe", v_new)]
+        vols = [("current transform", v_cache if v_cache is not None else v_old),
+                ("new transform", v_new)]
         fig, axes = plt.subplots(len(vols), 3, figsize=(9, 3 * len(vols)), squeeze=False)
         for r, (title, v) in enumerate(vols):
             for c, (sl, view) in enumerate(zip(mid_slices(v), ["side", "front", "top"])):
                 axes[r, c].imshow(sl, cmap="gray", origin="lower")
                 axes[r, c].set_title(f"{title}: {view}", fontsize=8)
                 axes[r, c].axis("off")
-        fig.suptitle(f"{site}, ID {sid} (squares = model voxels, so the old recipe is shown stretched)", fontsize=9)
+        fig.suptitle(f"{site}, ID {sid} (squares = model voxels, so the current transform is shown stretched)", fontsize=9)
         fig.tight_layout()
         fig.savefig(out_dir / png_name, dpi=110)
         plt.close(fig)
