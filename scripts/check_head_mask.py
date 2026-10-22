@@ -187,6 +187,25 @@ def bright_png(v, out_png, title, line_mm, box_head_mm, white_from, vox_mm=2.0):
     plt.close(fig)
 
 
+BRAIN_MM, KEPT_MM, MARGIN_MM = 140, 188, 4  # brain level / what the box keeps below the top / crop margin per side
+
+
+def head_width_length(m, top_mm, vox_mm=2.0):
+    """Left-right and front-back size (mm) of the head within the top `top_mm` of it (m = 2 mm mask
+    of the whole scan, before any box): what a box must hold at that height."""
+    zs = np.nonzero(m.any(axis=(0, 1)))[0]
+    if not zs.size:
+        return np.nan, np.nan
+    sub = m[:, :, max(0, zs.max() - int(top_mm / vox_mm) + 1):zs.max() + 1]
+    return tuple(float((a.max() - a.min() + 1) * vox_mm) if a.size else np.nan
+                 for a in (np.nonzero(sub.any(axis=(1, 2)))[0], np.nonzero(sub.any(axis=(0, 2)))[0]))
+
+
+def suggested_size(mm, vox_mm=2.0, step=16):
+    """Smallest box side (voxels, a multiple of `step`) that holds `mm` plus the crop margin."""
+    return int(np.ceil((mm + 2 * MARGIN_MM) / vox_mm / step) * step)
+
+
 def mid_slices(v, idx=None):
     """Sagittal, coronal and axial slices of a (x, y, z) RAS volume through voxel idx (default: the
     middle of the box), upright."""
@@ -283,6 +302,8 @@ def main():
             row["native_cut"] = bool(native_sides)
             row["native_bottom_cut"] = bool(m_native[:, :, 0].any())
             row["native_head_mm_z"] = head_mm(m_native.astype(np.float32), native_vox)[2]
+            for depth, tag in ((BRAIN_MM, "brain"), (KEPT_MM, "kept")):
+                row[f"head_x_mm_{tag}"], row[f"head_y_mm_{tag}"] = head_width_length(v_pre > 0, depth)
             row["old_white_low_share"], _ = brightness_info(v_old, v_old >= 0.999, old_vox[2], args.line_mm)
             row["iso2_white_low_share"], row["iso2_scale_top_vs_upper_head"] = brightness_info(
                 v_box, v_box >= white_from, 2.0, args.line_mm)
@@ -361,6 +382,26 @@ def main():
         print(f"\nBrightness scale and the neck (more than {args.line_mm:.0f} mm below the top of the head):")
         print(by_site[["n", "old_white_low_share", "iso2_white_low_share", "iso2_scale_top_vs_upper_head",
                        "iso2_scale_top_vs_upper_head_max", "n_iso2_bottom_cut", "iso2_head_mm_z"]].round(3).to_string())
+
+        # box size from the real head sizes, measured before any box
+        size_cols = ["head_x_mm_brain", "head_y_mm_brain", "head_x_mm_kept", "head_y_mm_kept"]
+        sizes = df.groupby("site")[size_cols].agg(["median", "max"]).round(0)
+        sizes.columns = [f"{c}_{stat}" for c, stat in sizes.columns]
+        overall = pd.DataFrame({"median": df[size_cols].median(), "99th percentile": df[size_cols].quantile(0.99),
+                                "max": df[size_cols].max()}).round(0)
+        sizes.to_csv(out_dir / "head_size_for_box_by_site.csv")
+        overall.to_csv(out_dir / "head_size_for_box_all.csv")
+        print(f"\nReal head size in mm, before any box (brain = top {BRAIN_MM} mm of the head, must fit; "
+              f"kept = top {KEPT_MM} mm, the box's height, includes neck/shoulders, harmless to cut):")
+        print(sizes.to_string())
+        print(f"\nAll {len(df)} scans together:")
+        print(overall.to_string())
+        need_x, need_y = df["head_x_mm_brain"].max(), df["head_y_mm_brain"].max()
+        print(f"Smallest box (multiple of 16 voxels at 2 mm, incl. {MARGIN_MM} mm margin per side) that holds every "
+              f"head at brain level: x {suggested_size(need_x)} ({suggested_size(need_x) * 2} mm), "
+              f"y {suggested_size(need_y)} ({suggested_size(need_y) * 2} mm); current box x 112 (224 mm), y 128 (256 mm). "
+              f"Including neck/shoulders: x {suggested_size(df['head_x_mm_kept'].max())}, "
+              f"y {suggested_size(df['head_y_mm_kept'].max())}.")
 
     pngs = [(site, sid, vc, vo, vn, a_old, a_new, f"example_{str(site).replace(' ', '_')}.png")
             for site, (sid, vc, vo, vn, a_old, a_new) in examples.items()]
