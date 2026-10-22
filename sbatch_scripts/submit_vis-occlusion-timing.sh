@@ -5,11 +5,10 @@
 # Times one REAL occlusion map on one subject (not the projection that
 # submit_vis-occlusion-benchmark.sh prints), so data loading, MONAI's masking
 # and saving are included. Runs the projection first for comparison, then the
-# full occlusion twice: whole volume, and only inside the brain bounding box
-# (--vis_brain_bbox). The maps are saved too, each run in its own folder
-# <best_model_folder>/validation/visualization/occlusion_mask<M>_ov<O>_<whole|bbox>
-# (run_vis.py always writes to .../occlusion, so each run's output is moved there
-# right after it finishes; otherwise runs overwrite each other).
+# full occlusion only inside the brain bounding box (--vis_brain_bbox; the whole-volume
+# run was dropped after the 2026-10-21 timing: 15 min vs 6 min per scan). The maps are
+# saved too, in <best_model_folder>/validation/visualization/occlusion_mask<M>_ov<O>_bbox
+# (run_vis.py always writes to .../occlusion, so the output is moved there afterwards).
 #
 # Mask size is in voxels of the 128^3 model input: 4 voxels ~ 8x8x5 mm on a
 # median raw scan.
@@ -85,16 +84,14 @@ RUN_STATUS=0
 echo "===== projection (--vis_benchmark) ====="
 python ./run_vis.py "${COMMON_ARGS[@]}" --vis_benchmark || RUN_STATUS=$?
 
-for BBOX in "" "--vis_brain_bbox"; do
-  echo "===== real occlusion ${BBOX:-(whole volume)} ====="
-  START=$SECONDS
-  python ./run_vis.py "${COMMON_ARGS[@]}" $BBOX || RUN_STATUS=$?
-  ELAPSED=$((SECONDS - START))
-  echo "[timing] mask $MASK_SIZE, overlap $OVERLAP, ${BBOX:-(whole volume)}: ${ELAPSED}s = $((ELAPSED / 60)) min $((ELAPSED % 60)) s for 1 scan (incl. loading model and data)"
-  RUN_DIR="$VIS_DIR/occlusion_mask${MASK_SIZE}_ov${OVERLAP}_$([[ -n "$BBOX" ]] && echo bbox || echo whole)"
-  if [[ -d "$VIS_DIR/occlusion" ]]; then
-    rm -rf "$RUN_DIR" && mv "$VIS_DIR/occlusion" "$RUN_DIR" && echo "maps saved in $RUN_DIR"
-  fi
-done
+echo "===== real occlusion (brain bbox) ====="
+START=$SECONDS
+python ./run_vis.py "${COMMON_ARGS[@]}" --vis_brain_bbox || RUN_STATUS=$?
+ELAPSED=$((SECONDS - START))
+echo "[timing] mask $MASK_SIZE, overlap $OVERLAP, brain bbox: ${ELAPSED}s = $((ELAPSED / 60)) min $((ELAPSED % 60)) s for 1 scan (incl. loading model and data)"
+RUN_DIR="$VIS_DIR/occlusion_mask${MASK_SIZE}_ov${OVERLAP}_bbox"
+if [[ -d "$VIS_DIR/occlusion" ]]; then
+  rm -rf "$RUN_DIR" && mv "$VIS_DIR/occlusion" "$RUN_DIR" && echo "maps saved in $RUN_DIR"
+fi
 
 exit $RUN_STATUS
