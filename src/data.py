@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from monai.data import MetaTensor
 from monai.transforms import (LoadImage, EnsureChannelFirst, Orientation, Resize,
         ScaleIntensityRangePercentiles, Compose, CropForeground, GaussianSmooth,
-        Lambda, Spacing, ResizeWithPadOrCrop, SpatialCrop)
+        Lambda, Spacing, ResizeWithPadOrCrop, SpatialCrop, BorderPad)
 
 from src.utils import seed_worker
 # ------------------------------
@@ -334,6 +334,32 @@ def keep_top(x, height):
     return SpatialCrop(roi_start=(0, 0, z - height), roi_end=(x.shape[1], x.shape[2], z))(x)
 
 
+BRAIN_MM = 140  # the top 140 mm of the head hold the whole brain; centring uses only this part
+
+
+def centre_on_brain(x, size_xy, brain_vox):
+    """Cut a size_xy window (left-right, back-front) centred on the head at brain level, i.e. the
+    non-zero voxels in the top `brain_vox` slices. CropForeground's box can include shoulders that
+    keep_top later cut away (wide, or lopsided when the subject lies tilted); centring on that box
+    left an empty strip on one side and cut the brain on the other (seen in Geneva, 2026-10-22).
+    Pads with zeros where the window goes past the scan. Keeps the affine (MONAI pad + crop)."""
+    nz = (x[0] != 0).cpu().numpy()
+    filled_z = np.flatnonzero(nz.any(axis=(0, 1)))
+    if filled_z.size == 0:
+        return x
+    top = filled_z[-1]
+    slab = nz[:, :, max(top - brain_vox + 1, 0):top + 1]
+    sx, sy = size_xy
+    x = BorderPad(spatial_border=[sx, sx, sy, sy, 0, 0])(x)  # room for the window on every side
+    start = []
+    for axis, size in ((0, sx), (1, sy)):
+        idx = np.flatnonzero(slab.any(axis=tuple(a for a in (0, 1, 2) if a != axis)))
+        centre = (idx[0] + idx[-1] + 1) / 2 + size  # + size: shift from the padding
+        start.append(int(round(centre - size / 2)))
+    return SpatialCrop(roi_start=(start[0], start[1], 0),
+                       roi_end=(start[0] + sx, start[1] + sy, x.shape[3]))(x)
+
+
 def get_transforms(target_shape=(128, 128, 128), 
                 pct_lo: float = 1.0, 
                 pct_hi: float = 99.0,
@@ -381,6 +407,7 @@ def get_transforms(target_shape=(128, 128, 128),
         target_shape instead of stretching, so proportions are true and 1 voxel = spacing_mm in
         every scan. target_shape must then be big enough for a head (112x128x96 at 2 mm = 224x256x192
         mm fits the real data; 96 wide was too narrow for some skulls); a head taller than the box loses its bottom (neck), not its top.
+        Left-right and back-front the box is centred on the head's top 140 mm (centre_on_brain), not on shoulders.
     pct_inside_head : bool
         Take the scaling percentiles over the non-zero (inside-the-head) voxels only. Needs the
         head already zeroed outside (head_crop), otherwise every voxel counts.
@@ -402,6 +429,8 @@ def get_transforms(target_shape=(128, 128, 128),
         if crop_foreground: steps.append(CropForeground(margin=crop_margin)) # Crop out huge empty regions
         if spacing_mm:
             steps.append(Lambda(lambda x: keep_top(x, target_shape[2]))) # too tall: cut the neck, not the top of the head
+            # left-right / back-front: centre on the head at brain level, not on CropForeground's box (shoulders)
+            steps.append(Lambda(lambda x: centre_on_brain(x, target_shape[:2], int(round(BRAIN_MM / spacing_mm)))))
             steps.append(ResizeWithPadOrCrop(spatial_size=target_shape)) # centre the box in a fixed grid, no stretching
         else: steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
         # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
