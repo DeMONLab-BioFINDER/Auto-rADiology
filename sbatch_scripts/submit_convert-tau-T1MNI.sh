@@ -5,12 +5,12 @@
 #
 #   data/tau_T1MNI         - exactly the tau_raw recipe (CropForeground + resize to 128^3),
 #                            so raw vs MNI differs only in the image space.
-#   data/tau_T1MNI_iso2    - the tau_raw_iso2 recipe (2 mm, head mask, tau_raw brightness
-#                            scaling, 112x128x96) but NOT cropped: the 91x109x91 MNI grid is only
-#                            padded by the same amount for every scan, so every voxel is the
-#                            same brain location in every scan (needed for atlas-based
-#                            occlusion / comparing maps). tau_raw_iso2 vs tau_T1MNI_iso2 then
-#                            differ only in the registration to MNI.
+#   data/tau_T1MNI_native  - the MNI scans as they are: 91x109x91 at 2 mm, no crop, no stretch,
+#                            no padding (the CNN ends in adaptive pooling, so any size works).
+#                            Head mask and tau_raw brightness scaling as in tau_raw_iso2. Every
+#                            voxel is the same brain location in every scan (needed for
+#                            atlas-based occlusion / comparing maps). The "head touches the box"
+#                            warning is expected here: the MNI grid is tight around the head.
 #
 # The pkls also hold the AVID scans (demo_AVID.csv), so AVID is converted too.
 # Both reuse data/demo.csv: tau_T1MNI's pkl order has the same ID -> sID as tau_raw
@@ -58,5 +58,5 @@ convert() {
 
 STATUS=0
 convert "$DATA/tau_T1MNI" --image_shape 128 128 128 || STATUS=1
-convert "$DATA/tau_T1MNI_iso2" --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 112 128 96 || STATUS=1
+convert "$DATA/tau_T1MNI_native" --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 91 109 91 || STATUS=1
 exit $STATUS
