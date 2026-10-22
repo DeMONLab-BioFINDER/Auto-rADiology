@@ -423,7 +423,8 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
     Opacity follows strength: 0 is fully transparent, solid at the top of the scale and above.
     signed=False: red -> yellow (`cmap`, bright = strong) from 0 to the top; values <= 0 not shown.
     signed=True (e.g. pos_vs_neg): the value with the largest absolute size along each line is
-    projected; positive red -> yellow, negative blue -> light cyan, centred on 0.
+    projected; positive red -> yellow, negative blue -> light cyan, centred on 0 (weak red/orange
+    over the grey PET looks brown because of the fading, hence "brown to yellow" in the labels).
     vmax: top of the scale; None = this map's own 99th percentile (robust_top). scale_note: text
     on how the scale was set (e.g. shared across scans), shown under the title."""
     top = vmax if vmax is not None else robust_top(cam, signed)
@@ -487,9 +488,9 @@ def save_mip_png(img, cam, out_png, cmap=WARM, signed=False, label=None, title=N
 
 
 MIP_LABELS = {"class": "drop in P(predicted class) when hidden",
-              "pos_vs_neg": "drop in P(positive) minus drop in P(negative)\nred-yellow: supports positive, blue-cyan: supports negative"}
+              "pos_vs_neg": "drop in P(positive) minus drop in P(negative)\nabove 0 (brown to yellow): supports positive, below 0 (blue to light cyan): supports negative"}
 MIP_LABELS_LOGIT = {"class": "drop in log-odds of the predicted class when hidden",
-                    "pos_vs_neg": "drop in log-odds of positive when hidden\nred-yellow: supports positive, blue-cyan: supports negative"}
+                    "pos_vs_neg": "drop in log-odds of positive when hidden\nabove 0 (brown to yellow): supports positive, below 0 (blue to light cyan): supports negative"}
 
 
 def redraw_map_pngs(vis_dir, vis_name="occlusion", shared_scale=False, load_input=None, peak_slices=True):
