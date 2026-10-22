@@ -24,14 +24,14 @@ Per site, for a sample of scans:
      much of the head the scan shows; under ~130-140 mm the bottom of the brain may be missing).
      No box can bring that back, and the old inputs are cut the same way. fovcut_*.png shows
      up to 3 such scans per site (the whole scan at 2 mm, its edges in orange).
-  G) does the lower head (neck) set the brightness scale? The scale top is the head's 99th
-     percentile, so bright neck tissue can push it up and make the brain dimmer at sites whose
-     scans show a lot of neck. Per scan: share of the brightest 1 % lying more than --line_mm
-     below the top of the head, old and iso2; and how much higher the iso2 scale top is than if
-     it were taken from the top --line_mm only (1.00 = the neck changes nothing; 1.20 = the
-     brain is shown 20 % dimmer because of what lies below the line). Nothing is cut for this,
-     it only measures. bright_*.png: side and front view of the whole iso2 head (before any
-     cut) with the brightest 1 % in magenta, for the 3 scans per site where most of it is low.
+  G) does the lower head (neck) set the brightness scale? The scale top is the 99th percentile
+     of the box (both transforms), so bright neck tissue can push it up and make the brain
+     dimmer at sites whose scans show a lot of neck. Per scan: share of the voxels that turn
+     white lying more than --line_mm below the top of the head, old and iso2; and how much
+     higher the iso2 scale top is than if the head below the line had typical brightness (1.00 = the neck
+     changes nothing; 1.20 = the brain is shown 20 % dimmer because of it). It only measures.
+     bright_*.png: side and front view of the whole iso2 head (before any cut) with what turns
+     white in magenta, for the 3 scans per site where most of it is low.
 and one png per site: middle slices of the old input (cached, else replayed) and the iso2 replay,
 plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
 (neckcut_*.png): front and side view of the whole iso2 head with the box edges marked.
@@ -52,7 +52,7 @@ import numpy as np
 import pandas as pd
 import torch
 from monai.data import MetaTensor
-from monai.transforms import Compose, ScaleIntensityRangePercentiles
+from monai.transforms import Compose, CropForeground, ScaleIntensityRangePercentiles
 
 from src.data import get_transforms, head_mask
 from scripts.check_image_geometry import load_sites
@@ -143,25 +143,28 @@ def silhouette_png(v, out_png, title, vox_mm=2.0, edge_name="box", mark_bottom=F
 
 
 def brightness_info(v, bright, vox_z, line_mm, pct=99):
-    """For a head (v > 0, z = last axis bottom -> top) and its brightest voxels `bright`: share of
-    them more than line_mm below the top of the head, and (for an unscaled v) the 99th percentile
-    over the whole head divided by the one over the top line_mm only."""
+    """For a head in its box (v > 0, z = last axis bottom -> top) and the voxels `bright` that end
+    up white: share of them more than line_mm below the top of the head, and (for an unscaled v)
+    the scale top (99th percentile of the whole box) divided by what it would be if the head
+    below the line were no brighter than typical head above it (its voxels set to the median of
+    the head above the line, so the amount of head in the box stays the same)."""
     m = v > 0
     zs = np.nonzero(m.any(axis=(0, 1)))[0]
     if not zs.size or not bright.any():
         return np.nan, np.nan
     below = ((zs.max() - np.arange(v.shape[2])) * vox_z > line_mm)[None, None, :]
     share = float((bright & below).sum() / bright.sum())
-    upper = v[m & ~below]
-    ratio = float(np.percentile(v[m], pct) / np.percentile(upper, pct)) if upper.size else np.nan
+    typical = np.median(v[m & ~below]) if (m & ~below).any() else 0.0
+    top_upper = np.percentile(np.where(below & m, typical, v), pct)
+    ratio = float(np.percentile(v, pct) / top_upper) if top_upper > 0 else np.nan
     return share, ratio
 
 
-def bright_png(v, out_png, title, line_mm, box_head_mm, vox_mm=2.0, pct=99):
+def bright_png(v, out_png, title, line_mm, box_head_mm, white_from, vox_mm=2.0):
     """Side and front view of a whole head before scaling: average PET along the view, the
     brightest 1 % in magenta, the --line_mm line and where the iso2 box ends at the bottom."""
     m = v > 0
-    bright = v >= np.percentile(v[m], pct)
+    bright = v >= white_from
     sl = tuple(slice(a.min(), a.max() + 1) for a in np.nonzero(m))
     v, m, bright = v[sl], m[sl], bright[sl]
     top = v.shape[2] - 1
@@ -176,8 +179,8 @@ def bright_png(v, out_png, title, line_mm, box_head_mm, vox_mm=2.0, pct=99):
             ax.axhline(top - box_head_mm / vox_mm, color="orange", linewidth=1)
         ax.set_title(name, fontsize=8)
         ax.axis("off")
-    fig.suptitle(title + f"\nmagenta = brightest 1 % of the head (sets the top of the scale)\nyellow dashed = "
-                 f"{line_mm:.0f} mm below the top, orange = bottom of the iso2 box (below it is cut)", fontsize=8)
+    fig.suptitle(title + f"\nmagenta = what becomes pure white (above the top of the scale)\nyellow dashed = "
+                 f"{line_mm:.0f} mm below the top, orange = bottom of the new transform's box (below it is cut)", fontsize=8)
     fig.tight_layout()
     fig.savefig(out_png, dpi=110)
     plt.close(fig)
@@ -213,12 +216,15 @@ def main():
     old = Compose(get_transforms(target_shape=(128, 128, 128)).transforms[1:])
     to_ras = Compose(get_transforms().transforms[1:3])  # channel-first + RAS only, original voxels
     new = Compose(get_transforms(target_shape=(112, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
-                                 pct_inside_head=True).transforms[1:])
+                                 pct_inside_head=False).transforms[1:])
 
     new_steps = get_transforms(target_shape=(112, 128, 96), head_crop=True, crop_margin=2, spacing_mm=2,
-                               pct_inside_head=True).transforms[1:]
-    new_pre = Compose(new_steps[:next(i for i, t in enumerate(new_steps)
-                                      if isinstance(t, ScaleIntensityRangePercentiles))])  # 2 mm, head masked, unscaled
+                               pct_inside_head=False).transforms[1:]
+    # 2 mm, head masked, whole scan (before the crop): for pictures of the whole head / the scan's edges
+    new_full = Compose(new_steps[:next(i for i, t in enumerate(new_steps) if isinstance(t, CropForeground))])
+    # the fixed box just before scaling: the scale is the 1st-99th percentile of this whole box
+    new_box = Compose(new_steps[:next(i for i, t in enumerate(new_steps)
+                                      if isinstance(t, ScaleIntensityRangePercentiles))])
     rows, examples, n_site, batch_len, cached_batch = [], {}, {}, None, (None, None)
     bright_cases = {}
     edge_examples, cut_examples, fov_examples = [], [], []
@@ -245,7 +251,9 @@ def main():
                    "replay_iso2_shell_share": shell_share(v_new)}
             row.update(edge_info(v_new))
             row["old_white_share"], row["iso2_white_share"] = white_share(v_old), white_share(v_new)
-            v_pre = new_pre(MetaTensor(torch.as_tensor(img), meta=meta)).squeeze().numpy()
+            v_pre = new_full(MetaTensor(torch.as_tensor(img), meta=meta)).squeeze().numpy()
+            v_box = new_box(MetaTensor(torch.as_tensor(img), meta=meta)).squeeze().numpy()
+            white_from = float(np.percentile(v_box, 99))
             # on the original grid (resampling would blur the scan's edge slices to 0)
             v_native = (to_ras(MetaTensor(torch.as_tensor(img), meta=meta)) if "affine" in meta
                         else torch.as_tensor(img).reshape(1, *np.squeeze(img).shape))
@@ -259,9 +267,8 @@ def main():
             row["native_bottom_cut"] = bool(m_native[:, :, 0].any())
             row["native_head_mm_z"] = head_mm(m_native.astype(np.float32), native_vox)[2]
             row["old_white_low_share"], _ = brightness_info(v_old, v_old >= 0.999, old_vox[2], args.line_mm)
-            iso2_bright = v_pre >= np.percentile(v_pre[v_pre > 0], 99) if (v_pre > 0).any() else v_pre > 0
             row["iso2_white_low_share"], row["iso2_scale_top_vs_upper_head"] = brightness_info(
-                v_pre, iso2_bright, 2.0, args.line_mm)
+                v_box, v_box >= white_from, 2.0, args.line_mm)
             for ax, a, b in zip("xyz", head_mm(v_old, old_vox), head_mm(v_new, [2, 2, 2])):
                 row[f"old_head_mm_{ax}"], row[f"iso2_head_mm_{ax}"] = round(a, 1), round(b, 1)
 
@@ -283,7 +290,7 @@ def main():
                 examples[site] = (sid, v_cache, v_old, v_new)
             if not np.isnan(row["iso2_white_low_share"]):
                 cases = bright_cases.setdefault(site, [])
-                cases.append((row["iso2_white_low_share"], sid, v_pre, row["iso2_scale_top_vs_upper_head"]))
+                cases.append((row["iso2_white_low_share"], sid, v_pre, row["iso2_scale_top_vs_upper_head"], white_from))
                 cases.sort(key=lambda c: -c[0])
                 del cases[3:]
             if row["iso2_touches_edge"] and sum(e[0] == site for e in edge_examples) < 3:
@@ -347,11 +354,11 @@ def main():
             silhouette_png(v_new, out_dir / f"{prefix}_{str(site).replace(' ', '_')}_ID{sid}.png",
                            f"{site}, ID {sid}, iso2: {note}")
     for site, cases in bright_cases.items():
-        for share, sid, v_pre, ratio in cases:
+        for share, sid, v_pre, ratio, white_from in cases:
             bright_png(v_pre, out_dir / f"bright_{str(site).replace(' ', '_')}_ID{sid}.png",
-                       f"{site}, ID {sid}: {share:.0%} of the brightest 1 % lies more than {args.line_mm:.0f} mm "
-                       f"below the top\nscale top = {ratio:.2f}x what the top {args.line_mm:.0f} mm alone would give",
-                       args.line_mm, box_head_mm=188)
+                       f"{site}, ID {sid}: {share:.0%} of what turns white lies more than {args.line_mm:.0f} mm "
+                       f"below the top\nscale top = {ratio:.2f}x what it would be if the head below had typical brightness",
+                       args.line_mm, box_head_mm=188, white_from=white_from)
     for site, sid, v_cache, v_old, v_new, png_name in pngs:
         # cached input == old recipe replayed (cache_vs_replay_r = 1), so show only one of them
         vols = [("current transform", v_cache if v_cache is not None else v_old),
@@ -362,7 +369,7 @@ def main():
                 axes[r, c].imshow(sl, cmap="gray", origin="lower")
                 axes[r, c].set_title(f"{title}: {view}", fontsize=8)
                 axes[r, c].axis("off")
-        fig.suptitle(f"{site}, ID {sid} (squares = model voxels, so the current transform is shown stretched)", fontsize=9)
+        fig.suptitle(f"{site}, ID {sid} (model voxels)", fontsize=9)
         fig.tight_layout()
         fig.savefig(out_dir / png_name, dpi=110)
         plt.close(fig)
@@ -380,9 +387,9 @@ def main():
           "before any of our steps); n_native_bottom_cut = scans that end inside the head or neck at the bottom, "
           "native_head_mm_z_min = the least head any scan shows top to bottom (under ~130-140 mm the bottom of "
           "the brain may be missing). fovcut_*.png shows them.\n"
-          "*_white_low_share = share of the brightest 1 % of the head (what sets the top of the brightness scale) "
+          "*_white_low_share = share of the voxels that turn pure white (above the top of the brightness scale) "
           "lying in the low part of the head (neck, but also the lowest brain: cerebellum, inferior temporal). "
-          "iso2_scale_top_vs_upper_head = scale top over the whole head / over the top part only: 1.00 = the low "
+          "iso2_scale_top_vs_upper_head = scale top / scale top if the head below the line had typical brightness: 1.00 = the low "
           "part changes nothing, 1.20 = the brain is shown 20 % dimmer because of it (bright_*.png shows where).")
     print(f"Saved to {out_dir}")
 

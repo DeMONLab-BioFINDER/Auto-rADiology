@@ -11,7 +11,7 @@
 #                   cropped to the head and padded (centred, not stretched) to 112x128x96 =
 #                   224x256x192 mm (x widened from 96: some skulls reached 192 mm); a head taller than 192 mm loses its bottom (neck), never its
 #                   top (bottom_cut in tau_pt_scans.csv). 1 voxel = 2 mm in every scan, true proportions, about half
-#                   the voxels of 128^3. Scaling percentiles (1-99 -> 0-1) taken inside the head.
+#                   the voxels of 128^3. Brightness scaled as in tau_raw (1st-99th percentile of the box -> 0-1).
 #
 # tau_raw is not touched. Same pkls, same order, so data/demo.csv, demo_AVID.csv and the
 # train/test split (same seed) are unchanged: train/validate with --data_type tau_raw_iso2.
@@ -53,4 +53,4 @@ if compgen -G "$OUT_DIR/tau_batch_*.pt" > /dev/null; then
   exit 0
 fi
 python scripts/convert_tau_pkl_to_pt.py --pkl_dir "$PKL_DIR" --out_dir "$OUT_DIR" --batch_size 50 \
-  --spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2 --pct_inside_head
+  --spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2
