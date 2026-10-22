@@ -407,7 +407,8 @@ def get_transforms(target_shape=(128, 128, 128),
         target_shape instead of stretching, so proportions are true and 1 voxel = spacing_mm in
         every scan. target_shape must then be big enough for a head (112x128x96 at 2 mm = 224x256x192
         mm fits the real data; 96 wide was too narrow for some skulls); a head taller than the box loses its bottom (neck), not its top.
-        Left-right and back-front the box is centred on the head's top 140 mm (centre_on_brain), not on shoulders.
+        Left-right and back-front the box is centred on the head's top 140 mm (centre_on_brain), not on shoulders
+        (only with crop_foreground; an uncropped grid such as MNI is left in place).
     pct_inside_head : bool
         Take the scaling percentiles over the non-zero (inside-the-head) voxels only. Needs the
         head already zeroed outside (head_crop), otherwise every voxel counts.
@@ -429,8 +430,10 @@ def get_transforms(target_shape=(128, 128, 128),
         if crop_foreground: steps.append(CropForeground(margin=crop_margin)) # Crop out huge empty regions
         if spacing_mm:
             steps.append(Lambda(lambda x: keep_top(x, target_shape[2]))) # too tall: cut the neck, not the top of the head
-            # left-right / back-front: centre on the head at brain level, not on CropForeground's box (shoulders)
-            steps.append(Lambda(lambda x: centre_on_brain(x, target_shape[:2], int(round(BRAIN_MM / spacing_mm)))))
+            # left-right / back-front: centre on the head at brain level, not on CropForeground's box (shoulders).
+            # Only after a crop: an uncropped grid (MNI) must stay put so voxels match across scans.
+            if crop_foreground:
+                steps.append(Lambda(lambda x: centre_on_brain(x, target_shape[:2], int(round(BRAIN_MM / spacing_mm)))))
             steps.append(ResizeWithPadOrCrop(spatial_size=target_shape)) # centre the box in a fixed grid, no stretching
         else: steps.append(Resize(spatial_size=target_shape, mode=interp)) # Resamples to the target size
         # Intensity normalization: maps voxel values between the 1st–99th percentile to [0,1] (clipping outliers)
