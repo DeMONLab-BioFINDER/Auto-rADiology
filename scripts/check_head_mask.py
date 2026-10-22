@@ -388,8 +388,7 @@ def main():
                 axes[r, c].imshow(sl, cmap="gray", origin="lower")
                 axes[r, c].set_title(f"{title}: {view}", fontsize=8)
                 axes[r, c].axis("off")
-        where = "through the same point (centre of the head)" if idx_new is not None else "middle of each box"
-        fig.suptitle(f"{site}, ID {sid} (model voxels), slices {where}", fontsize=9)
+        # no title: these pngs get shared, and subject IDs must not be on them
         fig.tight_layout()
         fig.savefig(out_dir / png_name, dpi=110)
         plt.close(fig)
