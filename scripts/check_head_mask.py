@@ -30,11 +30,11 @@ Per site, for a sample of scans:
      white lying more than --line_mm below the top of the head, old and iso2; and how much
      higher the iso2 scale top is than if the head below the line had typical brightness (1.00 = the neck
      changes nothing; 1.20 = the brain is shown 20 % dimmer because of it). It only measures.
-     bright_*.png: side and front view of the whole iso2 head (before any cut) with what turns
+     bright_*.png: sagittal and coronal view of the whole iso2 head (before any cut) with what turns
      white in magenta, for the 3 scans per site where most of it is low.
 and one png per site: middle slices of the old input (cached, else replayed) and the iso2 replay,
 plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
-(neckcut_*.png): front and side view of the whole iso2 head with the box edges marked.
+(neckcut_*.png): coronal and sagittal view of the whole iso2 head with the box edges marked.
 
 Reads only, no GPU needed. Outputs (default <proj_path>/results/head_mask_check/, outside the repo).
 """
@@ -111,7 +111,7 @@ def silhouette_png(v, out_png, title, vox_mm=2.0, edge_name="box", mark_bottom=F
     m = v > 0
     zs = np.nonzero(m.any(axis=(0, 1)))[0]
     fig, axes = plt.subplots(1, 2, figsize=(8, 4.6))
-    for ax, axis, name, (lft, rgt) in zip(axes, (1, 0), ("front view (left-right)", "side view (back-front)"),
+    for ax, axis, name, (lft, rgt) in zip(axes, (1, 0), ("coronal (left-right)", "sagittal (back-front)"),
                                           (("left", "right"), ("back", "front"))):
         n = np.maximum(m.sum(axis=axis), 1)
         img = (v.sum(axis=axis) / n).T
@@ -169,7 +169,7 @@ def bright_png(v, out_png, title, line_mm, box_head_mm, white_from, vox_mm=2.0):
     v, m, bright = v[sl], m[sl], bright[sl]
     top = v.shape[2] - 1
     fig, axes = plt.subplots(1, 2, figsize=(8, 4.8))
-    for ax, axis, name in zip(axes, (0, 1), ("side view (back <- -> front)", "front view (left-right)")):
+    for ax, axis, name in zip(axes, (0, 1), ("sagittal (back <- -> front)", "coronal (left-right)")):
         img = (v.sum(axis=axis) / np.maximum(m.sum(axis=axis), 1)).T
         ax.imshow(img, cmap="gray", origin="lower", vmin=0, vmax=np.percentile(img[img > 0], 99.5))
         b = np.ma.masked_where(~bright.any(axis=axis).T, np.ones_like(img))
@@ -187,7 +187,7 @@ def bright_png(v, out_png, title, line_mm, box_head_mm, white_from, vox_mm=2.0):
 
 
 def mid_slices(v):
-    """Side, front and top middle slices of a (x, y, z) RAS volume, upright."""
+    """Sagittal, coronal and axial middle slices of a (x, y, z) RAS volume, upright."""
     return [v[v.shape[0] // 2].T, v[:, v.shape[1] // 2].T, v[:, :, v.shape[2] // 2].T]
 
 
@@ -365,7 +365,7 @@ def main():
                 ("new transform", v_new)]
         fig, axes = plt.subplots(len(vols), 3, figsize=(9, 3 * len(vols)), squeeze=False)
         for r, (title, v) in enumerate(vols):
-            for c, (sl, view) in enumerate(zip(mid_slices(v), ["side", "front", "top"])):
+            for c, (sl, view) in enumerate(zip(mid_slices(v), ["sagittal", "coronal", "axial"])):
                 axes[r, c].imshow(sl, cmap="gray", origin="lower")
                 axes[r, c].set_title(f"{title}: {view}", fontsize=8)
                 axes[r, c].axis("off")
