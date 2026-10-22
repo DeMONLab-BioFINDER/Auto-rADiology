@@ -6,12 +6,12 @@
 # Reads only. A GPU is requested only because Berzelius jobs need one; the work is CPU.
 #
 # Usage:
-#   sbatch submit_check-head-mask.sh [scans_per_site=15] [line_mm=120]
+#   sbatch submit_check-head-mask.sh [scans_per_site=15, 0 = all scans] [line_mm=120]
 #   line_mm = how far below the top of the head counts as "low" (neck) in the brightness check
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
-#SBATCH -t 01:00:00
+#SBATCH -t 04:00:00
 #SBATCH -J check-head-mask
 #SBATCH -o ../../logs/check-head-mask-slurm-%j.out
 #SBATCH -e ../../logs/check-head-mask-slurm-%j.err
