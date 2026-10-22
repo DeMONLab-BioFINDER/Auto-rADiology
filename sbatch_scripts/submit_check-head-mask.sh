@@ -11,6 +11,9 @@
 #   sbatch submit_check-head-mask.sh <ID1,ID2,...>
 #     a list with commas = only these scans (IDs from the edge_*.png names), an edge png for each,
 #     in head_mask_check/ids. For a single scan add a comma (1234,) - a plain number is scans_per_site.
+#   sbatch submit_check-head-mask.sh <Site1,Site2,...>
+#     e.g. Geneva,A4,OASIS,AVID: every scan of these sites, an edge png for every scan touching the
+#     box (not just 3 per site), in head_mask_check/sites.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -31,7 +34,10 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
-if [[ "$1" == *,* ]]; then
+if [[ "$1" == *[A-Za-z]* ]]; then
+  python scripts/check_head_mask.py --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
+    --cache_type tau_raw --pkl_type tau_raw_backup --sites "$1"
+elif [[ "$1" == *,* ]]; then
   python scripts/check_head_mask.py --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
     --cache_type tau_raw --pkl_type tau_raw_backup --ids "$1"
 else

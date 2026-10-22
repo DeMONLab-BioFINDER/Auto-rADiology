@@ -237,6 +237,10 @@ def main():
     p.add_argument("--ids", default=None,
                    help="Comma-separated IDs (as in the edge_*.png names): check only these scans, and draw an "
                         "edge png for each one even if it no longer touches the box. Output goes to <out_dir>/ids.")
+    p.add_argument("--sites", default=None,
+                   help="Comma-separated sites (as in demo.csv; AVID = the scans not in demo.csv): check every scan "
+                        "of these sites only, with an edge png for every scan that touches the box (not just 3 per "
+                        "site). Output goes to <out_dir>/sites.")
     p.add_argument("--line_mm", type=float, default=120,
                    help="Height below the top of the head counted as 'low' (neck) for the brightness check")
     p.add_argument("--out_dir", default=str(repo.parent / "results" / "head_mask_check"))
@@ -245,6 +249,10 @@ def main():
     only_ids = {int(t) for t in args.ids.split(",") if t.strip()} if args.ids else None
     if only_ids:
         args.out_dir, args.max_per_site = str(Path(args.out_dir) / "ids"), 0
+    only_sites = ({"not in demo.csv" if t.strip().upper() == "AVID" else t.strip() for t in args.sites.split(",") if t.strip()}
+                  if args.sites else None)
+    if only_sites:
+        args.out_dir, args.max_per_site = str(Path(args.out_dir) / "sites"), 0
     input_path, out_dir = Path(args.input_path), Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     demo = load_sites(input_path / "demo.csv")
@@ -279,6 +287,8 @@ def main():
             sid = batch_id * batch_len + idx
             site = site_of.get(sid, "not in demo.csv")
             if only_ids is not None and sid not in only_ids:
+                continue
+            if only_sites is not None and site not in only_sites:
                 continue
             if args.max_per_site and n_site.get(site, 0) >= args.max_per_site:
                 continue
@@ -340,7 +350,8 @@ def main():
                 cases.append((row["iso2_white_low_share"], sid, v_pre, row["iso2_scale_top_vs_upper_head"], white_from))
                 cases.sort(key=lambda c: -c[0])
                 del cases[3:]
-            if only_ids is not None or (row["iso2_touches_edge"] and sum(e[0] == site for e in edge_examples) < 3):
+            if only_ids is not None or (row["iso2_touches_edge"] and (only_sites is not None
+                                                                        or sum(e[0] == site for e in edge_examples) < 3)):
                 note = (f"{row['iso2_touch_sides']} touch, highest {row['iso2_touch_mm_below_top']:.0f} mm below "
                         f"the top of the head" if row["iso2_touches_edge"] else "no touch")
                 edge_examples.append((site, sid, v_new, note))
