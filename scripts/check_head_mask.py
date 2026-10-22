@@ -32,7 +32,8 @@ Per site, for a sample of scans:
      changes nothing; 1.20 = the brain is shown 20 % dimmer because of it). It only measures.
      bright_*.png: sagittal and coronal view of the whole iso2 head (before any cut) with what turns
      white in magenta, for the 3 scans per site where most of it is low.
-and one png per site: middle slices of the old input (cached, else replayed) and the iso2 replay,
+and one png per site: slices of the old input (cached, else replayed) and the iso2 replay through
+the same physical point (the centre of the head, matched via the affines),
 plus, for up to 3 scans per site that touch the box edge (edge_*.png) or are cut at the bottom
 (neckcut_*.png): coronal and sagittal view of the whole iso2 head with the box edges marked.
 
@@ -186,9 +187,25 @@ def bright_png(v, out_png, title, line_mm, box_head_mm, white_from, vox_mm=2.0):
     plt.close(fig)
 
 
-def mid_slices(v):
-    """Sagittal, coronal and axial middle slices of a (x, y, z) RAS volume, upright."""
-    return [v[v.shape[0] // 2].T, v[:, v.shape[1] // 2].T, v[:, :, v.shape[2] // 2].T]
+def mid_slices(v, idx=None):
+    """Sagittal, coronal and axial slices of a (x, y, z) RAS volume through voxel idx (default: the
+    middle of the box), upright."""
+    i, j, k = (np.array(v.shape) // 2) if idx is None else idx
+    return [v[i].T, v[:, j].T, v[:, :, k].T]
+
+
+def matched_slices(v_new, a_new, a_old, old_shape):
+    """Voxel indices in the new and the old volume of the same physical point (mm, from the
+    affines): the centre of the head in the new volume. So both rows of the example png cut
+    through the same anatomy, even though the boxes have different middles."""
+    m = v_new > 0
+    if a_new is None or a_old is None or not m.any():
+        return None, None
+    c_new = np.argwhere(m).mean(axis=0)
+    world = a_new @ np.append(c_new, 1.0)
+    c_old = (np.linalg.inv(a_old) @ world)[:3]
+    clip = lambda c, shape: tuple(int(np.clip(round(x), 0, n - 1)) for x, n in zip(c, shape))
+    return clip(c_new, v_new.shape), clip(c_old, old_shape)
 
 
 def main():
@@ -287,7 +304,8 @@ def main():
                                             if v_cache.shape == v_old.shape else np.nan)
             rows.append(row)
             if site not in examples:
-                examples[site] = (sid, v_cache, v_old, v_new)
+                aff = lambda x: np.asarray(x.affine, dtype=float) if "affine" in meta else None
+                examples[site] = (sid, v_cache, v_old, v_new, aff(x_old), aff(x_new))
             if not np.isnan(row["iso2_white_low_share"]):
                 cases = bright_cases.setdefault(site, [])
                 cases.append((row["iso2_white_low_share"], sid, v_pre, row["iso2_scale_top_vs_upper_head"], white_from))
@@ -344,8 +362,8 @@ def main():
         print(by_site[["n", "old_white_low_share", "iso2_white_low_share", "iso2_scale_top_vs_upper_head",
                        "iso2_scale_top_vs_upper_head_max", "n_iso2_bottom_cut", "iso2_head_mm_z"]].round(3).to_string())
 
-    pngs = [(site, sid, vc, vo, vn, f"example_{str(site).replace(' ', '_')}.png")
-            for site, (sid, vc, vo, vn) in examples.items()]
+    pngs = [(site, sid, vc, vo, vn, a_old, a_new, f"example_{str(site).replace(' ', '_')}.png")
+            for site, (sid, vc, vo, vn, a_old, a_new) in examples.items()]
     for site, sid, v_pre, note in fov_examples:
         silhouette_png(v_pre, out_dir / f"fovcut_{str(site).replace(' ', '_')}_ID{sid}.png",
                        f"{site}, ID {sid}: {note}", edge_name="scan", mark_bottom=True, tol=2)
@@ -359,17 +377,19 @@ def main():
                        f"{site}, ID {sid}: {share:.0%} of what turns white lies more than {args.line_mm:.0f} mm "
                        f"below the top\nscale top = {ratio:.2f}x what it would be if the head below had typical brightness",
                        args.line_mm, box_head_mm=188, white_from=white_from)
-    for site, sid, v_cache, v_old, v_new, png_name in pngs:
-        # cached input == old recipe replayed (cache_vs_replay_r = 1), so show only one of them
-        vols = [("current transform", v_cache if v_cache is not None else v_old),
-                ("new transform", v_new)]
+    for site, sid, v_cache, v_old, v_new, a_old, a_new, png_name in pngs:
+        # cached input == old recipe replayed (cache_vs_replay_r = 1, same grid), so show only one of them
+        idx_new, idx_old = matched_slices(v_new, a_new, a_old, v_old.shape)
+        vols = [("current transform", v_cache if v_cache is not None else v_old, idx_old),
+                ("new transform", v_new, idx_new)]
         fig, axes = plt.subplots(len(vols), 3, figsize=(9, 3 * len(vols)), squeeze=False)
-        for r, (title, v) in enumerate(vols):
-            for c, (sl, view) in enumerate(zip(mid_slices(v), ["sagittal", "coronal", "axial"])):
+        for r, (title, v, idx) in enumerate(vols):
+            for c, (sl, view) in enumerate(zip(mid_slices(v, idx), ["sagittal", "coronal", "axial"])):
                 axes[r, c].imshow(sl, cmap="gray", origin="lower")
                 axes[r, c].set_title(f"{title}: {view}", fontsize=8)
                 axes[r, c].axis("off")
-        fig.suptitle(f"{site}, ID {sid} (model voxels)", fontsize=9)
+        where = "through the same point (centre of the head)" if idx_new is not None else "middle of each box"
+        fig.suptitle(f"{site}, ID {sid} (model voxels), slices {where}", fontsize=9)
         fig.tight_layout()
         fig.savefig(out_dir / png_name, dpi=110)
         plt.close(fig)
