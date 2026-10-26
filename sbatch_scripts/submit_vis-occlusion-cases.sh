@@ -16,6 +16,8 @@
 #   sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [target] [mask_size] [overlap] [fill]
 # Defaults: target prob, mask 4, overlap 0.5, fill gaussian.
 #   e.g. sbatch submit_vis-occlusion-cases.sh <folder> 2021,201,1922 logit
+# Input images: set DATA_TYPE to the data type the model was trained on (default tau_raw), e.g.
+#   DATA_TYPE=tau_T1MNI_pts sbatch submit_vis-occlusion-cases.sh <folder> <IDs> logit
 # Time: ~6 min per scan.
 
 #SBATCH -A berzelius-2026-231
@@ -47,6 +49,7 @@ TARGET="${3:-prob}"
 MASK_SIZE="${4:-4}"
 OVERLAP="${5:-0.5}"
 FILL="${6:-gaussian}"
+DATA_TYPE="${DATA_TYPE:-tau_raw}"
 
 # Relative folder names resolve under <proj_path>/results, same as src/params.py does.
 VIS_DIR=$(python -c "
@@ -55,7 +58,7 @@ from src.params import parse_arguments
 sys.argv = ['x', '--best_model_folder', '$BEST_MODEL_FOLDER']
 print(os.path.join(parse_arguments().output_path, 'visualization'))
 " | tail -n 1)
-echo "Subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
+echo "Data type $DATA_TYPE, subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
@@ -65,7 +68,7 @@ python ./run_vis.py \
   --dataset Gothenburg \
   --best_model_folder "$BEST_MODEL_FOLDER" \
   --model CNN3D \
-  --data_type tau_raw \
+  --data_type "$DATA_TYPE" \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
   --targets visual_read \
   --cls_loss softmax \
