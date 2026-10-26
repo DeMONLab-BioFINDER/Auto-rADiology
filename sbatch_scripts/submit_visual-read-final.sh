@@ -14,6 +14,11 @@
 # naming) to the new median before submitting this. --cls_loss softmax pinned
 # explicitly so the head shape matches whatever cv5 run you take the epoch
 # count from.
+#
+# Usage (from sbatch_scripts, Hopper or Ampere login node):
+#   sbatch submit_visual-read-final.sh [data_type] [epochs]     defaults tau_raw, 44
+#   e.g. sbatch submit_visual-read-final.sh tau_T1MNI_pts 52
+# epochs = that data type's own "Median best_epoch across folds" from submit_visual-read-cv5.sh.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -23,7 +28,7 @@
 #SBATCH -e ../../logs/visual-read-final-slurm-%j.err
 
 # Load environment
-module load Miniforge3/24.7.1-2-hpc1-bdist
+module load Miniforge3/25.3.1-0 2>/dev/null || module load Miniforge3/24.7.1-2-hpc1-bdist  # Hopper name, else Ampere
 mamba activate ai-pet
 
 # Determine project root based on current directory
@@ -35,21 +40,24 @@ elif [[ ! -d "sbatch_scripts" ]]; then
 fi
 
 DATASET=Gothenburg
+DATA_TYPE="${1:-tau_raw}"
+EPOCHS="${2:-44}"
+echo "data_type: $DATA_TYPE, epochs: $EPOCHS"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
   --no-tune \
   --dataset "$DATASET" \
-  --data_type tau_raw \
+  --data_type "$DATA_TYPE" \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
   --targets visual_read \
   --stratifycvby site,visual_read \
   --train_size 0.80 \
   --val_size 0.00 \
   --test_size 0.20 \
-  --epochs 44 \
+  --epochs "$EPOCHS" \
   --cls_loss softmax \
-  --model_name_extra "visual-read-final-44" \
+  --model_name_extra "visual-read-final-${EPOCHS}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
