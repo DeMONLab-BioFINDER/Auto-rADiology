@@ -12,7 +12,9 @@
 # submit_visual-read-final*.sh run used.
 
 # Usage:
-#   sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name>
+#   sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name> [data_type]   default tau_raw
+#   e.g. sbatch submit_val_AVID_unseen_visual-read.sh <2mm final run folder> tau_raw_2mm_pts
+# data_type must be the one the final model was trained on.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -22,7 +24,7 @@
 #SBATCH -e ../../logs/AVID-unseen-visual-read-slurm-%j.err
 
 # Load environment
-module load Miniforge3/24.7.1-2-hpc1-bdist
+module load Miniforge3/25.3.1-0 2>/dev/null || module load Miniforge3/24.7.1-2-hpc1-bdist  # Hopper name, else Ampere
 mamba activate ai-pet
 
 # Determine project root based on current directory
@@ -35,9 +37,11 @@ fi
 
 BEST_MODEL_FOLDER="$1"
 if [[ -z "$BEST_MODEL_FOLDER" ]]; then
-  echo "Usage: sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name>"
+  echo "Usage: sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name> [data_type]"
   exit 1
 fi
+DATA_TYPE="${2:-tau_raw}"
+echo "data_type: $DATA_TYPE"
 
 DATASET=AVID_unseen
 
@@ -46,7 +50,7 @@ python "./run_val.py" \
   --dataset "$DATASET" \
   --best_model_folder "$BEST_MODEL_FOLDER" \
   --model CNN3D \
-  --data_type tau_raw \
+  --data_type "$DATA_TYPE" \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
   --targets visual_read \
   --cls_loss softmax \
