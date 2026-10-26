@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Do the subgroup differences in the visual-read model's mistakes survive at the same tau level?
+"""Do the subgroup differences in where the model disagrees with the visual read survive at the same tau level?
 
-The subgroup analysis found more false positives in Aβ+, APOE ε4 carriers and older people, and
-more missed positives in Aβ− and CU people. Two explanations predict that:
+The subgroup analysis found more Model + / Visual read − scans in Aβ+, APOE ε4 carriers and older
+people, and more Model − / Visual read + scans in Aβ− and CU people. Two explanations predict that:
     Harder cases  - e.g. read-negative Aβ+ scans have more sub-threshold tau, so they sit closer to
                     the boundary and any reader / model gets more of them wrong
     Something else in the image - the model reacts to something in those groups' scans beyond tau level
@@ -187,7 +187,7 @@ def make_curves_figure(main_fits: list, out_path: Path):
         ax.tick_params(labelsize=TICK_SIZE - 3)
         ax.grid(alpha=0.28)
         ax.legend(loc="center right", fontsize=LEGEND_SIZE - 2, frameon=True, framealpha=0.9)
-    fig.suptitle("Model mistakes at the same Meta-temporal SUVR", fontsize=TITLE_SIZE)
+    fig.suptitle("Model disagreeing with the visual read, at the same Meta-temporal SUVR", fontsize=TITLE_SIZE)
     finalize_figure(fig, rect=(0, 0, 1, 1.0))
     save_figure(fig, out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -225,7 +225,7 @@ def make_forest_figure(table: pd.DataFrame, out_path: Path):
         ax.set_ylim(-0.7, len(sub) - 0.3)
         ax.set_title(f"Visual read {'−' if metric == 'specificity' else '+'}: {var}{' per 10 years' if var == 'Age' else ''}",
                      fontsize=TITLE_SIZE - 5)
-        ax.set_xlabel("Odds ratio of a model mistake (log scale)", fontsize=LABEL_SIZE - 5)
+        ax.set_xlabel("Odds ratio of the model disagreeing with the read (log scale)", fontsize=LABEL_SIZE - 5)
         ax.tick_params(axis="x", labelsize=TICK_SIZE - 3)
         ax.grid(axis="x", alpha=0.28)
     fig.suptitle("Does the answer depend on how tau level and the other variables are accounted for?", fontsize=TITLE_SIZE - 1)
@@ -271,7 +271,7 @@ def main():
         make_curves_figure(main_fits, out_dir / "visual_read_errors_at_same_suvr.png")
     make_forest_figure(table, out_dir / "visual_read_errors_robustness.png")
 
-    print("\n[errors at the same SUVR] odds ratio of a model mistake (main row FDR-corrected across the 5 checks)")
+    print("\n[errors at the same SUVR] odds ratio of the model disagreeing with the visual read (main row FDR-corrected across the 5 checks)")
     for (metric, var), sub in table.groupby(["metric", "variable"], sort=False):
         print(f"  {metric} {var}{' (per 10 years)' if var == 'Age' else ''}")
         for _, r in sub.iterrows():
@@ -282,7 +282,7 @@ def main():
                             for k in ("median_meta_group0_group1", "median_mesial_group0_group1") if isinstance(r.get(k), str))
             fdr = f" (FDR {r['p_fdr_main']:.3g})" if r["adjusted_for"] == MAIN else ""
             print(f"      {r['adjusted_for']:<42} OR {r['or']:.2f} [{r['or_lo']:.2f}-{r['or_hi']:.2f}], p = {r['p']:.3g}{fdr}, "
-                  f"n={r['n']} ({r['n_mistakes']} mistakes){extra}")
+                  f"n={r['n']} ({r['n_mistakes']} disagree){extra}")
     print(f"\n[done] saved to {out_dir}")
 
 
