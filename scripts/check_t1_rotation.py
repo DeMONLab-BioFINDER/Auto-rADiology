@@ -76,8 +76,8 @@ def middle_slices(v):
 def turn_png(img, meta, path, title):
     """As stored (own voxel axes, like our recipes) vs resampled onto the header's world axes."""
     x = EnsureChannelFirst(channel_dim="no_channel")(MetaTensor(torch.as_tensor(img, dtype=torch.float32), meta=meta))
-    stored = Orientation(axcodes="RAS", labels=None)(Spacing(pixdim=(2.0,) * 3, diagonal=False)(x))
-    turned = Orientation(axcodes="RAS", labels=None)(Spacing(pixdim=(2.0,) * 3, diagonal=True)(x))
+    stored = Orientation(axcodes="RAS", labels=None)(Spacing(pixdim=(2.0,) * 3, diagonal=False, padding_mode="zeros")(x))
+    turned = Orientation(axcodes="RAS", labels=None)(Spacing(pixdim=(2.0,) * 3, diagonal=True, padding_mode="zeros")(x))  # zeros: no edge smear where the turned box leaves the scan
     fig, ax = plt.subplots(2, 3, figsize=(9, 6))
     for r, (vol, name) in enumerate([(stored, "as stored (current recipes)"), (turned, "turned into header frame")]):
         v = vol[0].numpy()
