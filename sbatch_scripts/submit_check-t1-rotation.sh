@@ -6,7 +6,8 @@
 # the model almost the same input as tau_raw_2mm_pts and isn't worth doing.
 # See scripts/check_t1_rotation.py. Reads only; a GPU is requested only because Berzelius jobs need one.
 #
-# Output: <proj_path>/results/t1_rotation/ (rotation_*.csv, rotation_*_by_site.csv, turn_*.png)
+# Output: <proj_path>/results/t1_rotation/ (rotation_*.csv, *_by_site.csv, coreg_raw_vs_t1.csv, turn_*.png;
+# the pictures show stored vs turned vs the same person in MNI, all sliced through the brain centre)
 #
 # Usage:
 #   sbatch submit_check-t1-rotation.sh
@@ -32,4 +33,5 @@ fi
 SHARED=/proj/berzelius-2024-156/dataset/tau-PET
 python scripts/check_t1_rotation.py \
   --input_path /proj/berzelius-2024-156/users/x_nadpi/data \
-  --data_types tau_raw_backup,$SHARED/tau_T1
+  --data_types tau_raw_backup,$SHARED/tau_T1 \
+  --mni_dir $SHARED/tau_T1MNI
