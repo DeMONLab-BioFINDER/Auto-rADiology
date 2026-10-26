@@ -19,7 +19,20 @@ Logistic regression; odds ratio with 95% Wald CI, p from a likelihood-ratio test
 same scans. With 31 false positives / 11 missed positives only one adjustment variable is affordable,
 so nothing else is added. These are follow-up tests, FDR-corrected as their own family.
 
+Robustness (does the answer depend on how "same tau level" is defined?), per check:
+    Meta-temporal, Firth     - Firth's penalised regression, less biased with this few mistakes
+    Meta-temporal, curved    - SUVR + SUVR², in case the risk does not rise in a straight line on the log-odds scale
+    Mesial temporal          - (false positives only) is the group effect medial-temporal signal (early tau or
+                               off-target, which the reading rules ignore)? If the odds ratio shrinks when
+                               mesial SUVR is accounted for, the effect goes through medial-temporal signal
+    Meta + mesial temporal   - both together
+    Meta-temporal + the other two of amyloid / APOE / age, Firth
+                             - (false positives only) does each survive the others, e.g. is APOE just amyloid?
+                               Uses only scans with all three known, so n is smaller (APOE missing at NACC/Geneva)
+These are sensitivity analyses: reported, not tested as a family.
+
 Outputs (to <run_dir>/figures):
+    visual_read_errors_robustness.csv/.png - every variant: odds ratio [95% CI], p, n; forest plot per check
     visual_read_errors_at_same_suvr.csv  - per check: n, mistakes, median SUVR per group, odds ratio
                                            before / after SUVR, p-values
     visual_read_errors_at_same_suvr.png  - per check: probability of a mistake vs Meta-temporal SUVR,
@@ -36,6 +49,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -78,32 +92,56 @@ def parse_args():
     return parser.parse_args()
 
 
-def fit_logistic(X: np.ndarray, y: np.ndarray) -> dict:
-    """Plain logistic regression by Newton-Raphson (X without intercept). Returns coefficients and
+def fit_logistic(X: np.ndarray, y: np.ndarray, firth: bool = False, fix_first: bool = False) -> dict:
+    """Logistic regression by Newton-Raphson (X without intercept). Returns coefficients and
     covariance on the original scale (intercept first), log-likelihood, and whether it converged
-    without separation (a coefficient running off to infinity)."""
+    without separation (a coefficient running off to infinity).
+
+    firth=True: Firth's penalised likelihood, which removes most of the small-sample bias of
+    ordinary logistic regression (odds ratios pulled away from 1 when there are few events) and
+    stays finite under separation. The log-likelihood returned is then the penalised one, so
+    likelihood-ratio tests compare penalised fits, as is standard for Firth regression.
+
+    fix_first=True: the first column's coefficient is held at 0 (the null model for testing it),
+    while the penalty still uses the full design - the correct Firth likelihood-ratio test
+    (refitting a smaller design would change the penalty and give wrong p-values)."""
     m, sd = X.mean(axis=0), X.std(axis=0)
     sd[sd == 0] = 1
     Z = np.column_stack([np.ones(len(y)), (X - m) / sd])
     b = np.zeros(Z.shape[1])
     converged = False
-    for _ in range(100):
+    for _ in range(200):
         p = 1 / (1 + np.exp(-np.clip(Z @ b, -30, 30)))
-        H = Z.T @ (Z * (p * (1 - p))[:, None])
-        step = np.linalg.solve(H + 1e-10 * np.eye(len(b)), Z.T @ (y - p))
+        w = p * (1 - p)
+        H = Z.T @ (Z * w[:, None]) + 1e-10 * np.eye(len(b))
+        resid = y - p
+        if firth:
+            hat = w * np.einsum("ij,jk,ik->i", Z, np.linalg.inv(H), Z)
+            resid = resid + hat * (0.5 - p)
+        score = Z.T @ resid
+        free = np.ones(len(b), dtype=bool)
+        if fix_first:
+            free[1] = False
+        step = np.zeros(len(b))
+        step[free] = np.linalg.solve(H[np.ix_(free, free)], score[free])
+        if firth:
+            step = np.clip(step, -5, 5)
         b += step
         if np.abs(step).max() < 1e-9:
             converged = True
             break
     p = np.clip(1 / (1 + np.exp(-np.clip(Z @ b, -30, 30))), 1e-12, 1 - 1e-12)
     loglik = float((y * np.log(p) + (1 - y) * np.log(1 - p)).sum())
-    cov_z = np.linalg.inv(Z.T @ (Z * (p * (1 - p))[:, None]))
+    info = Z.T @ (Z * (p * (1 - p))[:, None])
+    if firth:
+        loglik += 0.5 * float(np.linalg.slogdet(info)[1])
+    cov_z = np.linalg.inv(info)
     # back to the original scale: beta_j = b_j / sd_j, intercept = b_0 - sum(b_j m_j / sd_j)
     T = np.eye(len(b))
     T[0, 1:] = -m / sd
     T[1:, 1:] = np.diag(1 / sd)
     beta, cov = T @ b, T @ cov_z @ T.T
-    ok = converged and np.abs(b[1:]).max(initial=0) < 15
+    ok = converged and (firth or np.abs(b[1:]).max(initial=0) < 15)
     return {"beta": beta, "cov": cov, "loglik": loglik, "ok": ok}
 
 
@@ -162,6 +200,103 @@ def run_check(df: pd.DataFrame, metric: str, name: str, kind: str, lab0: str, la
         out["note"] = "unstable fit (a group with almost no mistakes) - treat with caution"
     out["_fit"], out["_data"] = m_xs, (x, s, wrong)
     return out
+
+
+# ------------------------------
+# Robustness: does the main answer depend on how "same tau level" is defined?
+# ------------------------------
+def robustness_variants(metric: str, kind: str) -> list[tuple[str, list[str], bool]]:
+    """(label, adjustment columns, Firth?) for one check. Main analysis first.
+    Read-negative checks (~30 mistakes) can afford the extra adjustments; read-positive checks
+    (~11 mistakes) only get the ones that add no or one parameter."""
+    variants = [("Meta-temporal (main)", ["meta"], False),
+                ("Meta-temporal, Firth", ["meta"], True),
+                ("Meta-temporal, curved", ["meta", "meta_sq"], False)]
+    if metric == "specificity":
+        variants += [("Mesial temporal", ["mesial"], False),
+                     ("Meta + mesial temporal", ["meta", "mesial"], False)]
+        others = [o for o in ("amy", "apoe", "age") if o != kind]
+        names = {"amy": "amyloid", "apoe": "APOE", "age": "age"}
+        variants.append((f"Meta-temporal + {' + '.join(names[o] for o in others)}, Firth", ["meta", *others], True))
+    return variants
+
+
+def run_robustness(df: pd.DataFrame, metric: str, name: str, kind: str, lab0: str, lab1: str) -> list[dict]:
+    read = METRIC_READ[metric]
+    sub = df[df["y"] == read].copy()
+    sub["_x"] = group_variable(sub, kind)
+    sub["meta"] = sub["_suvr"]
+    sub["meta_sq"] = (sub["_suvr"] - sub["_suvr"].mean()) ** 2
+    sub["mesial"] = pd.to_numeric(sub.get("MesialTemporal"), errors="coerce") if "MesialTemporal" in sub.columns else np.nan
+    for k in ("amy", "apoe", "age"):
+        sub[k] = group_variable(sub, k)
+    unit = AGE_UNIT if kind == "age" else 1.0
+    rows = []
+    for label, adjust, firth in [("None", [], False)] + robustness_variants(metric, kind):
+        d = sub.dropna(subset=["_x", *adjust])
+        wrong = (d["pred"] != d["y"]).to_numpy(float)
+        row = {"metric": metric, "variable": name, "adjusted_for": label, "firth": firth,
+               "n": len(d), "n_mistakes": int(wrong.sum())}
+        if wrong.sum() < 2 or d["_x"].nunique() < 2:
+            rows.append({**row, "note": "too few mistakes / one group only"})
+            continue
+        A = d[adjust].to_numpy(float) if adjust else np.zeros((len(d), 0))
+        design = np.column_stack([d["_x"].to_numpy(float), A])
+        full = fit_logistic(design, wrong, firth)
+        reduced = fit_logistic(design, wrong, firth, fix_first=True)
+        row["or"], row["or_lo"], row["or_hi"] = odds_ratio(full, 1, unit)
+        row["p"] = lr_test(full, reduced)
+        if not full["ok"]:
+            row["note"] = "unstable fit"
+        if "mesial" in adjust and not np.isnan(d["mesial"]).all():
+            g = d["_x"] >= d["_x"].median() if kind == "age" else d["_x"] == 1
+            row["median_mesial_group0_group1"] = f"{d.loc[~g, 'mesial'].median():.2f} / {d.loc[g, 'mesial'].median():.2f}"
+        rows.append(row)
+    return rows
+
+
+def make_forest_figure(rob: pd.DataFrame, out_path: Path):
+    checks = list(dict.fromkeys(zip(rob["metric"], rob["variable"])))
+    ncols = 2
+    nrows = int(np.ceil(len(checks) / ncols))
+    max_rows = rob.groupby(["metric", "variable"]).size().max()
+    fig, axes = plt.subplots(nrows, ncols, figsize=(7.2 * ncols, 0.42 * max_rows * nrows + 1.6 * nrows), squeeze=False)
+    axes = axes.ravel()
+    for ax in axes[len(checks):]:
+        ax.axis("off")
+    for ax, (metric, var) in zip(axes, checks):
+        sub = rob[(rob["metric"] == metric) & (rob["variable"] == var)].reset_index(drop=True)
+        y = np.arange(len(sub))[::-1]
+        ax.axvline(1, color="#888888", linestyle="--", linewidth=1)
+        for yi, (_, r) in zip(y, sub.iterrows()):
+            if not np.isfinite(r.get("or", np.nan)):
+                continue
+            color = "#999999" if r["adjusted_for"] == "None" else (CUSTOM_PALETTE[1] if "(main)" in r["adjusted_for"] else CUSTOM_PALETTE[0])
+            ax.hlines(yi, r["or_lo"], r["or_hi"], color=color, linewidth=2.5)
+            ax.scatter([r["or"]], [yi], s=55, color=color, zorder=3, edgecolor="white", linewidth=0.8,
+                       marker="D" if r["firth"] else "o")
+            ax.annotate(f"{r['or']:.2f}", (r["or"], yi), textcoords="offset points", xytext=(0, 6), ha="center",
+                        fontsize=TICK_SIZE - 4)
+        ax.set_xscale("log")
+        lo_x, hi_x = ax.get_xlim()
+        ticks = [t for t in (0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50) if lo_x <= t <= hi_x]
+        ax.xaxis.set_major_locator(FixedLocator(ticks))
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.xaxis.set_minor_locator(NullLocator())
+        ax.set_yticks(y)
+        ax.set_yticklabels([f"{a} (n={n})" for a, n in zip(sub["adjusted_for"], sub["n"])], fontsize=TICK_SIZE - 4)
+        ax.set_ylim(-0.7, len(sub) - 0.3)
+        read = "−" if metric == "specificity" else "+"
+        unit = " per 10 years" if var == "Age" else ""
+        ax.set_title(f"Visual read {read}: {var}{unit}", fontsize=TITLE_SIZE - 5)
+        ax.set_xlabel("Odds ratio of a model mistake (log scale)", fontsize=LABEL_SIZE - 5)
+        ax.tick_params(axis="x", labelsize=TICK_SIZE - 3)
+        ax.grid(axis="x", alpha=0.28)
+    fig.suptitle("Does the answer depend on how the tau level is accounted for?", fontsize=TITLE_SIZE - 1)
+    finalize_figure(fig, rect=(0, 0, 1, 1.0))
+    save_figure(fig, out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[save] {out_path}")
 
 
 def make_figure(results: list, out_path: Path):
@@ -240,6 +375,9 @@ def main():
     table = pd.DataFrame([{k: v for k, v in r.items() if not k.startswith("_")} for r in results])
     table.round(4).to_csv(out_dir / "visual_read_errors_at_same_suvr.csv", index=False)
     make_figure(results, out_dir / "visual_read_errors_at_same_suvr.png")
+    rob = pd.DataFrame([row for c in CHECKS for row in run_robustness(df, *c)])
+    rob.round(4).to_csv(out_dir / "visual_read_errors_robustness.csv", index=False)
+    make_forest_figure(rob, out_dir / "visual_read_errors_robustness.png")
 
     print("\n[errors at the same SUVR] odds ratio of a mistake, before -> after accounting for Meta-temporal SUVR")
     for r in results:
@@ -253,6 +391,17 @@ def main():
         print(f"      before: OR {r['or_unadjusted']:.2f} [{r['or_unadj_lo']:.2f}-{r['or_unadj_hi']:.2f}], p = {r['p_unadjusted']:.3g}")
         print(f"      same SUVR: OR {r['or_same_suvr']:.2f} [{r['or_same_suvr_lo']:.2f}-{r['or_same_suvr_hi']:.2f}], "
               f"p = {r['p_same_suvr']:.3g} (FDR {r['p_same_suvr_fdr']:.3g})" + (f"   [{r['note']}]" if r.get("note") else ""))
+    print("\n[robustness] odds ratio of a mistake under different ways of accounting for tau level and the other variables")
+    for (metric, var), sub in rob.groupby(["metric", "variable"], sort=False):
+        print(f"  {metric} {var}{' (per 10 years)' if var == 'Age' else ''}")
+        for _, r in sub.iterrows():
+            if not np.isfinite(r.get("or", np.nan)):
+                print(f"      {r['adjusted_for']:<48} {r.get('note', '')}")
+                continue
+            extra = f"   median mesial {r['median_mesial_group0_group1']}" if isinstance(r.get("median_mesial_group0_group1"), str) else ""
+            note = f"   [{r['note']}]" if isinstance(r.get("note"), str) else ""
+            print(f"      {r['adjusted_for']:<48} OR {r['or']:.2f} [{r['or_lo']:.2f}-{r['or_hi']:.2f}], p = {r['p']:.3g}, "
+                  f"n={r['n']} ({r['n_mistakes']} mistakes){extra}{note}")
     print(f"\n[done] saved to {out_dir}")
 
 
