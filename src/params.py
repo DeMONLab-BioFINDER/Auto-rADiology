@@ -53,7 +53,7 @@ def parse_arguments():
                               "column in the same run - keep imbalance-handling experiments isolated to one variable "
                               "at a time. No-ops with a warning if the named column isn't in the data.")
     parser.add_argument("--decision_threshold", type=float, default=0.5,
-                         help="Probability cutoff used to turn visual_read predictions into 0/1 for final test-set evaluation/plots. Default 0.5. Set this from a prior CV run's printed 'Median best_thr across folds' for a class-imbalance-aware cutoff chosen from validation data only - never tune it against this run's own test set.")
+                         help="Probability cutoff for visual_read predictions (prob > threshold -> positive). Kept at 0.5: on CV out-of-fold predictions 0.5 already gives ~98%% specificity (results_plotting/compare_thresholds_visual_read.py).")
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")
     parser.add_argument("--smoothl1_beta", type=float, default=0.2, help="Regression SmoothL1 beta in target units.")
     parser.add_argument("--num_workers", type=int, default=8) # 8 on the cluster, 2 on mac

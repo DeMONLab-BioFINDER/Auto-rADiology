@@ -121,8 +121,6 @@ def main(args):
     print("================================================================================")
     print(f"AUC={ens_metrics['auc']:.3f}  ACC={ens_metrics['acc']:.3f}  "
           f"eval_metric={ens_metrics['eval_metric']:.3f}")
-    print(f"(diagnostic, computed at this test set's own optimal threshold, not deployed): "
-          f"acc_opt={ens_metrics.get('acc_opt', float('nan')):.3f}  best_thr={ens_metrics.get('best_thr', float('nan')):.3f}")
 
     out_dir = os.path.join(args.best_model_folder, "evaluation", "kfold_ensemble")
     os.makedirs(out_dir, exist_ok=True)

@@ -7,7 +7,7 @@ Rules (each threshold is chosen on the CV pool only, never on test/AVID):
     balanced      - Youden (max sensitivity + specificity - 1) on the out-of-fold predictions
     spec >= X     - lowest threshold whose out-of-fold specificity is at least X, i.e. the most
                     sensitive threshold that still meets the specificity target
-Prediction = prob >= threshold (same as apply_decision_threshold.py).
+Prediction = prob >= threshold.
 
 The out-of-fold predictions come from the 5 fold models, while test/AVID are scored by the
 final model, so the specificity reached on test/AVID is only approximately the target. That

@@ -51,7 +51,6 @@ def kfold_cv(df_clean, stratify_labels, args):
             **{k: m.get(k) for k in metric_keys},
             "eval_metric": m.get("eval_metric"),
             "best_epoch": m.get("best_epoch"),
-            "best_thr": m.get("best_thr"),
         }, mode='row')
 
         # Out-of-fold predictions: this fold's per-subject predictions, tagged by fold,
@@ -75,15 +74,6 @@ def kfold_cv(df_clean, stratify_labels, args):
             print(f"Median best_epoch across folds: {median_epoch}")
         else:
             print(f"\nDone. Metrics saved to: {metrics_path} (no best_epoch column present)")
-        thrs = df_metrics['best_thr'].dropna() if 'best_thr' in df_metrics.columns else pd.Series(dtype=float)
-        if not thrs.empty:
-            median_thr, p25, p75 = float(thrs.median()), float(thrs.quantile(0.25)), float(thrs.quantile(0.75))
-            print(f"Median best_thr across folds: {median_thr:.4f} "
-                  f"(spread across {len(thrs)} folds, IQR: [{p25:.4f}, {p75:.4f}])")
-            print("(pass the median to the final run as --decision_threshold to use a class-imbalance-aware "
-                  "cutoff chosen from validation folds only, instead of the default 0.5; the IQR is a "
-                  "descriptive spread across folds, not a formal confidence interval - n=5 folds is too "
-                  "small for that to mean anything)")
     except Exception:
         print(f"\nDone. Metrics saved to: {metrics_path} (failed to compute median best_epoch)")
 
@@ -396,7 +386,7 @@ def print_cv_summary(output_path):
         print(df.to_string(index=False))
         
         # Cross-fold statistics
-        metric_cols = [c for c in df.columns if c not in ["fold", "best_epoch", "best_thr"]]
+        metric_cols = [c for c in df.columns if c not in ["fold", "best_epoch", "best_thr"]]  # best_thr: older runs
         if metric_cols:
             print("\n" + "-"*80)
             print("Cross-fold statistics (mean ± std):")
@@ -415,18 +405,6 @@ def print_cv_summary(output_path):
                       f"min={best_epochs.min()}, max={best_epochs.max()}")
 
         # Median epoch for retrain is implied by the best_epoch column above.
-
-        # Best (Youden-optimal) classification threshold info, from each fold's own
-        # validation predictions - a class-imbalance-aware alternative to the default 0.5.
-        # Reported as median + IQR (a descriptive spread across folds), not a confidence
-        # interval - n=5 folds is too small for a formal CI to mean anything.
-        if "best_thr" in df.columns:
-            best_thrs = df["best_thr"].dropna()
-            if len(best_thrs) > 0:
-                p25, p75 = best_thrs.quantile(0.25), best_thrs.quantile(0.75)
-                print(f"\n  best_thr:        median={best_thrs.median():.4f}, "
-                      f"IQR=[{p25:.4f}, {p75:.4f}] (spread across {len(best_thrs)} folds)")
-                print("  (pass median as --decision_threshold to the final train/test run)")
 
         print("="*80 + "\n")
     except Exception as e:

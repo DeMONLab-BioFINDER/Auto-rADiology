@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 from typing import Any, Tuple, Optional
-from sklearn.metrics import roc_auc_score, accuracy_score, r2_score, mean_absolute_error, root_mean_squared_error, roc_curve, balanced_accuracy_score, f1_score, matthews_corrcoef
+from sklearn.metrics import roc_auc_score, accuracy_score, r2_score, mean_absolute_error, root_mean_squared_error
 
 
 def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta, class_weight=None):
@@ -194,12 +194,6 @@ def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_re
         labels = np.unique(ycls).astype(int)
         if probs.ndim == 1:
             metrics["auc"] = float(roc_auc_score(ycls, probs))
-            if labels.size == 2:
-                pos = int(labels.max())
-                # _opt suffix: these are computed at THIS eval set's own best-case (Youden)
-                # threshold, not the actual decision_threshold used for "preds"/"acc" below -
-                # diagnostic only, not the deployed operating point's performance.
-                metrics["acc_opt"], metrics["bacc_opt"], metrics["f1_opt"], metrics["mcc_opt"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
         else:
             if labels.size < 2:
                 metrics["auc"] = float("nan")
@@ -207,8 +201,6 @@ def compute_metrics(ycls, preds, probs, any_cls, y_true_reg, y_preds_reg, any_re
                 # binary AUC: take the column for the chosen positive class
                 pos = int(labels.max())
                 metrics["auc"] = roc_auc_score((ycls == pos).astype(int), probs[:, pos])
-                metrics["acc_opt"], metrics["bacc_opt"], metrics["f1_opt"], metrics["mcc_opt"], metrics["best_thr"] = opt_threshold(ycls, probs, pos)
-
             else:
                 metrics["auc"] = float(roc_auc_score(ycls, probs, multi_class="ovr", average="macro", labels=labels))
         metrics["acc"] = float(accuracy_score(ycls, preds))
@@ -291,30 +283,6 @@ def compute_total_loss(model: torch.nn.Module, x: torch.Tensor, y_cls: torch.Ten
     if not used_head: raise ValueError("No usable heads/targets: check model outputs and loss weights.")
 
     return total, (logit, cent)
-
-
-def opt_threshold(ycls, probs, pos):
-    ybin = (ycls == pos).astype(int)             # binary ground-truth 0/1
-    prob1 = probs if probs.ndim == 1 else probs[:, pos]
-    
-    # ROC-derived best threshold (Youden's J)
-    fpr, tpr, thr = roc_curve(ybin, prob1)
-    # roc_curve returns thresholds aligned with tpr/fpr; choose max(tpr - fpr)
-    j = tpr - fpr
-    best_ix = int(np.argmax(j))
-    # roc_curve's first threshold is a sentinel np.inf (not an achievable probability),
-    # included so the curve starts at (0,0); clip it to a real cutoff if it wins the argmax.
-    best_thr = float(np.clip(thr[best_ix], 0.0, 1.0))
-
-    yhat_opt = (prob1 >= best_thr).astype(int)
-
-    acc_opt = float((yhat_opt == ybin).mean())
-    bacc    = float(balanced_accuracy_score(ybin, yhat_opt))
-    f1      = float(f1_score(ybin, yhat_opt))
-    mcc     = float(matthews_corrcoef(ybin, yhat_opt))
-    best_thr= best_thr
-
-    return acc_opt, bacc, f1, mcc, best_thr
 
 
 def unpack_model_outputs(out: Any, y_reg) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
