@@ -8,6 +8,7 @@ dependencies:
   - pytorch-cuda=12.1        # works with CUDA 12.2 drivers
   - pandas
   - scikit-learn
+  - statsmodels
   - tqdm
   - optuna
   - matplotlib

@@ -13,6 +13,7 @@ import pandas as pd
 import seaborn as sns
 from scipy import stats
 from sklearn.metrics import roc_auc_score, roc_curve, average_precision_score, precision_recall_curve
+from statsmodels.stats.multitest import multipletests
 
 CUSTOM_PALETTE = [
     "#4B82BF",  # blue
@@ -52,29 +53,17 @@ def combine_dx_groups(s: pd.Series) -> pd.Series:
 
 
 def fdr_bh(p_values: pd.Series) -> np.ndarray:
-    """Benjamini-Hochberg adjusted p-values, aligned with the input (NaN in -> NaN out).
+    """Benjamini-Hochberg adjusted p-values (statsmodels), aligned with the input (NaN in -> NaN out).
 
     NaN inputs are excluded from the correction rather than carried through it: a test that could
     not be run (a subgroup with one level, an empty contingency column) must not change the
-    adjustment for the tests that did run. They also cannot simply be left in - np.argsort parks
-    NaN at the end, so the reversed np.minimum.accumulate below would start from NaN and return an
-    all-NaN array, silently voiding every adjusted p in the family.
+    adjustment for the tests that did run.
     """
     p_all = pd.to_numeric(p_values, errors="coerce").to_numpy(dtype=float)
     out = np.full(len(p_all), np.nan, dtype=float)
-    valid = np.flatnonzero(np.isfinite(p_all))
-    n = len(valid)
-    if n == 0:
-        return out
-
-    p = p_all[valid]
-    order = np.argsort(p)
-    ranked = p[order]
-    adjusted = ranked * n / np.arange(1, n + 1)
-    adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
-    adjusted = np.clip(adjusted, 0, 1)
-
-    out[valid[order]] = adjusted
+    valid = np.isfinite(p_all)
+    if valid.any():
+        out[valid] = multipletests(p_all[valid], method="fdr_bh")[1]
     return out
 
 
