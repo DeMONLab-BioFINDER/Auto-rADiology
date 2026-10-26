@@ -26,9 +26,15 @@ Robustness (does the answer depend on how "same tau level" is defined?), per che
                                off-target, which the reading rules ignore)? If the odds ratio shrinks when
                                mesial SUVR is accounted for, the effect goes through medial-temporal signal
     Meta + mesial temporal   - both together
+    Meta-temporal, complete-data subset
+                             - (false positives only) the main model refitted on the scans the next two use, so a
+                               change can be split into "different people" vs "adjustment"
     Meta-temporal + the other two of amyloid / APOE / age, Firth
                              - (false positives only) does each survive the others, e.g. is APOE just amyloid?
-                               Uses only scans with all three known, so n is smaller (APOE missing at NACC/Geneva)
+                               Uses only scans with amyloid, APOE, age and Centiloid known (APOE is missing at
+                               NACC / Geneva), so n is smaller
+    Meta-temporal + Centiloid instead of amyloid yes/no, Firth
+                             - (APOE and age only) the amount of amyloid, not just positive/negative
 These are sensitivity analyses: reported, not tested as a family.
 
 Outputs (to <run_dir>/figures):
@@ -205,19 +211,33 @@ def run_check(df: pd.DataFrame, metric: str, name: str, kind: str, lab0: str, la
 # ------------------------------
 # Robustness: does the main answer depend on how "same tau level" is defined?
 # ------------------------------
-def robustness_variants(metric: str, kind: str) -> list[tuple[str, list[str], bool]]:
-    """(label, adjustment columns, Firth?) for one check. Main analysis first.
-    Read-negative checks (~30 mistakes) can afford the extra adjustments; read-positive checks
-    (~11 mistakes) only get the ones that add no or one parameter."""
-    variants = [("Meta-temporal (main)", ["meta"], False),
-                ("Meta-temporal, Firth", ["meta"], True),
-                ("Meta-temporal, curved", ["meta", "meta_sq"], False)]
+COMPLETE = ["amy", "apoe", "age", "cl"]  # the mutually adjusted models all use scans with these known
+
+
+def robustness_variants(metric: str, kind: str) -> list[tuple[str, list[str], bool, list[str]]]:
+    """(label, adjustment columns, Firth?, extra columns that must be known) for one check. Main
+    analysis first. Read-negative checks (~30 mistakes) can afford the extra adjustments;
+    read-positive checks (~11 mistakes) only get the ones that add no or one parameter.
+
+    The mutually adjusted models need amyloid, APOE, age and Centiloid all known, which drops
+    scans (mostly NACC / Geneva). "Meta-temporal, complete-data subset" refits the main model on
+    exactly those scans, so a change in the odds ratio can be split into "different people" (main
+    vs subset) and "adjustment" (subset vs mutually adjusted). The Centiloid version replaces
+    amyloid yes/no by the amount of amyloid, which the yes/no label cannot capture."""
+    variants = [("Meta-temporal (main)", ["meta"], False, []),
+                ("Meta-temporal, Firth", ["meta"], True, []),
+                ("Meta-temporal, curved", ["meta", "meta_sq"], False, [])]
     if metric == "specificity":
-        variants += [("Mesial temporal", ["mesial"], False),
-                     ("Meta + mesial temporal", ["meta", "mesial"], False)]
-        others = [o for o in ("amy", "apoe", "age") if o != kind]
         names = {"amy": "amyloid", "apoe": "APOE", "age": "age"}
-        variants.append((f"Meta-temporal + {' + '.join(names[o] for o in others)}, Firth", ["meta", *others], True))
+        others = [o for o in ("amy", "apoe", "age") if o != kind]
+        variants += [("Mesial temporal", ["mesial"], False, []),
+                     ("Meta + mesial temporal", ["meta", "mesial"], False, []),
+                     ("Meta-temporal, complete-data subset", ["meta"], False, COMPLETE),
+                     (f"Meta-temporal + {' + '.join(names[o] for o in others)}, Firth", ["meta", *others], True, COMPLETE)]
+        if kind != "amy":
+            cl_others = ["cl" if o == "amy" else o for o in others]
+            label = " + ".join("Centiloid" if o == "cl" else names[o] for o in cl_others)
+            variants.append((f"Meta-temporal + {label}, Firth", ["meta", *cl_others], True, COMPLETE))
     return variants
 
 
@@ -230,10 +250,11 @@ def run_robustness(df: pd.DataFrame, metric: str, name: str, kind: str, lab0: st
     sub["mesial"] = pd.to_numeric(sub.get("MesialTemporal"), errors="coerce") if "MesialTemporal" in sub.columns else np.nan
     for k in ("amy", "apoe", "age"):
         sub[k] = group_variable(sub, k)
+    sub["cl"] = pd.to_numeric(sub["CL"], errors="coerce") if "CL" in sub.columns else np.nan
     unit = AGE_UNIT if kind == "age" else 1.0
     rows = []
-    for label, adjust, firth in [("None", [], False)] + robustness_variants(metric, kind):
-        d = sub.dropna(subset=["_x", *adjust])
+    for label, adjust, firth, require in [("None", [], False, [])] + robustness_variants(metric, kind):
+        d = sub.dropna(subset=["_x", *adjust, *require])
         wrong = (d["pred"] != d["y"]).to_numpy(float)
         row = {"metric": metric, "variable": name, "adjusted_for": label, "firth": firth,
                "n": len(d), "n_mistakes": int(wrong.sum())}
