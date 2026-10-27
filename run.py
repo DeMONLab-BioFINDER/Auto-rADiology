@@ -169,6 +169,6 @@ if __name__ == "__main__":
     #args.device = get_device(force_cpu=True)
     print("Using device:", args.device)
 
-    set_seed(args.seed)
+    set_seed(args.seed if args.train_seed is None else args.train_seed)
 
     main(args)

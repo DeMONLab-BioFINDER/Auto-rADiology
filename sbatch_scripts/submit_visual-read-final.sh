@@ -16,9 +16,12 @@
 # count from.
 #
 # Usage (from sbatch_scripts, Hopper or Ampere login node):
-#   sbatch submit_visual-read-final.sh [data_type] [epochs]     defaults tau_raw, 44
+#   sbatch submit_visual-read-final.sh [data_type] [epochs] [train_seed]     defaults tau_raw, 44, none
 #   e.g. sbatch submit_visual-read-final.sh tau_T1MNI_pts 52
+#        sbatch submit_visual-read-final.sh tau_T1MNI_pts 19 7     (same model, second training seed)
 # epochs = that data type's own "Median best_epoch across folds" from submit_visual-read-cv5.sh.
+# train_seed only changes weight initialisation / shuffling / augmentation; the train/test split
+# stays on --seed 42, so the test set is identical and the runs can be compared scan by scan.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -42,7 +45,14 @@ fi
 DATASET=Gothenburg
 DATA_TYPE="${1:-tau_raw}"
 EPOCHS="${2:-44}"
-echo "data_type: $DATA_TYPE, epochs: $EPOCHS"
+TRAIN_SEED="${3:-}"
+SEED_ARGS=()
+NAME_EXTRA="visual-read-final-${EPOCHS}"
+if [[ -n "$TRAIN_SEED" ]]; then
+  SEED_ARGS=(--train_seed "$TRAIN_SEED")
+  NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
+fi
+echo "data_type: $DATA_TYPE, epochs: $EPOCHS, train_seed: ${TRAIN_SEED:-same as split seed}"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
@@ -57,7 +67,8 @@ python ./run.py \
   --test_size 0.20 \
   --epochs "$EPOCHS" \
   --cls_loss softmax \
-  --model_name_extra "visual-read-final-${EPOCHS}" \
+  --model_name_extra "$NAME_EXTRA" \
+  "${SEED_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

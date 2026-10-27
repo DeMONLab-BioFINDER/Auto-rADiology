@@ -13,7 +13,10 @@ def parse_arguments():
 
     parser.add_argument("--model", type=str, default="CNN3D", help="Class name in models.py (e.g., CNN3D, UNet3D, ResNet50_3D, DenseNet121_3D...)")
     parser.add_argument('--model_name_extra', type=str, default="", help='Extra name to be used as the result folder name. E.g. parameters or others tests names')
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=42, help="Seed for the train/test and CV splits (and training, unless --train_seed is set).")
+    parser.add_argument("--train_seed", type=int, default=None,
+                        help="Seed for weight initialisation, shuffling and augmentation only - the splits stay on --seed. "
+                             "Default: same as --seed. Use to retrain a model on the same test set with a different seed.")
     parser.add_argument("--device", type=str, default=get_device(), help='e.g., "cpu", "cuda", "cuda:0"')
 
     # Input paths and data

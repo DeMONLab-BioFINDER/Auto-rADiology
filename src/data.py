@@ -226,7 +226,7 @@ def get_train_val_loaders(train_df, val_df, args, repeat_train: bool = True, eva
 
 def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=False, train_test='train'):
     g = torch.Generator()
-    g.manual_seed(args.seed)
+    g.manual_seed(args.seed if getattr(args, "train_seed", None) is None else args.train_seed)
 
     # Informative logging about how this loader is constructed (train/val/test)
     try:
