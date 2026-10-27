@@ -3,22 +3,25 @@
 
 The subgroup analysis found more Model + / Visual read − scans in Aβ+, APOE ε4 carriers and older
 people, and more Model − / Visual read + scans in Aβ− and CU people. Two explanations predict that:
-    Harder cases  - e.g. read-negative Aβ+ scans have more sub-threshold tau, so they sit closer to
-                    the boundary and any reader / model gets more of them wrong
+    Closer to the line - e.g. read-negative Aβ+ scans have more sub-threshold tau, so they sit closer
+                    to the boundary and the model and the read split more often
     Something else in the image - the model reacts to something in those groups' scans beyond tau level
 Comparing at the same Meta-temporal SUVR separates them: if a group difference disappears once SUVR
-is accounted for, it was harder cases; if it stays, it is something else.
+is accounted for, it was closeness to the line; if it stays, it is something else.
 
 For each difference that was significant in the subgroup analysis, within the visual-read stratum it
 was found in (read-negative for specificity, read-positive for sensitivity), a logistic regression of
-"model wrong" (statsmodels), reported as an odds ratio with 95% CI and a likelihood-ratio p-value:
+"model disagrees with the read" (statsmodels), reported as an odds ratio with 95% CI and a
+likelihood-ratio p-value:
     None                     - the original difference
     Meta-temporal (main)     - the same, at the same Meta-temporal SUVR. FDR-corrected across the 5 checks
     Meta-temporal, curved    - SUVR + SUVR², in case risk does not rise in a straight line with SUVR
-False positives only (~30 mistakes; the missed positives, ~11, cannot afford more):
+Model + / Visual read − only (~30 scans; the ~11 Model − / Visual read + scans cannot afford more):
     Mesial temporal, Meta + mesial temporal
                              - is the effect medial-temporal signal (early tau or off-target, which the
                                reading rules ignore)? If so the odds ratio shrinks
+    Meta-temporal + temporo-parietal / frontal / Universal
+                             - is the effect signal in another region? If so the odds ratio shrinks
     Meta-temporal, complete-data subset
                              - the main model on the scans with amyloid, APOE, age and Centiloid all known
                                (drops most of NACC / Geneva), so the next rows compare like with like
@@ -28,12 +31,19 @@ False positives only (~30 mistakes; the missed positives, ~11, cannot afford mor
                              - (APOE, age) the amount of amyloid rather than positive/negative
 Everything except the main row is a sensitivity analysis: reported, not tested as a family.
 
+Plus a descriptive look at the regions: among Visual read − scans, regional SUVR of Model + vs Model −
+scans, for all of them and for ε4 carriers and the older half (age split for this table only). The
+difference is in SD units of that region in the Model − scans, so regions on different scales compare.
+Model + scans have more tau everywhere, so the question is which regions are *disproportionately* higher.
+
 Outputs (to <run_dir>/figures):
-    visual_read_errors_at_same_suvr.csv  - every check x variant: n, mistakes, odds ratio [95% CI], p
-    visual_read_errors_at_same_suvr.png  - main analysis: probability of a mistake vs Meta-temporal SUVR,
+    visual_read_errors_at_same_suvr.csv  - every check x variant: n, disagreements, odds ratio [95% CI], p
+    visual_read_errors_at_same_suvr.png  - main analysis: probability the model disagrees vs Meta-temporal SUVR,
                                            one fitted curve per group (curves on top of each other =
                                            harder cases; apart = something else at the same SUVR)
     visual_read_errors_robustness.png    - forest plot of every variant per check
+    visual_read_regions_model_pos_vs_neg.csv / .png
+                                         - regional SUVR of Model + vs Model − among Visual read − scans
 
 Usage:
     python results_plotting/analyze_errors_at_same_suvr.py /path/to/run_dir --dataset Gothenburg \
@@ -79,6 +89,10 @@ AGE_SHOWN = (6.5, 8.0)  # age10 values drawn in the figure (65 and 80 years)
 COMPLETE = ["amy", "apoe", "age10", "cl"]
 NAMES = {"amy": "amyloid", "apoe": "APOE", "age10": "age", "cl": "Centiloid"}
 MAIN = "Meta-temporal (main)"
+# (csv column, column in the regression data, display name)
+REGIONS = [("MesialTemporal", "mesial", "Mesial temporal"), ("MetaTemporal", "meta", "Meta-temporal"),
+           ("TemporoParietal", "tp", "Temporo-parietal"), ("Frontal", "frontal", "Frontal"),
+           ("Universal", "universal", "Universal")]
 
 
 def parse_args():
@@ -97,6 +111,9 @@ def variants(metric: str, var: str) -> list[tuple[str, list[str], list[str]]]:
         others = [o for o in ("amy", "apoe", "age10") if o != var]
         out += [("Mesial temporal", ["mesial"], []),
                 ("Meta + mesial temporal", ["meta", "mesial"], []),
+                ("Meta + temporo-parietal", ["meta", "tp"], []),
+                ("Meta + frontal", ["meta", "frontal"], []),
+                ("Meta + Universal", ["meta", "universal"], []),
                 ("Meta-temporal, complete-data subset", ["meta"], COMPLETE),
                 (f"Meta-temporal + {' + '.join(NAMES[o] for o in others)}", ["meta", *others], COMPLETE)]
         if var != "amy":
@@ -109,9 +126,9 @@ def stratum(df: pd.DataFrame, metric: str) -> pd.DataFrame:
     """The scans one metric is defined on, with every variable the models use."""
     sub = df[df["y"] == METRIC_READ[metric]].copy()
     sub["wrong"] = (sub["pred"] != sub["y"]).astype(int)
-    sub["meta"] = pd.to_numeric(sub["MetaTemporal"], errors="coerce")
+    for csv_col, col, _ in REGIONS:
+        sub[col] = pd.to_numeric(sub[csv_col], errors="coerce") if csv_col in sub else np.nan
     sub["meta_sq"] = (sub["meta"] - sub["meta"].mean()) ** 2
-    sub["mesial"] = pd.to_numeric(sub["MesialTemporal"], errors="coerce") if "MesialTemporal" in sub else np.nan
     sub["amy"] = sub["_g_amy"].map({"Aβ negative": 0.0, "Aβ positive": 1.0})
     sub["apoe"] = sub["_g_apoe"].map({"Non-carrier": 0.0, "Carrier": 1.0})
     sub["impaired"] = sub["_g_dx"].map({"CU": 0.0, "MCI": 1.0, "AD dementia": 1.0})  # "Other" stays missing
@@ -131,16 +148,19 @@ def run_check(df: pd.DataFrame, metric: str, name: str, var: str) -> tuple[list[
     rows, main_fit = [], None
     for label, adjust, require in variants(metric, var):
         d = sub.dropna(subset=[var, "wrong", *adjust, *require])
-        row = {"metric": metric, "variable": name, "adjusted_for": label, "n": len(d), "n_mistakes": int(d["wrong"].sum())}
+        row = {"metric": metric, "variable": name, "adjusted_for": label, "n": len(d), "n_disagree": int(d["wrong"].sum())}
         if d["wrong"].sum() < 2 or d[var].nunique() < 2:
-            rows.append({**row, "note": "too few mistakes / one group only"})
+            rows.append({**row, "note": "too few disagreements / one group only"})
             continue
         try:
             full, reduced = fit(d, [var, *adjust]), fit(d, adjust)
-        except Exception as err:  # e.g. perfect separation: a group with no mistakes at all
+        except Exception as err:  # e.g. perfect separation: a group where the model never disagrees
             rows.append({**row, "note": f"could not fit ({type(err).__name__})"})
             continue
         lo, hi = full.conf_int().loc[var]
+        if not np.isfinite(hi) or abs(full.params[var]) > np.log(1000):  # quasi-separation: estimate meaningless
+            rows.append({**row, "note": "could not fit (one group (almost) never disagrees)"})
+            continue
         row.update({"or": np.exp(full.params[var]), "or_lo": np.exp(lo), "or_hi": np.exp(hi),
                     "p": stats.chi2.sf(2 * (full.llf - reduced.llf), 1)})
         high = d[var] >= d[var].median() if var == "age10" else d[var] == 1
@@ -153,9 +173,55 @@ def run_check(df: pd.DataFrame, metric: str, name: str, var: str) -> tuple[list[
     return rows, main_fit
 
 
+def regional_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Among Visual read − scans: regional SUVR of Model + vs Model −, overall / ε4 carriers / older half."""
+    sub = stratum(df, "specificity")
+    groups = [("All Visual read −", np.ones(len(sub), bool)), ("ε4 carriers", sub["apoe"] == 1),
+              (f"Older half (age ≥ {sub['age10'].median() * 10:.0f})", sub["age10"] >= sub["age10"].median())]
+    rows = []
+    for group, mask in groups:
+        g = sub[np.asarray(mask, bool)]
+        for _, col, region in REGIONS:
+            neg, pos = g.loc[g["wrong"] == 0, col].dropna(), g.loc[g["wrong"] == 1, col].dropna()
+            if len(pos) < 2 or len(neg) < 2:
+                continue
+            rows.append({"group": group, "region": region, "n_model_neg": len(neg), "n_model_pos": len(pos),
+                         "median_model_neg": neg.median(), "median_model_pos": pos.median(),
+                         "diff_in_sd": (pos.mean() - neg.mean()) / neg.std(),
+                         "p_mann_whitney": stats.mannwhitneyu(pos, neg).pvalue})
+    return pd.DataFrame(rows)
+
+
 # ------------------------------
 # Figures
 # ------------------------------
+def make_regions_figure(df: pd.DataFrame, out_path: Path):
+    """Box plots of each region's SUVR, Model − vs Model +, among Visual read − scans."""
+    sub = stratum(df, "specificity")
+    regions = [(col, name) for _, col, name in REGIONS if sub[col].notna().any()]
+    fig, ax = plt.subplots(figsize=(1.9 * len(regions) + 2, 4.8))
+    rng = np.random.default_rng(0)
+    for i, (col, _) in enumerate(regions):
+        for offset, wrong, label, color in [(-0.2, 0, "Model −", CUSTOM_PALETTE[0]), (0.2, 1, "Model +", CUSTOM_PALETTE[1])]:
+            vals = sub.loc[sub["wrong"] == wrong, col].dropna()
+            ax.boxplot(vals, positions=[i + offset], widths=0.32, showfliers=False, patch_artist=True,
+                       boxprops=dict(facecolor=color, alpha=0.35, edgecolor=color), medianprops=dict(color=color, lw=2),
+                       whiskerprops=dict(color=color), capprops=dict(color=color))
+            ax.scatter(i + offset + rng.uniform(-0.1, 0.1, len(vals)), vals, s=8 if wrong == 0 else 16,
+                       alpha=0.25 if wrong == 0 else 0.8, color=color, lw=0, label=label if i == 0 else None)
+    ax.set_xticks(range(len(regions)))
+    ax.set_xticklabels([name for _, name in regions], fontsize=TICK_SIZE - 3)
+    ax.set_ylabel("SUVR", fontsize=LABEL_SIZE - 4)
+    ax.set_title("Visual read − scans: regional SUVR when the model says − vs +", fontsize=TITLE_SIZE - 4)
+    ax.tick_params(axis="y", labelsize=TICK_SIZE - 3)
+    ax.grid(axis="y", alpha=0.28)
+    ax.legend(fontsize=LEGEND_SIZE - 2, frameon=True, framealpha=0.9)
+    finalize_figure(fig, rect=(0, 0, 1, 1.0))
+    save_figure(fig, out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[save] {out_path}")
+
+
 def make_curves_figure(main_fits: list, out_path: Path):
     ncols = min(3, len(main_fits))
     nrows = int(np.ceil(len(main_fits) / ncols))
@@ -270,6 +336,9 @@ def main():
     if main_fits:
         make_curves_figure(main_fits, out_dir / "visual_read_errors_at_same_suvr.png")
     make_forest_figure(table, out_dir / "visual_read_errors_robustness.png")
+    regions = regional_table(df)
+    regions.round(4).to_csv(out_dir / "visual_read_regions_model_pos_vs_neg.csv", index=False)
+    make_regions_figure(df, out_dir / "visual_read_regions_model_pos_vs_neg.png")
 
     print("\n[errors at the same SUVR] odds ratio of the model disagreeing with the visual read (main row FDR-corrected across the 5 checks)")
     for (metric, var), sub in table.groupby(["metric", "variable"], sort=False):
@@ -282,7 +351,13 @@ def main():
                             for k in ("median_meta_group0_group1", "median_mesial_group0_group1") if isinstance(r.get(k), str))
             fdr = f" (FDR {r['p_fdr_main']:.3g})" if r["adjusted_for"] == MAIN else ""
             print(f"      {r['adjusted_for']:<42} OR {r['or']:.2f} [{r['or_lo']:.2f}-{r['or_hi']:.2f}], p = {r['p']:.3g}{fdr}, "
-                  f"n={r['n']} ({r['n_mistakes']} disagree){extra}")
+                  f"n={r['n']} ({r['n_disagree']} disagree){extra}")
+    print("\n[regions] Visual read − scans: median SUVR Model − / Model +, difference in SD units (Model − SD)")
+    for group, sub in regions.groupby("group", sort=False):
+        print(f"  {group} (Model − n={sub['n_model_neg'].iloc[0]}, Model + n={sub['n_model_pos'].iloc[0]})")
+        for _, r in sub.iterrows():
+            print(f"      {r['region']:<18} {r['median_model_neg']:.2f} / {r['median_model_pos']:.2f}   "
+                  f"diff {r['diff_in_sd']:+.2f} SD   Mann-Whitney p = {r['p_mann_whitney']:.2g}")
     print(f"\n[done] saved to {out_dir}")
 
 
