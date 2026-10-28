@@ -27,6 +27,10 @@ def main(args):
     if args.vis_img_list:
         subject_id_list = [int(t.strip()) for t in args.vis_img_list.split(',') if t.strip()]
         df_select = df[df['ID'].isin(subject_id_list)].reset_index(drop=True)
+        missing = sorted(set(subject_id_list) - set(df_select['ID']))
+        if missing:
+            raise SystemExit(f"IDs not found in the {args.dataset} scan table: {missing} "
+                             f"(AVID IDs need --dataset AVID_unseen; Gothenburg IDs must be in the run's train/test splits)")
     else:
         df_select = df
     print('df_select:',df_select)
