@@ -18,6 +18,10 @@
 #   e.g. sbatch submit_vis-occlusion-cases.sh <folder> 2021,201,1922 logit
 # Input images: set DATA_TYPE to the data type the model was trained on (default tau_raw), e.g.
 #   DATA_TYPE=tau_T1MNI_pts sbatch submit_vis-occlusion-cases.sh <folder> <IDs> logit
+# External set (zero-shot, scans from data/demo_<dataset>.csv): set DATASET, e.g.
+#   DATASET=AVID_unseen DATA_TYPE=tau_raw_2mm_pts sbatch submit_vis-occlusion-cases.sh <folder> <AVID IDs> logit
+# Those maps go to .../occlusion_cases_<DATASET>_<target>_..., next to the test-set ones.
+# Pick AVID IDs from <folder>/validation/External_validation_AVID_unseen__*_zeroshot_results.csv.
 # Time: ~6 min per scan.
 
 #SBATCH -A berzelius-2026-231
@@ -50,6 +54,7 @@ MASK_SIZE="${4:-4}"
 OVERLAP="${5:-0.5}"
 FILL="${6:-gaussian}"
 DATA_TYPE="${DATA_TYPE:-tau_raw}"
+DATASET="${DATASET:-Gothenburg}"
 
 # Relative folder names resolve under <proj_path>/results, same as src/params.py does.
 VIS_DIR=$(python -c "
@@ -58,14 +63,14 @@ from src.params import parse_arguments
 sys.argv = ['x', '--best_model_folder', '$BEST_MODEL_FOLDER']
 print(os.path.join(parse_arguments().output_path, 'visualization'))
 " | tail -n 1)
-echo "Data type $DATA_TYPE, subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
+echo "Dataset $DATASET, data type $DATA_TYPE, subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
 RUN_STATUS=0
 START=$SECONDS
 python ./run_vis.py \
-  --dataset Gothenburg \
+  --dataset "$DATASET" \
   --best_model_folder "$BEST_MODEL_FOLDER" \
   --model CNN3D \
   --data_type "$DATA_TYPE" \
@@ -84,7 +89,9 @@ python ./run_vis.py \
 ELAPSED=$((SECONDS - START))
 echo "[timing] ${ELAPSED}s = $((ELAPSED / 60)) min for all subjects"
 
-RUN_DIR="$VIS_DIR/occlusion_cases_${TARGET}_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
+DATASET_TAG=""
+[[ "$DATASET" != "Gothenburg" ]] && DATASET_TAG="${DATASET}_"
+RUN_DIR="$VIS_DIR/occlusion_cases_${DATASET_TAG}${TARGET}_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
 if [[ -d "$VIS_DIR/occlusion" ]]; then
   rm -rf "$RUN_DIR" && mv "$VIS_DIR/occlusion" "$RUN_DIR" && echo "maps saved in $RUN_DIR"
 fi

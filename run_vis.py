@@ -10,15 +10,20 @@ from src.utils import get_device, set_seed
 from src.model_factory import build_model_from_args, classifier_out_dim
 from src.data import get_train_val_loaders
 from src.vis import run_visualization, benchmark_occlusion
+from src.validation import load_validation_data
 
 import torch.multiprocessing as mp
 os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
 mp.set_sharing_strategy("file_system")
 
 def main(args):
-    df_train = pd.read_csv(args.best_model_folder + '/splits/train_subjects.csv')
-    df_test = pd.read_csv(args.best_model_folder + '/splits/test_subjects.csv')
-    df = pd.concat([df_train, df_test], ignore_index=True)
+    if 'AVID' in args.dataset:
+        # External set (AVID_unseen): the same scan table run_val.py evaluates on
+        _, _, df, _ = load_validation_data(args)
+    else:
+        df_train = pd.read_csv(args.best_model_folder + '/splits/train_subjects.csv')
+        df_test = pd.read_csv(args.best_model_folder + '/splits/test_subjects.csv')
+        df = pd.concat([df_train, df_test], ignore_index=True)
     if args.vis_img_list:
         subject_id_list = [int(t.strip()) for t in args.vis_img_list.split(',') if t.strip()]
         df_select = df[df['ID'].isin(subject_id_list)].reset_index(drop=True)
