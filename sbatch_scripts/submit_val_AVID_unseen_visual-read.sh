@@ -73,8 +73,10 @@ if [[ $RUN_STATUS -ne 0 ]]; then
 elif [[ -z "$RUN_DIR" ]]; then
   echo "WARNING: could not determine run output directory; skipping figure generation."
 else
-  echo "Generating figures for $BEST_MODEL_FOLDER (dataset $DATASET) ..."
-  python results_plotting/plot_visual_read_results.py "$BEST_MODEL_FOLDER" --dataset "$DATASET" \
+  # RUN_DIR is the absolute <run>/validation; the plot script wants the run folder itself
+  # (a bare folder name would be looked up relative to the repo, not results/).
+  echo "Generating figures for $(dirname "$RUN_DIR") (dataset $DATASET) ..."
+  python results_plotting/plot_visual_read_results.py "$(dirname "$RUN_DIR")" --dataset "$DATASET" \
     || echo "WARNING: figure generation failed (validation results are unaffected)."
 fi
 
