@@ -31,6 +31,10 @@ def parse_arguments():
     
     # Model args
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr_scheduler", action=argparse.BooleanOptionalAction, default=True,
+                         help="Halve the learning rate when validation loss stalls (ReduceLROnPlateau, patience 3). "
+                              "--no-lr_scheduler keeps the learning rate fixed, so a CV fold's best epoch carries over "
+                              "to a final model trained without a validation set (which never uses the scheduler).")
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.3)

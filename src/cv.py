@@ -233,7 +233,7 @@ def train_model(model, dl_tr, dl_va, *, args, fold_name, path_list, optuna_repor
             eval_metric = metrics.get("eval_metric", float("nan"))
             early_stop_metric = va_loss_mean
 
-        if not train_only and (not no_validation) and 'few-shot' not in fold_name and np.isfinite(early_stop_metric): scheduler.step(early_stop_metric) # no scheduler when test only and fine-tunning few shots
+        if getattr(args, "lr_scheduler", True) and not train_only and (not no_validation) and 'few-shot' not in fold_name and np.isfinite(early_stop_metric): scheduler.step(early_stop_metric) # no scheduler when switched off, test only and fine-tunning few shots
 
         # ---- Optuna report, if callback provided ----
         if optuna_report is not None: optuna_report(int(fold_name.split('-k')[-1]) if 'trial' in fold_name else 0, epoch, eval_metric)

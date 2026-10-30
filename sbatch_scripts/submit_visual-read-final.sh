@@ -3,22 +3,14 @@
 # Final visual_read model: retrain on the full 80% training pool for a fixed
 # number of epochs, then evaluate once on the untouched 20% hold-out test set.
 # Mirrors submit_mse-final-47.sh (the regional-SUVR final-model workflow):
-# --epochs is hand-edited below from a CV run's result, same as mse-final-47's
-# "47" was derived from mse-cv5 (this script takes no CLI args).
-#
-# --epochs 75 below was derived from submit_visual-read-cv5.sh's "Median
-# best_epoch across folds" back when that script defaulted to --cls_loss bce
-# (pre-softmax-default change) - STALE now that cv5 defaults to softmax.
-# Re-run submit_visual-read-cv5.sh first, then update --epochs (and the
-# "-75" in --model_name_extra / #SBATCH -J / log paths, matching mse-final-47's
-# naming) to the new median before submitting this. --cls_loss softmax pinned
-# explicitly so the head shape matches whatever cv5 run you take the epoch
-# count from.
+# Fixed learning rate, no validation set, last epoch kept. The epoch count comes from
+# submit_visual-read-cv5.sh (also fixed LR): its "Median best_epoch across folds" for the
+# same data type. --cls_loss softmax pinned so the head matches that CV run.
 #
 # Usage (from sbatch_scripts, Hopper or Ampere login node):
-#   sbatch submit_visual-read-final.sh [data_type] [epochs] [train_seed]     defaults tau_raw, 44, none
-#   e.g. sbatch submit_visual-read-final.sh tau_T1MNI_pts 52
-#        sbatch submit_visual-read-final.sh tau_T1MNI_pts 19 7     (same model, second training seed)
+#   sbatch submit_visual-read-final.sh <data_type> <epochs> [train_seed]
+#   e.g. sbatch submit_visual-read-final.sh tau_raw_2mm_pts 40
+#        sbatch submit_visual-read-final.sh tau_T1MNI_pts 52
 # epochs = that data type's own "Median best_epoch across folds" from submit_visual-read-cv5.sh.
 # train_seed only changes weight initialisation / shuffling / augmentation; the train/test split
 # stays on --seed 42, so the test set is identical and the runs can be compared scan by scan.
@@ -43,8 +35,12 @@ elif [[ ! -d "sbatch_scripts" ]]; then
 fi
 
 DATASET=Gothenburg
-DATA_TYPE="${1:-tau_raw}"
-EPOCHS="${2:-44}"
+DATA_TYPE="$1"
+EPOCHS="$2"
+if [[ -z "$DATA_TYPE" || -z "$EPOCHS" ]]; then
+  echo "Usage: sbatch submit_visual-read-final.sh <data_type> <epochs> [train_seed]  (epochs from submit_visual-read-cv5.sh)"
+  exit 1
+fi
 TRAIN_SEED="${3:-}"
 SEED_ARGS=()
 NAME_EXTRA="visual-read-final-${EPOCHS}"

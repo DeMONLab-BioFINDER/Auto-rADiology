@@ -8,12 +8,16 @@
 # pinned so this script's own record of what ran doesn't drift if that default
 # changes again - see --class_weight_cls in submit_visual-read-cv5-weighted.sh
 # for the weighted comparison run).
+# Fixed learning rate (--no-lr_scheduler): early stopping only records each fold's best
+# epoch, and the final model (submit_visual-read-final.sh, no validation set, fixed LR)
+# is then trained for the median of those - same LR in both, so the epoch count carries over.
 #
 # Usage (from sbatch_scripts, Hopper or Ampere login node):
-#   sbatch submit_visual-read-cv5.sh [data_type]     default tau_raw
+#   sbatch submit_visual-read-cv5.sh [data_type]     default tau_raw_2mm_pts
 #   e.g. sbatch submit_visual-read-cv5.sh tau_raw_2mm_pts
 #        sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
 # The data type is part of the output folder name, so runs don't overwrite each other.
+# The log ends with "Median best_epoch across folds: N" -> pass N to submit_visual-read-final.sh.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -34,7 +38,7 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
-DATA_TYPE="${1:-tau_raw}"
+DATA_TYPE="${1:-tau_raw_2mm_pts}"
 echo "data_type: $DATA_TYPE"
 
 RUN_LOG=$(mktemp)
@@ -53,7 +57,8 @@ python "./run.py" \
   --es_patience 15 \
   --es_min_delta 0.001 \
   --cls_loss softmax \
-  --model_name_extra visual-read-cv5-softmax \
+  --no-lr_scheduler \
+  --model_name_extra visual-read-cv5-fixedlr \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
