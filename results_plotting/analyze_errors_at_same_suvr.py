@@ -246,14 +246,19 @@ def make_curves_figure(main_fits: list, out_path: Path):
         ax.set_ylim(-0.08, 1.38)
         ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
         ax.set_xlabel("Meta-temporal SUVR", fontsize=LABEL_SIZE - 4)
-        ax.set_ylabel("Model calls positive" if metric == "specificity" else "Model calls negative", fontsize=LABEL_SIZE - 4)
-        ax.set_title(f"Visual read {'−' if metric == 'specificity' else '+'}: {name}", fontsize=TITLE_SIZE - 4)
-        ax.text(0.02, 0.97, f"OR at same SUVR {row['or']:.2f} [{row['or_lo']:.2f}–{row['or_hi']:.2f}], p = {row['p']:.2g}",
+        ax.set_ylabel("Chance the model says +" if metric == "specificity" else "Chance the model says −",
+                      fontsize=LABEL_SIZE - 4)
+        ax.set_title(f"Visual read {'−' if metric == 'specificity' else '+'} scans, by {name.lower() if name != 'APOE ε4' else name}",
+                     fontsize=TITLE_SIZE - 4)
+        than = "per 10 years older" if var == "age10" else f"{lab1} vs {lab0}"
+        ax.text(0.02, 0.97, f"At the same SUVR, odds of disagreeing ×{row['or']:.2f} {than}\n"
+                            f"[95% CI {row['or_lo']:.2f}–{row['or_hi']:.2f}], p = {row['p']:.2g}",
                 transform=ax.transAxes, va="top", fontsize=TICK_SIZE - 4)
         ax.tick_params(labelsize=TICK_SIZE - 3)
         ax.grid(alpha=0.28)
         ax.legend(loc="center right", fontsize=LEGEND_SIZE - 2, frameon=True, framealpha=0.9)
-    fig.suptitle("Model disagreeing with the visual read, at the same Meta-temporal SUVR", fontsize=TITLE_SIZE)
+    fig.suptitle("How often the model disagrees with the visual read, at the same meta-temporal SUVR\n"
+                 "(lines on top of each other = no group difference beyond tau level)", fontsize=TITLE_SIZE - 2)
     finalize_figure(fig, rect=(0, 0, 1, 1.0))
     save_figure(fig, out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -289,7 +294,7 @@ def make_forest_figure(table: pd.DataFrame, out_path: Path):
         ax.set_yticks(y)
         ax.set_yticklabels([f"{a} (n={n})" for a, n in zip(sub["adjusted_for"], sub["n"])], fontsize=TICK_SIZE - 4)
         ax.set_ylim(-0.7, len(sub) - 0.3)
-        ax.set_title(f"Visual read {'−' if metric == 'specificity' else '+'}: {var}{' per 10 years' if var == 'Age' else ''}",
+        ax.set_title(f"Visual read {'−' if metric == 'specificity' else '+'} scans: {var}{' per 10 years' if var == 'Age' else ''}",
                      fontsize=TITLE_SIZE - 5)
         ax.set_xlabel("Odds ratio of the model disagreeing with the read (log scale)", fontsize=LABEL_SIZE - 5)
         ax.tick_params(axis="x", labelsize=TICK_SIZE - 3)

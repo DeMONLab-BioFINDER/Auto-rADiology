@@ -885,7 +885,7 @@ def make_pr_curve_panel(
                label=f"No-skill (prevalence) = {prevalence:.3f}")
     ax.set_ylim(-0.02, 1.02)
     ax.set_xlim(-0.02, 1.02)
-    style_axes(ax, "Precision-recall curve: agreement with clinical read", "Recall (sensitivity)", "Precision (PPV)")
+    style_axes(ax, "Precision-recall curve: agreement with clinical read", "Positive agreement (recall)", "Precision (PPV)")
     style_legend(ax, loc="best")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
@@ -1110,11 +1110,14 @@ def make_confusion_category_categorical_panel(
     plt.close(fig)
 
 
-SUBGROUP_METRICS = [
-    ("sensitivity", "Sensitivity", "Sensitivity"),
-    ("specificity", "Specificity", "Specificity"),
-    ("auc", "AUC", "AUC"),
-]
+# Subgroup figures show disagreement, not sensitivity/specificity: the visual read is the
+# reference, not the truth, so "Model − / Visual read + in 52% of A4's read-positive scans"
+# reads more directly than "sensitivity 48%". metric -> (disagreeing category, the read group
+# it is counted in). Same numbers: disagreement = 1 − sensitivity (or 1 − specificity).
+SUBGROUP_DISAGREEMENT = {
+    "sensitivity": ("False Negative", "Visual read + scans"),
+    "specificity": ("False Positive", "Visual read − scans"),
+}
 
 
 def _wrap_level(level, width: int = 12) -> str:
@@ -1129,68 +1132,68 @@ def _wrap_level(level, width: int = 12) -> str:
     return "\n".join(lines + [line])
 
 
-def make_subgroup_performance_panel(
+def make_subgroup_disagreement_panel(
     stats_df: pd.DataFrame,
-    pooled: dict,
     out_dir: Path,
-    filename: str = "visual_read_subgroup_performance.png",
-    metrics=None,
+    metrics: list[str],
+    p_fdr: dict | None = None,
+    filename: str = "visual_read_subgroup_disagreement.png",
     title: str | None = None,
 ) -> bool:
-    """One variable's groups on the x-axis, the measure on the y-axis: dot = estimate, whisker =
-    95% CI (Wilson; bootstrap for AUC). One panel per measure in `metrics`. No all-scans reference
-    line: the test compares the groups with each other, so the overall value belongs in the text.
-    Each tick label carries k/n for that measure, because the denominator differs between
-    sensitivity (visual-read positives) and specificity (visual-read negatives).
+    """One variable's groups on the x-axis, how often the model disagrees with the read in each
+    group on the y-axis (dot = %, whisker = Wilson 95% CI, label = "k of n" scans). One panel per
+    metric in `metrics` ("sensitivity" -> Model − among visual read + scans, "specificity" ->
+    Model + among visual read − scans; see SUBGROUP_DISAGREEMENT), coloured like that discordant
+    group everywhere else. Higher = more disagreement. `p_fdr` (metric -> FDR-corrected p of the
+    group comparison) is printed under each panel title. No all-scans reference line: the test
+    compares the groups with each other.
 
-    `stats_df` needs columns: variable, level, n, plus <metric>, <metric>_lo, <metric>_hi,
-    <metric>_k, <metric>_n per metric. `pooled` (metric -> all-scans value) is only used to set
-    the lower end of the y-axis.
+    `stats_df` needs columns: variable, level, plus <metric>_lo, <metric>_hi, <metric>_k,
+    <metric>_n per metric (agreement counts, as written by level_stats).
     """
-    metrics = [m for m in (metrics or SUBGROUP_METRICS) if m[0] in stats_df.columns]
+    metrics = [m for m in metrics if m in SUBGROUP_DISAGREEMENT and f"{m}_n" in stats_df.columns]
     if stats_df.empty or not metrics:
         print(f"[skip] {filename}: no subgroup statistics to plot.")
         return False
 
     sub = stats_df.reset_index(drop=True)
-    lows = pd.concat([pd.to_numeric(sub[f"{m}_lo"], errors="coerce") for m, _, _ in metrics])
-    refs = [pooled[m] for m, _, _ in metrics if m in pooled]
-    y_min = np.nanmin(list(lows.dropna()) + refs) if len(lows.dropna()) or refs else 0.0
-    y_min = max(0.0, np.floor((y_min - 0.05) * 10) / 10)
-
-    fig, axes = plt.subplots(1, len(metrics), squeeze=False, sharey=True,
-                             figsize=(max(3.6, 1.2 * len(sub) + 1.4) * len(metrics), 4.6))
+    fig, axes = plt.subplots(1, len(metrics), squeeze=False,
+                             figsize=(max(4.2, 1.25 * len(sub) + 1.6) * len(metrics), 5.0))
     xs = np.arange(len(sub))
-    for ax, (metric, label, ylabel) in zip(axes[0], metrics):
-        for x, row in sub.iterrows():
-            value, lo, hi = row[metric], row[f"{metric}_lo"], row[f"{metric}_hi"]
-            if not np.isfinite(value):
+    for ax, metric in zip(axes[0], metrics):
+        category, read_group = SUBGROUP_DISAGREEMENT[metric]
+        color = CONFUSION_CATEGORY_PALETTE[category]
+        n = pd.to_numeric(sub[f"{metric}_n"], errors="coerce")
+        k = n - pd.to_numeric(sub[f"{metric}_k"], errors="coerce")
+        value = k / n
+        lo, hi = 1 - pd.to_numeric(sub[f"{metric}_hi"], errors="coerce"), 1 - pd.to_numeric(sub[f"{metric}_lo"], errors="coerce")
+        for x in xs:
+            if not np.isfinite(value[x]):
                 continue
-            if np.isfinite(lo) and np.isfinite(hi):
-                ax.vlines(x, lo, hi, color="#999999", linewidth=2.2, zorder=2)
-            ax.scatter(x, value, s=110, color=CUSTOM_PALETTE[0], edgecolor="white", linewidth=0.8, zorder=3)
-
-        def _count(row):
-            k, n = row.get(f"{metric}_k", np.nan), row.get(f"{metric}_n", np.nan)
-            return f"{int(k)}/{int(n)}" if np.isfinite(k) and np.isfinite(n) else f"n={int(row['n'])}"
+            ax.vlines(x, lo[x], hi[x], color="#999999", linewidth=2.2, zorder=2)
+            ax.scatter(x, value[x], s=120, color=color, edgecolor="white", linewidth=0.8, zorder=3)
+            ax.annotate(f"{value[x]:.0%}", (x, value[x]), textcoords="offset points", xytext=(9, 0),
+                        va="center", fontsize=TICK_SIZE - 1, color="#333333")
 
         ax.set_xticks(xs)
-        ax.set_xticklabels([f"{_wrap_level(r['level'])}\n({_count(r)})" for _, r in sub.iterrows()],
-                           fontsize=TICK_SIZE - 1)
+        ax.set_xticklabels([f"{_wrap_level(level)}\n({int(kk)} of {int(nn)})" if np.isfinite(nn) else _wrap_level(level)
+                            for level, kk, nn in zip(sub["level"], k, n)], fontsize=TICK_SIZE - 1)
         ax.set_xlim(-0.6, len(sub) - 0.4)
-        ax.set_ylim(y_min, 1.02)
-        # Round steps, so a whole-percent label never sits on a 97.5% tick.
-        ax.yaxis.set_major_locator(plt.MultipleLocator(0.1 if 1 - y_min > 0.35 else 0.05))
-        if metric != "auc":
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-        ax.set_ylabel(ylabel, fontsize=LABEL_SIZE - 2)
-        ax.tick_params(axis="y", labelleft=True)
+        top = np.nanmax(hi) if np.isfinite(hi).any() else 1.0
+        ax.set_ylim(0, min(1.0, np.ceil((top + 0.05) * 10) / 10))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+        ax.set_ylabel(f"{confusion_display_label(category)} (%)", fontsize=LABEL_SIZE - 2)
+        p = (p_fdr or {}).get(metric)
+        p_text = f"\ngroups differ: FDR-corrected p = {p:.2g}" if p is not None and np.isfinite(p) else ""
+        ax.set_title(f"{read_group}: how often the model says {'−' if metric == 'sensitivity' else '+'}{p_text}",
+                     fontsize=TITLE_SIZE - 5)
         ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
         ax.set_axisbelow(True)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
 
-    fig.suptitle(title or str(sub["variable"].iloc[0]), fontsize=TITLE_SIZE - 2)
+    fig.suptitle(title or f"Disagreement with the visual read: {sub['variable'].iloc[0]}",
+                 fontsize=TITLE_SIZE - 2)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
@@ -1681,7 +1684,6 @@ def make_agreement_by_centiloid_panel(
     group_col: str | None = None,
     group_label: str | None = None,
     cutoff: float | None = None,
-    discordant_only: bool = False,
     min_bin_n: int = 2,
     filename: str | None = None,
     id_col_preds: str = "ID_ind",
@@ -1695,12 +1697,10 @@ def make_agreement_by_centiloid_panel(
     _plot_confusion_category_rates) - matching the reference figure convention. Bin edges
     match the source figure's Centiloid bins. Pass cutoff (e.g. 24.4, the Moscoso et al. 2025
     Centiloid positivity threshold) instead for a 3-line agreement view (model-vs-cutoff,
-    human-vs-cutoff, model-vs-human; see _plot_cutoff_agreement). Pass discordant_only=True
-    for a focused 2-line view (just False Negative and False Positive rates, not summing to
-    100%) - isolates where disagreement concentrates along the scale without the TP/TN lines
-    dominating the view. group_col (e.g. site) is a fourth mode comparing overall accuracy
-    across subgroups. Modes are mutually exclusive; priority is group_col > cutoff >
-    discordant_only > the default 4-category breakdown."""
+    human-vs-cutoff, model-vs-human; see _plot_cutoff_agreement). group_col (e.g. site) is a
+    third mode comparing overall accuracy across subgroups. Modes are mutually exclusive;
+    priority is group_col > cutoff > the default 4-category breakdown. Where the
+    disagreements are as counts: make_disagreement_counts_by_value_panel."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1755,15 +1755,6 @@ def make_agreement_by_centiloid_panel(
         ylabel = "Agreement (%)"
         title = f"Agreement vs. {value_label} (cutoff = {cutoff:g}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
-    elif discordant_only:
-        _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n, categories=DISCORDANT_CATEGORIES)
-        style_legend(ax, loc="upper center")
-        ax.relim(); ax.autoscale_view(scalex=False)
-        ylim_top = max(10.0, ax.get_ylim()[1] * 1.15)
-        ax.set_ylim(-2, ylim_top)
-        ylabel = "Percentage of scans (%)"
-        title = f"Discordant cases vs. {value_label}"
-        default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, CENTILOID_BIN_LABELS, min_bin_n)
         ax.set_ylim(-2, 102)
@@ -1875,6 +1866,76 @@ def _density_adaptive_bin_labels(series: pd.Series, base_edges: list[float], min
     return merged_edges, labels
 
 
+def make_disagreement_counts_by_value_panel(
+    df_preds: pd.DataFrame,
+    df_demo: pd.DataFrame,
+    out_dir: Path,
+    value_col: str,
+    value_label: str | None = None,
+    base_edges: list[float] = SUVR_BIN_EDGES,
+    min_bin_count: int = 8,
+    filename: str | None = None,
+    id_col_preds: str = "ID_ind",
+    id_col_demo: str = "ID",
+):
+    """Where along a quantitative scale (a regional tau SUVR, Centiloid) the model disagrees
+    with the visual read, as scan counts: one panel per read group, one stacked bar per bin
+    (agrees in grey, disagrees in that discordant group's colour, with its count on top). Counts
+    rather than rates, so it answers both "where are the disagreements" and "how many are there":
+    a rate line over a separate % histogram (the view this replaced) made a 20% rate in a
+    small bin look like the main mass. Bins: base_edges merged low to high until each has
+    >= min_bin_count scans (_density_adaptive_bin_labels), computed on all scans so both panels
+    share the x-axis."""
+    if value_col not in df_demo.columns:
+        print(f"[WARNING] '{value_col}' not found in demographics table; skipping disagreement-by-{value_col} panel.")
+        return
+    df = pd.merge(df_preds[[id_col_preds, "y", "pred"]], df_demo[[id_col_demo, value_col]],
+                  left_on=id_col_preds, right_on=id_col_demo, how="left")
+    for col in ["y", "pred", value_col]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["y", "pred", value_col])
+    if df.empty:
+        return
+    bin_edges, bin_labels = _density_adaptive_bin_labels(df[value_col], base_edges, min_bin_count)
+    if len(bin_labels) < 2:
+        return
+    if base_edges is not SUVR_BIN_EDGES:  # e.g. Centiloid: whole numbers read better than "-30.0"
+        bin_labels = [re.sub(r"\.0\b", "", label) for label in bin_labels]
+    df["_bin"] = pd.cut(df[value_col], bins=bin_edges, labels=bin_labels, right=False)
+
+    label_x = value_label or value_col
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.2), sharex=True)
+    xs = np.arange(len(bin_labels))
+    for ax, read in zip(axes, (1, 0)):
+        agree_cat, disagree_cat = ("True Positive", "False Negative") if read else ("True Negative", "False Positive")
+        sub = df[df["y"] == read]
+        disagree = sub[sub["pred"] != read]["_bin"].value_counts().reindex(bin_labels, fill_value=0).to_numpy()
+        agree = sub[sub["pred"] == read]["_bin"].value_counts().reindex(bin_labels, fill_value=0).to_numpy()
+        ax.bar(xs, agree, width=0.7, color="0.82", label=confusion_display_label(agree_cat), zorder=2)
+        ax.bar(xs, disagree, width=0.7, bottom=agree, color=CONFUSION_CATEGORY_PALETTE[disagree_cat],
+               label=confusion_display_label(disagree_cat), zorder=2)
+        for x, a, d in zip(xs, agree, disagree):
+            if d:
+                ax.annotate(str(d), (x, a + d), textcoords="offset points", xytext=(0, 3), ha="center",
+                            fontsize=TICK_SIZE - 1, color="#333333")
+        ax.set_ylim(0, max(1, (agree + disagree).max()) * 1.3)  # room for the count labels and legend
+        ax.set_xticks(xs)
+        ax.set_xticklabels(bin_labels, rotation=35, ha="right", fontsize=TICK_SIZE - 1)
+        ax.set_title(f"Visual read {_SIGN[read]} scans: model says {_SIGN[1 - read]} in "
+                     f"{int(disagree.sum())} of {len(sub)}", fontsize=TITLE_SIZE - 4)
+        ax.set_xlabel(label_x, fontsize=LABEL_SIZE - 2)
+        ax.set_ylabel("Scans", fontsize=LABEL_SIZE - 2)
+        ax.grid(False)
+        ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+        style_legend(ax, loc="best")  # bars live on this axes, so "best" keeps the legend off them
+    fig.suptitle(f"Where the model disagrees with the visual read, by {label_x}", fontsize=TITLE_SIZE - 1)
+    finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
+    save_figure(fig, out_dir / (filename or f"visual_read_discordant_by_{value_col.lower()}.png"), dpi=300)
+    plt.close(fig)
+
+
 def make_agreement_by_value_panel(
     df_preds: pd.DataFrame,
     df_demo: pd.DataFrame,
@@ -1883,7 +1944,6 @@ def make_agreement_by_value_panel(
     value_label: str | None = None,
     cutoff: float | None = None,
     cutoff_note: str = ", temp",
-    discordant_only: bool = False,
     min_bin_n: int = 2,
     min_bin_count: int = 8,
     group_col: str | None = None,
@@ -1906,11 +1966,10 @@ def make_agreement_by_value_panel(
     agreement view instead (model-vs-cutoff, human-vs-cutoff, model-vs-human; see
     _plot_cutoff_agreement) - unlike Centiloid's 24.4, there's no literature-validated
     per-scan SUVR cutoff for any of these regions, so treat any cutoff passed here as
-    provisional and say so if asked. Pass discordant_only=True for a focused 2-line view
-    (False Negative / False Positive rates only, not summing to 100%). group_col (e.g. site)
-    is a fourth mode comparing overall accuracy across subgroups. Modes are mutually
-    exclusive; priority is group_col > cutoff > discordant_only > the default 4-category
-    breakdown."""
+    provisional and say so if asked. group_col (e.g. site) is a third mode comparing overall
+    accuracy across subgroups. Modes are mutually exclusive; priority is group_col > cutoff >
+    the default 4-category breakdown. Where the disagreements are as counts:
+    make_disagreement_counts_by_value_panel."""
     if value_col not in df_demo.columns:
         print(f"[WARNING] '{value_col}' not found in demographics table; skipping agreement-by-{value_col} panel.")
         return
@@ -1970,15 +2029,6 @@ def make_agreement_by_value_panel(
         ylabel = "Agreement (%)"
         title = f"Agreement vs. {label_x} (cutoff = {cutoff:.2f}{cutoff_note}, n={n_total})"
         default_filename = f"visual_read_agreement_vs_cutoff_by_{value_col.lower()}.png"
-    elif discordant_only:
-        _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n, categories=DISCORDANT_CATEGORIES)
-        style_legend(ax, loc="upper center")
-        ax.relim(); ax.autoscale_view(scalex=False)
-        ylim_top = max(10.0, ax.get_ylim()[1] * 1.15)
-        ax.set_ylim(-2, ylim_top)
-        ylabel = "Percentage of scans (%)"
-        title = f"Discordant cases vs. {label_x}"
-        default_filename = f"visual_read_discordant_by_{value_col.lower()}.png"
     else:
         _plot_confusion_category_rates(ax, df, bin_labels, min_bin_n)
         ax.set_ylim(-2, 102)

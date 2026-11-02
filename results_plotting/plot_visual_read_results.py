@@ -10,12 +10,14 @@ import seaborn as sns
 
 from plot_utils import (
     CENTAUR_FTP_CTRZ2_SUVR,
+    CENTILOID_BIN_EDGES,
     CUSTOM_PALETTE,
     find_demo_csv,
     make_agreement_by_centiloid_panel,
     make_agreement_by_value_panel,
     make_classification_breakdown_panel,
     make_classification_breakdown_violin_panel,
+    make_disagreement_counts_by_value_panel,
     make_pr_curve_panel,
     make_probability_by_class_panel,
     make_roc_confusion_panel,
@@ -182,22 +184,19 @@ def main():
                 df_preds, df_demo, out_dir,
                 value_col=value_col, value_label=value_label,
             )
-            # Focused 2-line view (False Negative / False Positive rates only) - isolates
-            # where discordant cases concentrate along this region's SUVR scale, without
-            # the much larger TP/TN lines dominating the view.
-            make_agreement_by_value_panel(
+            # Where the disagreements are along this region's SUVR, as scan counts per read group.
+            make_disagreement_counts_by_value_panel(
                 df_preds, df_demo, out_dir,
                 value_col=value_col, value_label=value_label,
-                discordant_only=True,
             )
         # Headline readability panel: binned agreement vs. Centiloid, styled after the
         # Moscoso et al. 2025 source figure (background histogram + agreement line) -
         # easier to read at a glance than the per-subject scatter/distribution panels above.
         make_agreement_by_centiloid_panel(df_preds, df_demo, out_dir)
-        # Same focused 2-line (FN/FP rate) view as the regional SUVR panels, over Centiloid.
-        make_agreement_by_centiloid_panel(
-            df_preds, df_demo, out_dir, discordant_only=True,
-            filename="visual_read_discordant_by_cl.png",
+        # Same disagreement-count view as the regional SUVR panels, over Centiloid.
+        make_disagreement_counts_by_value_panel(
+            df_preds, df_demo, out_dir, value_col="CL", value_label="Centiloid",
+            base_edges=CENTILOID_BIN_EDGES, filename="visual_read_discordant_by_cl.png",
         )
         # Centiloid's cutoff (24.4) is literature-validated (Moscoso et al. 2025's own
         # amyloid-positivity threshold). The tau SUVR cutoff per region is the SUVR

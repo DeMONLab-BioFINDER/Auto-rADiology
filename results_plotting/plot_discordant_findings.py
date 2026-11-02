@@ -225,7 +225,7 @@ def make_findings_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: 
     fig, axes = plt.subplots(1, 2, figsize=(15, 2.6 + 0.85 * len(indicators)))
     make_dot_plot(axes, df, indicators)
     n_disc = int(df["category"].isin(DISCORDANT).sum())
-    fig.suptitle(f"What the discordant groups look like ({n_disc}/{len(df)} scans discordant)",
+    fig.suptitle(f"What the scans the model disagrees on look like ({n_disc} of {len(df)} scans)",
                  fontsize=TITLE_SIZE - 3)
     fig.subplots_adjust(left=0.17, right=0.95, top=0.82, bottom=0.2, wspace=0.28)
     save_figure(fig, out_dir / filename, dpi=300)
@@ -385,8 +385,8 @@ def make_gradient_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: 
 
     for ax in flat[len(panels):]:
         ax.set_visible(False)
-    fig.suptitle("Where each group sits, concordant negative to concordant positive "
-                 f"(n={len(df)}; whiskers: Wilson 95% CI / IQR)", fontsize=TITLE_SIZE - 3)
+    fig.suptitle("The four model / visual read groups compared "
+                 f"(n={len(df)}; whiskers: 95% CI for %, IQR for medians)", fontsize=TITLE_SIZE - 3)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.95))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)

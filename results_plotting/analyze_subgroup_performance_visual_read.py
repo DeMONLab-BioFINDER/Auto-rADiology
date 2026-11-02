@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Does the visual-read model work equally well in every subgroup? (SUVR-model counterpart:
-analyze_subgroup_performance_suvr.py.)
+"""Does the visual-read model agree with the read equally often in every subgroup? (SUVR-model
+counterpart: analyze_subgroup_performance_suvr.py.)
 
-What is compared. Sensitivity and specificity, each within its own visual-read group:
-  - sensitivity: of the scans the visual read called POSITIVE, how many the model also called positive
-  - specificity: of the scans the visual read called NEGATIVE, how many the model also called negative
+What is compared. How often the model disagrees with the read, each within its own visual-read group:
+  - Model − / Visual read +: of the scans the visual read called POSITIVE, how many the model called
+    negative (1 − positive agreement; positive agreement = sensitivity if the read is taken as truth)
+  - Model + / Visual read −: of the scans the visual read called NEGATIVE, how many the model called
+    positive (1 − negative agreement = 1 − specificity)
+The read is the reference, not the truth, so figures and text use agreement / disagreement; the csv
+keeps the sensitivity / specificity columns (the same counts), and "metric" in the tests csv names
+which of the two a test is about.
 Accuracy and PPV are not compared: both move with how many positive scans a subgroup happens to
 contain, so e.g. CU would look better than AD dementia mostly because CU scans are mostly clearly
 negative. Splitting by the visual read first removes that.
@@ -33,9 +38,10 @@ for the trial-screening question - in the performance csv with tested = False, n
 Outputs, next to the run's other figures:
     visual_read_subgroup_performance.csv  - every level of every variable: n, sensitivity and
                                             specificity (Wilson 95% CI), PPV, NPV, AUC (bootstrap CI)
-    visual_read_subgroup_tests.csv        - every test: family, raw and FDR-corrected p
-    visual_read_subgroup_<variable>.png   - ONLY for variables with an FDR-significant difference,
-                                            showing only the measure(s) that differed
+    visual_read_subgroup_tests.csv        - every test: family, what it compares (in words), raw and
+                                            FDR-corrected p
+    visual_read_subgroup_<variable>.png   - ONLY for variables with an FDR-significant difference:
+                                            % disagreement per group, only for the read group(s) that differed
     visual_read_subgroup_cdrsb.png        - ONLY if CDR-SB beyond diagnosis is significant: CDR-SB of
                                             scans the model agreed vs disagreed with, per diagnosis
 
@@ -58,13 +64,12 @@ from analyze_bias_significance import add_fdr_columns
 from list_discordant_cases import find_dataset_demo_csv
 from plot_utils import (
     SUBGROUP_DESCRIBED_ONLY,
-    SUBGROUP_METRICS,
     SUBGROUP_MIN_LEVEL_N,
     add_subgroup_columns,
     bootstrap_auc_ci,
     confusion_display_label,
     find_demo_csv,
-    make_subgroup_performance_panel,
+    make_subgroup_disagreement_panel,
     make_value_by_group_figure,
     report_missing_by_site,
     resolve_path,
@@ -76,6 +81,9 @@ from plot_utils import (
 ALPHA = 0.05
 # Visual-read value of the scans each metric is defined on.
 METRIC_READ = {"sensitivity": 1, "specificity": 0}
+# The same test in words, for the tests csv and the printout.
+COMPARES = {"sensitivity": "Model − / Visual read + (among read +)",
+            "specificity": "Model + / Visual read − (among read −)"}
 
 
 def parse_args():
@@ -296,6 +304,7 @@ def main():
     # Primary and secondary are corrected separately: the CDR-SB question was added on top and
     # must not change the primary results.
     tests_df = add_fdr_columns(pd.DataFrame(test_rows), ["family"])
+    tests_df.insert(tests_df.columns.get_loc("metric") + 1, "compares", tests_df["metric"].map(COMPARES))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     overall = level_stats(df)
@@ -304,7 +313,6 @@ def main():
 
     # Figures only for what differs, and only the measure that differed.
     significant = tests_df[tests_df["p_value_fdr_bh"] < ALPHA]
-    metric_spec = {m[0]: m for m in SUBGROUP_METRICS}
     for name, rows in significant.groupby("variable", sort=False):
         metrics = list(rows["metric"])
         if name == "Age":
@@ -316,13 +324,14 @@ def main():
             continue
         col = next(c for c, n, _ in subgroups if n == name)
         sub = stats_df[(stats_df["variable"] == name) & stats_df["tested"]]
-        make_subgroup_performance_panel(
-            sub, {m: overall[m] for m in metrics}, out_dir, metrics=[metric_spec[m] for m in metrics],
+        make_subgroup_disagreement_panel(
+            sub, out_dir, metrics, p_fdr=dict(zip(rows["metric"], rows["p_value_fdr_bh"])),
             filename=f"visual_read_subgroup_{col.removeprefix('_g_')}.png",
         )
 
-    print(f"[done] {len(df)} scans; whole cohort sensitivity {overall['sensitivity']:.1%}, "
-          f"specificity {overall['specificity']:.1%}")
+    print(f"[done] {len(df)} scans; whole cohort: Model − / Visual read + in {1 - overall['sensitivity']:.1%} of read + "
+          f"(positive agreement {overall['sensitivity']:.1%}), Model + / Visual read − in {1 - overall['specificity']:.1%} "
+          f"of read − (negative agreement {overall['specificity']:.1%})")
     untested = stats_df[~stats_df["tested"] & (stats_df["column"] != "_g_cog_amy")]
     if len(untested):
         print(f"[note] in the csv but not tested or plotted (n < {args.min_level_n}, or 'Other' diagnosis): "
@@ -334,7 +343,7 @@ def main():
         print("[result] No subgroup difference survives FDR correction - no figures made.")
     else:
         print("[result] Survives FDR correction (figure made for each):")
-        print(significant[["family", "variable", "metric", "test", "p_value", "p_value_fdr_bh"]].to_string(index=False))
+        print(significant[["family", "variable", "compares", "test", "p_value", "p_value_fdr_bh"]].to_string(index=False))
     described = stats_df[stats_df["column"] == "_g_cog_amy"]
     if len(described):
         print("[described, not tested] Cognitive status × amyloid:")
