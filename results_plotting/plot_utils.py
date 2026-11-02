@@ -1158,7 +1158,7 @@ def make_subgroup_disagreement_panel(
 
     sub = stats_df.reset_index(drop=True)
     fig, axes = plt.subplots(1, len(metrics), squeeze=False,
-                             figsize=(max(4.2, 1.25 * len(sub) + 1.6) * len(metrics), 5.0))
+                             figsize=(max(6.2, 1.25 * len(sub) + 1.6) * len(metrics), 5.0))  # 6.2: room for the titles with 2 groups
     xs = np.arange(len(sub))
     for ax, metric in zip(axes[0], metrics):
         category, read_group = SUBGROUP_DISAGREEMENT[metric]
