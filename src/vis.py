@@ -19,7 +19,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                       vis_kwargs=None, affine_fn=None, # optional: get affine per subject
                       vis_norm="zscore", skull_suppress_pct=20,      # PET intensity percentile
                       use_pseudo_surface=False, pseudo_surface_sigma=1.0, pseudo_surface_pct=90,
-                      color_max=None, show_prob=False):
+                      color_max=None, show_prob=False, out_name=None):
     """
     Run volumetric explainability visualizations for 3D PET models.
 
@@ -42,6 +42,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
       picture is scaled to its own strongest value.
     show_prob: classifier only - put the model's P(positive) and the visual read in each
       picture's title and in summary.csv (one row per subject, with each map's min/max).
+    out_name: output folder name under <output_path>/visualization (default vis_name).
     """
     vis_type = ['class','pos_vs_neg']
     VIS_REGISTRY = {
@@ -55,7 +56,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     print('vis_fn:',vis_fn)
     vis_kwargs = vis_kwargs or {}
 
-    vis_dir = os.path.join(output_path, 'visualization', vis_name)
+    vis_dir = os.path.join(output_path, 'visualization', out_name or vis_name)
     os.makedirs(vis_dir, exist_ok=True)
 
     # colour bar labels of the MIP pngs; pos_vs_neg is signed, so it gets a blue-red scale centred on 0

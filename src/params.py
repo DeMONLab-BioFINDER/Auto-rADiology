@@ -131,6 +131,10 @@ def parse_arguments():
     parser.add_argument("--vis_brain_bbox", action="store_true",
                         help="Occlusion: only occlude inside the bounding box of the (non-zero) brain, skipping empty "
                              "background. Output outside the box is 0.")
+    parser.add_argument("--vis_out_name", type=str, default=None,
+                        help="Folder name under <best_model_folder>/visualization for the maps (default: the "
+                             "visualization name, e.g. 'occlusion'). Give each job its own name so jobs running at "
+                             "the same time don't write into the same folder.")
     parser.add_argument("--vis_benchmark", action="store_true",
                         help="Do not run the visualization: time a few batches of forward passes on the first selected "
                              "subject and print projected whole-volume occlusion times for several mask/overlap settings.")

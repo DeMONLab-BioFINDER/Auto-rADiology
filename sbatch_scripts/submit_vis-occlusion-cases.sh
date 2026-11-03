@@ -10,7 +10,9 @@
 # target: prob = drop in probability (default), logit = drop in the model's log-odds, needed for
 # very confident scans (P ~1 or ~0), where the probability cannot move and the map is noise.
 # Maps go to <best_model_folder>/validation/visualization/occlusion_cases_<target>_<fill>_mask<M>_ov<O>
-# (earlier output of the same settings there is replaced).
+# (earlier output of the same settings there is replaced). Each setting writes straight into its own
+# folder, so jobs with different settings can run at the same time; two jobs with the SAME settings
+# on the same model still share a folder - wait for one to finish.
 #
 # Usage:
 #   sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [target] [mask_size] [overlap] [fill]
@@ -63,6 +65,11 @@ from src.params import parse_arguments
 sys.argv = ['x', '--best_model_folder', '$BEST_MODEL_FOLDER']
 print(os.path.join(parse_arguments().output_path, 'visualization'))
 " | tail -n 1)
+DATASET_TAG=""
+[[ "$DATASET" != "Gothenburg" ]] && DATASET_TAG="${DATASET}_"
+OUT_NAME="occlusion_cases_${DATASET_TAG}${TARGET}_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
+RUN_DIR="$VIS_DIR/$OUT_NAME"
+[[ -n "$VIS_DIR" ]] && rm -rf "$RUN_DIR"
 echo "Dataset $DATASET, data type $DATA_TYPE, subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
@@ -85,15 +92,11 @@ python ./run_vis.py \
   --vis_occlusion_mode "$FILL" \
   --vis_brain_bbox \
   --vis_occlusion_target "$TARGET" \
+  --vis_out_name "$OUT_NAME" \
   || RUN_STATUS=$?
 ELAPSED=$((SECONDS - START))
 echo "[timing] ${ELAPSED}s = $((ELAPSED / 60)) min for all subjects"
 
-DATASET_TAG=""
-[[ "$DATASET" != "Gothenburg" ]] && DATASET_TAG="${DATASET}_"
-RUN_DIR="$VIS_DIR/occlusion_cases_${DATASET_TAG}${TARGET}_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
-if [[ -d "$VIS_DIR/occlusion" ]]; then
-  rm -rf "$RUN_DIR" && mv "$VIS_DIR/occlusion" "$RUN_DIR" && echo "maps saved in $RUN_DIR"
-fi
+[[ -d "$RUN_DIR" ]] && echo "maps saved in $RUN_DIR"
 
 exit $RUN_STATUS

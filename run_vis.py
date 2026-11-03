@@ -66,7 +66,7 @@ def main(args):
                           target=args.vis_occlusion_target)
     run_visualization(model, dl_va, args.device, args.output_path, vis_name=args.visualization_name,
                       vis_kwargs=vis_kwargs, vis_norm=None, color_max=args.vis_color_max,
-                      show_prob='visual_read' in targets_list)
+                      show_prob='visual_read' in targets_list, out_name=args.vis_out_name)
 
     print('DONE!')
 
