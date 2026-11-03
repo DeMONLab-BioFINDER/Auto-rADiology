@@ -8,6 +8,7 @@ import pandas as pd
 from src.params import parse_arguments
 from src.utils import get_device, set_seed
 from src.model_factory import build_model_from_args, classifier_out_dim
+from src.checkpoints import load_state_dict_checked
 from src.data import get_train_val_loaders
 from src.vis import run_visualization, benchmark_occlusion
 from src.validation import load_validation_data
@@ -49,7 +50,7 @@ def main(args):
     ckpt = ckpt_last if os.path.exists(ckpt_last) else ckpt_best
     sd = torch.load(ckpt, map_location=args.device, weights_only=True)
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
-    model.load_state_dict(state_dict, strict=False)
+    load_state_dict_checked(model, state_dict, ckpt)
     model.eval()  # before anything runs the model: in train mode, dropout and batch-of-1 BatchNorm give wrong probabilities
 
     if args.vis_benchmark:

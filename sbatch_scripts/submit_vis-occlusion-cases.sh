@@ -24,6 +24,7 @@
 #   DATASET=AVID_unseen DATA_TYPE=tau_raw_2mm_pts sbatch submit_vis-occlusion-cases.sh <folder> <AVID IDs> logit
 # Those maps go to .../occlusion_cases_<DATASET>_<target>_..., next to the test-set ones.
 # Pick AVID IDs from <folder>/validation/External_validation_AVID_unseen__*_zeroshot_results.csv.
+# For a model trained with POOL=attention, put the same POOL=attention in front.
 # Time: ~6 min per scan.
 
 #SBATCH -A berzelius-2026-231
@@ -57,6 +58,11 @@ OVERLAP="${5:-0.5}"
 FILL="${6:-gaussian}"
 DATA_TYPE="${DATA_TYPE:-tau_raw}"
 DATASET="${DATASET:-Gothenburg}"
+POOL="${POOL:-avg}"
+MODEL_ARGS=()
+if [[ "$POOL" != "avg" ]]; then
+  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+fi
 
 # Relative folder names resolve under <proj_path>/results, same as src/params.py does.
 VIS_DIR=$(python -c "
@@ -93,6 +99,7 @@ python ./run_vis.py \
   --vis_brain_bbox \
   --vis_occlusion_target "$TARGET" \
   --vis_out_name "$OUT_NAME" \
+  "${MODEL_ARGS[@]}" \
   || RUN_STATUS=$?
 ELAPSED=$((SECONDS - START))
 echo "[timing] ${ELAPSED}s = $((ELAPSED / 60)) min for all subjects"

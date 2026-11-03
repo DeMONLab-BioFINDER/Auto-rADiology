@@ -16,7 +16,7 @@ from src.train import inference
 from src.cv import train_model
 from src.utils import compute_smooth_sigma_vox
 from src.model_factory import build_model_from_args, classifier_out_dim
-from src.checkpoints import load_best_checkpoint
+from src.checkpoints import load_best_checkpoint, load_state_dict_checked
 from src.splits import add_quantile_bins
 
 import torch.multiprocessing as mp
@@ -205,7 +205,7 @@ def load_preatrained_model(args, df) -> torch.nn.Module:
     sd = torch.load(ckpt, map_location=args.device, weights_only=True)
 
     state_dict = sd.get("model", sd) if isinstance(sd, dict) else sd
-    model.load_state_dict(state_dict, strict=False)
+    load_state_dict_checked(model, state_dict, ckpt)
 
     return model, targets_list
 

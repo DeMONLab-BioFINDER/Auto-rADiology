@@ -18,6 +18,10 @@
 #        sbatch submit_visual-read-final-val.sh tau_raw_2mm_pts 7      (second training seed)
 # train_seed only changes weight initialisation / shuffling / augmentation; test and validation
 # scans stay the same.
+# Pooling: POOL=attention (gated attention/MIL pooling, CNN3D pool="attention") instead of the default
+# global average pooling, e.g.  POOL=attention sbatch submit_visual-read-final-val.sh tau_T1MNI_pts
+# The run name gets "-attention". The AVID and occlusion scripts need the same POOL=... to rebuild
+# the model (a mismatched checkpoint now stops with an error).
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -43,11 +47,17 @@ DATA_TYPE="${1:-tau_raw}"
 TRAIN_SEED="${2:-}"
 SEED_ARGS=()
 NAME_EXTRA="visual-read-final-val"
+POOL="${POOL:-avg}"
+MODEL_ARGS=()
+if [[ "$POOL" != "avg" ]]; then
+  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+fi
+[[ "$POOL" != "avg" ]] && NAME_EXTRA="${NAME_EXTRA}-${POOL}"
 if [[ -n "$TRAIN_SEED" ]]; then
   SEED_ARGS=(--train_seed "$TRAIN_SEED")
   NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
 fi
-echo "data_type: $DATA_TYPE, train_seed: ${TRAIN_SEED:-same as split seed}"
+echo "data_type: $DATA_TYPE, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
@@ -66,6 +76,7 @@ python ./run.py \
   --cls_loss softmax \
   --model_name_extra "$NAME_EXTRA" \
   "${SEED_ARGS[@]}" \
+  "${MODEL_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

@@ -15,6 +15,7 @@
 #   sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name> [data_type]   default tau_raw
 #   e.g. sbatch submit_val_AVID_unseen_visual-read.sh <2mm final run folder> tau_raw_2mm_pts
 # data_type must be the one the final model was trained on.
+# For a model trained with POOL=attention, submit with the same POOL=attention in front.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -41,6 +42,11 @@ if [[ -z "$BEST_MODEL_FOLDER" ]]; then
   exit 1
 fi
 DATA_TYPE="${2:-tau_raw}"
+POOL="${POOL:-avg}"
+MODEL_ARGS=()
+if [[ "$POOL" != "avg" ]]; then
+  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+fi
 echo "data_type: $DATA_TYPE"
 
 DATASET=AVID_unseen
@@ -55,6 +61,7 @@ python "./run_val.py" \
   --targets visual_read \
   --cls_loss softmax \
   --few_shot 0 \
+  "${MODEL_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
