@@ -17,12 +17,20 @@ Compared, on the same test scans:
 For all test scans and separately for cognitively unimpaired (CU) and impaired (MCI + AD dementia),
 because SUVR agrees with the visual read much less well in CU (Karagianni 2026).
 
+Is the model just an SUVR threshold? (Meta-temporal only, all test scans, descriptive)
+    Scan by scan: does the model disagree with the read on the same scans as an SUVR rule? Besides
+    the two rules above, "matched to model" is the SUVR threshold that calls as many test scans
+    positive as the model does, so a model that only follows SUVR would disagree on exactly its scans.
+    Plus the Spearman correlation of model probability with SUVR (all, read +, read - scans).
+
 Outputs (to <run_dir>/figures, next to the other visual-read figures):
     visual_read_model_vs_suvr_threshold.png  - ROC curves on the test scans (model vs Meta-temporal
                                                SUVR), with each rule's operating point; one panel
                                                per group
     visual_read_model_vs_suvr_threshold.csv  - every region x group x rule: n, sensitivity,
                                                specificity (CIs), McNemar p vs the model, AUCs
+    visual_read_model_vs_suvr_overlap.csv    - per rule and direction: scans the model / the rule
+                                               disagree on, both, only one (counts, no IDs)
 
 Usage:
     python results_plotting/compare_model_vs_suvr_threshold.py /path/to/run_dir --dataset Gothenburg \
@@ -46,6 +54,7 @@ from plot_utils import (
     TICK_SIZE,
     TITLE_SIZE,
     combine_dx_groups,
+    confusion_display_label,
     find_demo_csv,
     finalize_figure,
     pretty_region_name,
@@ -112,6 +121,33 @@ def group_masks(df: pd.DataFrame) -> dict:
         masks["CU"] = (dx == "CU").fillna(False)
         masks["Impaired"] = dx.isin(["MCI", "AlzCS dem"]).fillna(False)
     return masks
+
+
+def suvr_overlap(test: pd.DataFrame, region: str, thresholds: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Scan-level overlap of the model's and each SUVR rule's disagreements with the read, plus
+    Spearman correlations of model probability with SUVR."""
+    d = test.dropna(subset=[region])
+    y, x, pred = d["y"].to_numpy(int), d[region].to_numpy(float), d["pred"].to_numpy(int)
+    n_pos_calls = int(pred.sum())
+    # SUVR threshold calling as many scans positive as the model (ties at the threshold count as positive)
+    matched = float(np.sort(x)[::-1][n_pos_calls - 1]) if n_pos_calls else np.inf
+    rules = {**thresholds[region], "matched to model": matched}
+    model_dis = pred != y
+    rows = []
+    for rule, t in rules.items():
+        rule_dis = (x >= t).astype(int) != y
+        for read, label in [(0, confusion_display_label("False Positive")),
+                            (1, confusion_display_label("False Negative"))]:
+            m, r = model_dis[y == read], rule_dis[y == read]
+            rows.append({"rule": rule, "threshold": round(t, 3), "direction": label,
+                         "model disagrees": int(m.sum()), "rule disagrees": int(r.sum()),
+                         "both": int((m & r).sum()), "only model": int((m & ~r).sum()),
+                         "only rule": int((~m & r).sum())})
+    corr = []
+    for name, keep in [("all", np.ones_like(y, bool)), ("read +", y == 1), ("read -", y == 0)]:
+        rho, p = stats.spearmanr(d["prob"].to_numpy(float)[keep], x[keep])
+        corr.append({"scans": name, "n": int(keep.sum()), "spearman_rho": round(float(rho), 3), "p": float(p)})
+    return pd.DataFrame(rows), pd.DataFrame(corr)
 
 
 def make_figure(test: pd.DataFrame, thresholds: dict, rows: pd.DataFrame, out_path: Path):
@@ -241,6 +277,15 @@ def main():
                                                     f"p spec={r['mcnemar_p_specificity']:.2g}")
                 print(f"      {r['rule']:<17} sens {r['sensitivity']:.1%} [{r['sens_lo']:.1%}-{r['sens_hi']:.1%}]  "
                       f"spec {r['specificity']:.1%} [{r['spec_lo']:.1%}-{r['spec_hi']:.1%}]{p}")
+
+    if FIGURE_REGION in regions:
+        overlap_df, corr_df = suvr_overlap(test, FIGURE_REGION, thresholds)
+        overlap_df.to_csv(out_dir / "visual_read_model_vs_suvr_overlap.csv", index=False)
+        print(f"\n[same scans?] Does the model disagree with the read on the same scans as a "
+              f"{pretty_region_name(FIGURE_REGION)} SUVR rule? (all test scans)")
+        print(overlap_df.to_string(index=False))
+        print(f"\n[Spearman] model probability vs {pretty_region_name(FIGURE_REGION)} SUVR")
+        print(corr_df.to_string(index=False))
     print(f"\n[done] saved to {out_dir}")
 
 
