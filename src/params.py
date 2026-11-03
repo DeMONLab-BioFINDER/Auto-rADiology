@@ -107,7 +107,7 @@ def parse_arguments():
                               "guarantee across all versions/platforms.")
 
     # Visualization
-    parser.add_argument("--visualization_name", type=str, default='gradcam', help="Interpretation method. e.g. 'gradcam' or 'occlusion'")
+    parser.add_argument("--visualization_name", type=str, default='gradcam', help="Interpretation method: 'gradcam', 'occlusion' or 'attention' (attention-pooling weights; model needs pool=attention)")
     parser.add_argument("--vis_img_list", type=str, default='0,1,2', help="visulize specific subject, ID seperate by comma")
     parser.add_argument("--vis_mask_size", type=int, default=8,
                         help="Occlusion: cube side length in voxels of the occluded patch (on the 128^3 model input). "

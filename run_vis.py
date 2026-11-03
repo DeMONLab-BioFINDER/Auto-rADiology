@@ -24,7 +24,9 @@ def main(args):
     else:
         df_train = pd.read_csv(args.best_model_folder + '/splits/train_subjects.csv')
         df_test = pd.read_csv(args.best_model_folder + '/splits/test_subjects.csv')
-        df = pd.concat([df_train, df_test], ignore_index=True)
+        val_path = args.best_model_folder + '/splits/val_subjects.csv'  # runs with a validation split
+        df_val = pd.read_csv(val_path) if os.path.exists(val_path) else df_test.iloc[:0]
+        df = pd.concat([df_train, df_val, df_test], ignore_index=True)
     if args.vis_img_list:
         subject_id_list = [int(t.strip()) for t in args.vis_img_list.split(',') if t.strip()]
         df_select = df[df['ID'].isin(subject_id_list)].reset_index(drop=True)

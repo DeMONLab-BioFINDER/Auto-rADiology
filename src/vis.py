@@ -14,6 +14,8 @@ from scipy.ndimage import gaussian_gradient_magnitude
 from monai.visualize.class_activation_maps import GradCAM
 from monai.visualize.occlusion_sensitivity import OcclusionSensitivity
 
+from src.models import AttentionPool3D
+
 
 def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                       vis_kwargs=None, affine_fn=None, # optional: get affine per subject
@@ -48,6 +50,7 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     VIS_REGISTRY = {
         "gradcam": gradcam_vis_fn,
         "occlusion": occlusion_vis_fn,
+        "attention": attention_vis_fn,
         }
     vis_fn = VIS_REGISTRY[vis_name]
     # eval mode BEFORE the P(positive) below: the vis functions only switch it on inside, so the first scan's
@@ -62,7 +65,8 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
     # colour bar labels of the MIP pngs; pos_vs_neg is signed, so it gets a blue-red scale centred on 0
     target = vis_kwargs.get("target", "prob") if vis_name == "occlusion" else "prob"
     labels = MIP_LABELS_LOGIT if target == "logit" else MIP_LABELS
-    mip_labels = {'class': labels['class'] if vis_name == "occlusion" else vis_name, 'pos_vs_neg': labels['pos_vs_neg']}
+    class_label = {"occlusion": labels['class'], "attention": ATTENTION_LABEL}.get(vis_name, vis_name)
+    mip_labels = {'class': class_label, 'pos_vs_neg': labels['pos_vs_neg']}
     vis_sum = {'class': None,'pos_vs_neg':None}
     vis_count = {'class': 0, 'pos_vs_neg': 0}
     img_sum, img_n = None, 0  # running mean of the input images, for the group-average MIP background
@@ -171,6 +175,35 @@ def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_
         cam_np = (cam_np - vmin) / (vmax - vmin) if vmax > vmin else np.zeros_like(cam_np)
 
     return cam_np, None
+
+
+ATTENTION_LABEL = "attention weight, as a multiple of an even share\n(1 = every location weighted the same, 10 = ten times its share)"
+
+
+def attention_vis_fn(model, x, extra, **kwargs):
+    """Where an attention-pooling model (CNN3D pool="attention") puts its weight: the softmax weights
+    AttentionPool3D gives each location of the last feature map (e.g. 8x8x8 for a 128^3 input), times
+    the number of locations, so 1 = an even share. Each location is drawn as its block of input voxels
+    (nearest upsampling - one block = one location, no smoothing). Prints how concentrated the weight
+    is: the effective number of locations (1 / sum of squared weights; all locations = even weighting,
+    i.e. average pooling) and the share of weight in the top 5% of locations."""
+    pool = getattr(model, "pool", None)
+    if not isinstance(pool, AttentionPool3D):
+        raise ValueError("visualization_name 'attention' needs a model trained with pool='attention' "
+                         "(pass --model_kwargs '{\"pool\": \"attention\"}').")
+    model.eval()
+    with torch.no_grad():
+        grid = tuple(model.features(x).shape[2:])
+        model(x, extra=extra)  # fills pool.last_attn_weights
+    w = pool.last_attn_weights[0].float()  # [N], sums to 1
+    n = w.numel()
+    n_eff = float(1.0 / (w ** 2).sum())
+    top5 = float(w.sort(descending=True).values[:max(1, round(0.05 * n))].sum())
+    print(f"[attention] {n} locations {grid}: effective number of locations {n_eff:.0f} ({n_eff / n:.0%} of all; "
+          f"100% = plain averaging), top 5% of locations hold {top5:.0%} of the weight, strongest = {float(w.max()) * n:.0f}x an even share")
+    heat = (w * n).reshape(1, 1, *grid)
+    heat = F.interpolate(heat, size=tuple(x.shape[-3:]), mode="nearest")
+    return heat[0, 0].cpu().numpy(), None
 
 
 def _parse_occlusion_mode(mode, x=None):
