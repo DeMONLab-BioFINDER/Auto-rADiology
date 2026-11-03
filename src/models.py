@@ -29,6 +29,31 @@ class AttentionPool3D(nn.Module):
         return pooled
 
 
+class AvgMaxPool3D(nn.Module):
+    """Global average and global max pooling side by side ([B, 2C]): the head sees both the
+    whole-volume average of each feature and its single strongest location, so one focal spot
+    can count without being diluted by the rest of the brain. No learnable parameters."""
+    def forward(self, x):
+        return torch.cat([x.mean(dim=(2, 3, 4)), x.amax(dim=(2, 3, 4))], dim=1)
+
+
+class TopKPool3D(nn.Module):
+    """Per feature, the mean of its strongest `frac` of spatial locations ([B, C]): between
+    global average pooling (frac = 1) and max pooling (one location), closer to an "any raised
+    region" rule than an average and more stable than a single max. No learnable parameters."""
+    def __init__(self, frac: float = 0.05):
+        super().__init__()
+        assert 0 < frac <= 1
+        # a buffer, so the checkpoint records it: without any saved tensor, a top-k checkpoint would
+        # load into an average-pooling model without a mismatch (see checkpoints.load_state_dict_checked)
+        self.register_buffer("frac", torch.tensor(float(frac)))
+
+    def forward(self, x):
+        flat = x.flatten(2)  # [B, C, N]
+        k = max(1, int(round(float(self.frac) * flat.shape[-1])))
+        return flat.topk(k, dim=-1).values.mean(dim=-1)
+
+
 class CNN3D(nn.Module):
     """
     A small 3D CNN for scalar output.
@@ -52,18 +77,22 @@ class CNN3D(nn.Module):
         Number of groups for GroupNorm (only used when norm="group"). Falls back to
         1 group for any conv stage whose channel count isn't divisible by gn_groups.
     pool : str
-        "avg" (global average pooling, default) or "attention" (gated attention/MIL
-        pooling over spatial locations - see AttentionPool3D).
+        "avg" (global average pooling, default), "attention" (gated attention/MIL
+        pooling over spatial locations - see AttentionPool3D), "avgmax" (average and max
+        side by side - see AvgMaxPool3D) or "topk" (mean of the strongest topk_frac of
+        locations - see TopKPool3D).
     attn_hidden : int
         Hidden dim of the attention scoring MLP (only used when pool="attention").
+    topk_frac : float
+        Share of locations averaged by pool="topk" (default 0.05).
     """
     def __init__(self, in_channels: int = 1, widths=(16, 32, 64, 128), pool_every: int = 1,
                  dropout: float = 0.2, norm: str = "batch", num_classes=1, extra_dim=0,
-                 gn_groups: int = 8, pool: str = "avg", attn_hidden: int = 128):
+                 gn_groups: int = 8, pool: str = "avg", attn_hidden: int = 128, topk_frac: float = 0.05):
         super().__init__()
         assert pool_every >= 1
         assert norm in {"batch", "instance", "group"}
-        assert pool in {"avg", "attention"}
+        assert pool in {"avg", "attention", "avgmax", "topk"}
         print(f'in_channels: {in_channels}, widths: {widths}, pool_every: {pool_every}, dropout: {dropout}, norm: {norm}, num_classes: {num_classes}, pool: {pool}')
         def make_norm(c):
             if norm == "batch":
@@ -93,14 +122,18 @@ class CNN3D(nn.Module):
         self._attention_pool = pool == "attention"
         if self._attention_pool:
             self.pool = AttentionPool3D(widths[-1], hidden_dim=attn_hidden)
+        elif pool == "avgmax":
+            self.pool = AvgMaxPool3D()
+        elif pool == "topk":
+            self.pool = TopKPool3D(topk_frac)
         else:
             self.pool = nn.AdaptiveAvgPool3d(1)
-        in_fc = widths[-1] + extra_dim
+        in_fc = widths[-1] * (2 if pool == "avgmax" else 1) + extra_dim
         self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_fc, num_classes))
 
     def forward(self, x, extra):
         x = self.features(x)       # [B, C, D, H, W]
-        x = self.pool(x) if self._attention_pool else self.pool(x).flatten(1)  # [B, C]
+        x = self.pool(x).flatten(1)  # [B, C] ([B, 2C] for avgmax)
 
         if extra is not None and not torch.isnan(extra).all():
             if extra.ndim == 1: extra = extra.unsqueeze(0)

@@ -18,9 +18,10 @@
 #        sbatch submit_visual-read-final-val.sh tau_raw_2mm_pts 7      (second training seed)
 # train_seed only changes weight initialisation / shuffling / augmentation; test and validation
 # scans stay the same.
-# Pooling: POOL=attention (gated attention/MIL pooling, CNN3D pool="attention") instead of the default
-# global average pooling, e.g.  POOL=attention sbatch submit_visual-read-final-val.sh tau_T1MNI_pts
-# The run name gets "-attention". The AVID and occlusion scripts need the same POOL=... to rebuild
+# Pooling (CNN3D pool=...) instead of the default global average pooling: POOL=attention (gated
+# attention/MIL), POOL=avgmax (average and max side by side) or POOL=topk (mean of the strongest 5% of
+# locations), e.g.  POOL=topk sbatch submit_visual-read-final-val.sh tau_T1MNI_pts
+# The run name gets "-<POOL>". The AVID and occlusion scripts need the same POOL=... to rebuild
 # the model (a mismatched checkpoint now stops with an error).
 
 #SBATCH -A berzelius-2026-231
