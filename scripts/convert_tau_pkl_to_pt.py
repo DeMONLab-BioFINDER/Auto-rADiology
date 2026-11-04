@@ -11,7 +11,8 @@ import numpy as np
 import pandas as pd
 import torch
 from monai.data import MetaTensor
-from monai.transforms import Compose, ScaleIntensityRangePercentiles
+from monai.transforms import Compose, EnsureChannelFirst, LoadImage, Orientation, ScaleIntensityRangePercentiles
+from scipy.ndimage import binary_erosion
 
 from src.data import get_transforms
 
@@ -49,6 +50,46 @@ def _build_transform(args):
     steps = tfm.transforms[1:]
     cut = next(i for i, t in enumerate(steps) if isinstance(t, ScaleIntensityRangePercentiles))
     return Compose(steps[:cut]), steps[cut], Compose(steps[cut:])
+
+
+def _load_reference_mask(args):
+    """Reference region (e.g. whole cerebellum) as a boolean array on the model grid: loaded and put in
+    RAS like the scans, thresholded at 0.5 (probabilistic or 0/1 masks), eroded by --mask_erode voxels
+    so warp errors and spill-in at its edge count less. Returns (mask, affine) - the affine is checked
+    against every scan, so a mask on another grid stops the conversion instead of silently misaligning."""
+    tfm = [LoadImage(image_only=True), EnsureChannelFirst()]
+    if args.ras:
+        tfm.append(Orientation(axcodes="RAS", labels=None))
+    m = Compose(tfm)(args.reference_mask)
+    mask = np.asarray(m)[0] > 0.5
+    if args.mask_erode:
+        mask = binary_erosion(mask, iterations=int(args.mask_erode))
+    if not mask.any():
+        raise ValueError(f"Reference mask {args.reference_mask} is empty after erosion")
+    print(f"Reference mask: {int(mask.sum())} voxels after {args.mask_erode}-voxel erosion, shape {mask.shape}")
+    return mask, np.asarray(m.affine, dtype=float)
+
+
+def _reference_scale(x_pre, mask, mask_affine, args):
+    """Divide by the mean of the reference region (-> SUVR) and map to the model input:
+    soft (default) = SUVR 0..--suvr_max -> 0..1, clipped, one window for every scan;
+    hard (--suvr_threshold t) = 1 where SUVR >= t, else 0 (two-colour reader display, no brightness).
+    Only reference voxels with signal (> 0, i.e. inside the head and the scanner field of view)
+    count; coverage = their share of the mask. Returns (x, ref_mean, coverage)."""
+    if x_pre.shape[1:] != mask.shape or not np.allclose(np.asarray(x_pre.affine, dtype=float), mask_affine, atol=1e-3):
+        raise ValueError(f"Reference mask grid {mask.shape} does not match the scan grid {tuple(x_pre.shape[1:])} "
+                         "(different shape or affine) - the mask must be on the same MNI grid as the scans")
+    vol = np.asarray(x_pre)[0]
+    v = vol[mask]
+    covered = v > 0
+    coverage = float(covered.mean())
+    ref = float(v[covered].mean()) if covered.any() else float("nan")
+    if not np.isfinite(ref) or ref <= 0:
+        return torch.zeros_like(torch.as_tensor(vol))[None], ref, coverage
+    suvr = torch.as_tensor(vol / ref, dtype=torch.float32)[None]
+    if args.suvr_threshold is not None:
+        return (suvr >= float(args.suvr_threshold)).float() * (suvr > 0).float(), ref, coverage
+    return (suvr / float(args.suvr_max)).clamp(0.0, 1.0), ref, coverage
 
 
 def _voxel_mm(affine):
@@ -95,6 +136,7 @@ def main(args):
 
     batch_size = int(args.batch_size)
     pre, scale, post = _build_transform(args)
+    mask, mask_affine = _load_reference_mask(args) if args.reference_mask else (None, None)
     buffer, scan_rows = [], []
     batch_id = 0
     total = 0
@@ -111,14 +153,20 @@ def main(args):
             meta = sample.get("meta")
             load_img = MetaTensor(torch.as_tensor(img, dtype=torch.float32), meta=meta)
             x_pre = pre(load_img)
-            x = post(x_pre)
+            if mask is None:
+                x = post(x_pre)
+            else:
+                x, ref_mean, ref_coverage = _reference_scale(x_pre, mask, mask_affine, args)
 
             # per-scan record: geometry (for true-proportion plots, mm-sized occlusion masks) and the
             # native values the scaling mapped to 0 and 1 (to turn e.g. SUVR 1.0 into a model-input value)
             has_affine = bool(meta) and "affine" in meta
             # x_pre is already resized; its affine (updated by MONAI) gives the mm per output voxel
             out_vox = np.asarray(x_pre.pixdim, dtype=float)[:3] if has_affine else np.ones(3)
-            lo, hi = scale.bounds(x_pre) if hasattr(scale, "bounds") else np.percentile(np.asarray(x_pre), [scale.lower, scale.upper])
+            if mask is not None:  # soft: native 0 -> 0, native ref_mean * suvr_max -> 1 (hard: not a linear scale)
+                lo, hi = 0.0, ref_mean * float(args.suvr_max)
+            else:
+                lo, hi = scale.bounds(x_pre) if hasattr(scale, "bounds") else np.percentile(np.asarray(x_pre), [scale.lower, scale.upper])
             # head extent in the output grid; touching the edge with --spacing_mm means the box cut the head
             nz = np.nonzero(np.asarray(x).squeeze() > 0)
             head_vox = np.array([(a.max() - a.min() + 1) if a.size else 0 for a in nz])
@@ -140,6 +188,9 @@ def main(args):
                 row[f"head_mm_{ax}"] = round(float(head_vox[i] * out_vox[i]), 1)
             row["head_touches_edge"] = bool(touches_edge)
             row["bottom_cut"] = bottom_cut
+            if mask is not None:
+                row["reference_mean_native"] = ref_mean
+                row["reference_coverage"] = round(ref_coverage, 3)
             scan_rows.append(row)
 
             if isinstance(x, MetaTensor):
@@ -162,6 +213,13 @@ def main(args):
     scans_csv = out_dir / "tau_pt_scans.csv"
     scans = pd.DataFrame(scan_rows)
     scans.to_csv(scans_csv, index=False)
+    if mask is not None:
+        bad = scans["reference_mean_native"].isna() | (scans["reference_mean_native"] <= 0)
+        low = scans["reference_coverage"] < float(args.min_coverage)
+        print(f"Reference region: coverage median {scans['reference_coverage'].median():.3f}, "
+              f"{int(low.sum())} scans below {args.min_coverage}, {int(bad.sum())} with no signal (saved as all-zero images)")
+        if bad.any() or low.any():
+            print(f"WARNING: check reference_coverage / reference_mean_native in {scans_csv.name}")
     if args.spacing_mm and scans["head_touches_edge"].any():
         print(f"WARNING: {int(scans['head_touches_edge'].sum())} of {len(scans)} heads touch a side or the top of the "
               f"{args.image_shape} box (possibly cut off): see head_touches_edge in {scans_csv.name}")
@@ -206,5 +264,18 @@ if __name__ == "__main__":
     parser.add_argument("--pct_inside_head", action=argparse.BooleanOptionalAction, default=False,
                         help="Scaling percentiles over inside-the-head voxels only (use with --head_crop)")
 
+    parser.add_argument("--reference_mask", type=str, default=None,
+                        help="NIfTI reference-region mask on the scans' grid (e.g. whole cerebellum in MNI). Replaces the "
+                             "percentile scaling: each scan is divided by its mean there (SUVR) and shown on one fixed window")
+    parser.add_argument("--mask_erode", type=int, default=1, help="Voxels to erode the reference mask by")
+    parser.add_argument("--suvr_max", type=float, default=3.3,
+                        help="Soft version: SUVR mapped to 1 (3.3 puts the reader's 1.65 x reference at 0.5)")
+    parser.add_argument("--suvr_threshold", type=float, default=None,
+                        help="Hard version: 1 where SUVR >= this (reader colour transition, 1.65), else 0")
+    parser.add_argument("--min_coverage", type=float, default=0.8,
+                        help="Warn about scans whose signal covers less than this share of the reference mask")
+
     args = parser.parse_args()
+    if args.reference_mask and not args.ras:
+        parser.error("--reference_mask needs --ras (the mask is put in RAS like the scans)")
     main(args)
