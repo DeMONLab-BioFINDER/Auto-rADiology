@@ -23,6 +23,20 @@ Is the model just an SUVR threshold? (Meta-temporal only, all test scans, descri
     positive as the model does, so a model that only follows SUVR would disagree on exactly its scans.
     Plus the Spearman correlation of model probability with SUVR (all, read +, read - scans).
 
+Is the model better than ALL FIVE regional SUVRs together? (all / CU / impaired)
+    A single region is a weak baseline; a combination of regions is the strongest SUVR one.
+    SUVR model       - logistic regression of the read on the five SUVRs (standardised, plus their
+                       squares, so curved relations count), fitted on the TRAINING scans and applied
+                       unchanged to the test scans. Its test AUC vs the model's, paired bootstrap CI.
+    Explained by SUVR - R^2 of the model's log-odds on the same SUVR terms (test scans): how much of
+                       what the model says is regional tau amount.
+    Beyond SUVR      - on the test scans, read ~ SUVR terms vs read ~ SUVR terms + model log-odds:
+                       likelihood-ratio test (does the model know something about the read the SUVRs
+                       don't?) and the odds ratio per SD of model log-odds.
+    The extra part   - the model's log-odds minus what the SUVRs explain (the OLS residual): its AUC
+                       for the read (0.5 = says nothing about the read) and a Kruskal-Wallis test across
+                       sites (a small p would mean part of it follows site/scanner).
+
 Outputs (to <run_dir>/figures, next to the other visual-read figures):
     visual_read_model_vs_suvr_threshold.png  - ROC curves on the test scans (model vs Meta-temporal
                                                SUVR), with each rule's operating point; one panel
@@ -31,6 +45,7 @@ Outputs (to <run_dir>/figures, next to the other visual-read figures):
                                                specificity (CIs), McNemar p vs the model, AUCs
     visual_read_model_vs_suvr_overlap.csv    - per rule and direction: scans the model / the rule
                                                disagree on, both, only one (counts, no IDs)
+    visual_read_model_vs_all_suvr.csv        - per group: the all-regions comparison above
 
 Usage:
     python results_plotting/compare_model_vs_suvr_threshold.py /path/to/run_dir --dataset Gothenburg \
@@ -38,11 +53,13 @@ Usage:
 """
 
 import argparse
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 from scipy import stats
 from sklearn.metrics import roc_auc_score, roc_curve
 
@@ -148,6 +165,59 @@ def suvr_overlap(test: pd.DataFrame, region: str, thresholds: dict) -> tuple[pd.
         rho, p = stats.spearmanr(d["prob"].to_numpy(float)[keep], x[keep])
         corr.append({"scans": name, "n": int(keep.sum()), "spearman_rho": round(float(rho), 3), "p": float(p)})
     return pd.DataFrame(rows), pd.DataFrame(corr)
+
+
+def suvr_terms(df: pd.DataFrame, regions: list[str], mu: pd.Series, sd: pd.Series) -> pd.DataFrame:
+    """Design matrix: constant, standardised SUVRs and their squares (mu/sd from the training scans)."""
+    z = (df[regions] - mu) / sd
+    return sm.add_constant(pd.concat([z, (z ** 2).add_suffix("_sq")], axis=1), has_constant="add")
+
+
+def fit_logit(y, X):
+    """statsmodels Logit, or None if it does not converge (e.g. a group the SUVRs separate perfectly)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            res = sm.Logit(y, X).fit(disp=0, maxiter=500)
+        except Exception:
+            return None
+    return res if res.mle_retvals.get("converged", False) else None
+
+
+def all_suvr_comparison(train: pd.DataFrame, test: pd.DataFrame, regions: list[str], rng) -> pd.DataFrame:
+    tr = train.dropna(subset=regions + ["visual_read"])
+    mu, sd = tr[regions].mean(), tr[regions].std()
+    base = fit_logit(tr["visual_read"].astype(int), suvr_terms(tr, regions, mu, sd))
+    rows = []
+    masks = group_masks(test)
+    for g in [g for g in GROUPS if g in masks]:
+        d = test[masks[g]].dropna(subset=regions)
+        y = d["y"].to_numpy(int)
+        if len(np.unique(y)) < 2:
+            continue
+        X = suvr_terms(d, regions, mu, sd)
+        p = np.clip(d["prob"].to_numpy(float), 1e-6, 1 - 1e-6)
+        model_logodds = np.log(p / (1 - p))
+        row = {"group": g, "n": len(y), "n_read_positive": int(y.sum())}
+        if base is not None:
+            row.update(paired_auc(y, d["prob"].to_numpy(float), base.predict(X).to_numpy(), rng))
+        ols = sm.OLS(model_logodds, X).fit()
+        row["r2_model_by_suvr"] = ols.rsquared
+        resid = ols.resid
+        row["auc_extra_part"] = roc_auc_score(y, resid)
+        if "site" in d.columns:
+            by_site = [resid[(d["site"] == s).to_numpy()] for s in d["site"].dropna().unique()]
+            by_site = [r for r in by_site if len(r) >= 5]
+            row["site_kruskal_p"] = stats.kruskal(*by_site).pvalue if len(by_site) >= 2 else np.nan
+        m0 = fit_logit(y, X)
+        m1 = fit_logit(y, X.assign(model_logodds=(model_logodds - model_logodds.mean()) / model_logodds.std()))
+        if m0 is not None and m1 is not None:
+            lr = 2 * (m1.llf - m0.llf)
+            row["lr_p_beyond_suvr"] = stats.chi2.sf(lr, 1)
+            lo, hi = m1.conf_int().loc["model_logodds"]
+            row["or_per_sd_model"], row["or_lo"], row["or_hi"] = np.exp([m1.params["model_logodds"], lo, hi])
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def make_figure(test: pd.DataFrame, thresholds: dict, rows: pd.DataFrame, out_path: Path):
@@ -286,6 +356,23 @@ def main():
         print(overlap_df.to_string(index=False))
         print(f"\n[Spearman] model probability vs {pretty_region_name(FIGURE_REGION)} SUVR")
         print(corr_df.to_string(index=False))
+
+    allr = all_suvr_comparison(train, test, regions, rng)
+    allr.round(4).to_csv(out_dir / "visual_read_model_vs_all_suvr.csv", index=False)
+    print(f"\n[all regions] Model vs all {len(regions)} regional SUVRs together (SUVR model fitted on the training scans)")
+    for _, r in allr.iterrows():
+        print(f"  {r['group']} (n={int(r['n'])}, {int(r['n_read_positive'])} read +)")
+        if pd.notna(r.get("auc_suvr")):
+            print(f"    AUC: model {r['auc_model']:.3f} vs all-SUVR model {r['auc_suvr']:.3f}, "
+                  f"difference {r['auc_diff']:+.3f} [{r['auc_diff_lo']:+.3f} to {r['auc_diff_hi']:+.3f}]")
+        print(f"    Model's log-odds explained by the SUVRs: R^2 = {r['r2_model_by_suvr']:.2f}")
+        if pd.notna(r.get("lr_p_beyond_suvr")):
+            print(f"    Beyond SUVR: the model still predicts the read once the SUVRs are known: "
+                  f"LR p = {r['lr_p_beyond_suvr']:.2g}, OR per SD {r['or_per_sd_model']:.1f} [{r['or_lo']:.1f}-{r['or_hi']:.1f}]")
+        else:
+            print("    Beyond SUVR: not estimable (the logistic fit did not converge in this group)")
+        site = f", differs by site p = {r['site_kruskal_p']:.2g}" if pd.notna(r.get("site_kruskal_p")) else ""
+        print(f"    The part not explained by SUVR: AUC for the read {r['auc_extra_part']:.2f}{site}")
     print(f"\n[done] saved to {out_dir}")
 
 
