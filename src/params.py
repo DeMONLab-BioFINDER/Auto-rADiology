@@ -59,15 +59,6 @@ def parse_arguments():
                               "Not intended to be combined with --class_weight_cls or another --balance_sampling_by "
                               "column in the same run - keep imbalance-handling experiments isolated to one variable "
                               "at a time. No-ops with a warning if the named column isn't in the data.")
-    parser.add_argument("--borderline_weight", type=float, default=1.0,
-                         help="Loss weight of borderline training scans (--borderline_col inside --borderline_band) "
-                              "relative to the others, e.g. 3; weights are rescaled to mean 1. 1 (default) = off. "
-                              "Every scan is still seen once per epoch (no oversampling); validation loss is unweighted.")
-    parser.add_argument("--borderline_band", type=str, default="1.25,1.45",
-                         help="lo,hi of --borderline_col that counts as borderline (default MetaTemporal SUVR 1.25-1.45, "
-                              "around the visual read's SUVR switch point ~1.39 and CTRz 2 = 1.34).")
-    parser.add_argument("--borderline_col", type=str, default="MetaTemporal",
-                         help="Scan-table column defining borderline scans for --borderline_weight.")
     parser.add_argument("--decision_threshold", type=float, default=0.5,
                          help="Probability cutoff for visual_read predictions (prob > threshold -> positive). Kept at 0.5: on CV out-of-fold predictions 0.5 already gives ~98%% specificity (results_plotting/compare_thresholds_visual_read.py).")
     parser.add_argument("--reg_loss", type=str, default='smoothl1', choices=["mse","smoothl1"], help="regression loss name")

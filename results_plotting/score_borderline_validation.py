@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare visual_read runs on their VALIDATION scans, overall and on borderline scans.
 
-For choosing between model variants (pooling, borderline weighting, ...) without using the test set.
+For choosing between model variants (pooling, input scaling, ...) without using the test set.
 Reads <run>/evaluation/<dataset>/Val_<dataset>_results.csv (saved by runs with a validation split since
 the borderline-weighting change; for older runs make it with run_predict_split.py). All runs must share
 the same validation scans (same split seed / fractions).

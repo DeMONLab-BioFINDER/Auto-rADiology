@@ -22,9 +22,6 @@
 # attention/MIL), POOL=avgmax (average and max side by side) or POOL=topk (mean of the strongest 5% of
 # locations), e.g.  POOL=topk sbatch submit_visual-read-final-val.sh tau_T1MNI_pts
 # The run name gets "-<POOL>".
-# Borderline weighting: BORDERLINE_WEIGHT=3 makes training scans with MetaTemporal SUVR 1.25-1.45 count 3x
-# in the loss (--borderline_weight; band via BORDERLINE_BAND=lo,hi). The run name gets "-blw3".
-#   e.g. POOL=attention BORDERLINE_WEIGHT=3 sbatch submit_visual-read-final-val.sh tau_T1MNI_pts 7
 # The validation scans' predictions are saved too (evaluation/<dataset>/Val_<dataset>_results.csv), so
 # variants can be compared on validation with results_plotting/score_borderline_validation.py. The AVID and occlusion scripts need the same POOL=... to rebuild
 # the model (a mismatched checkpoint now stops with an error).
@@ -59,17 +56,11 @@ if [[ "$POOL" != "avg" ]]; then
   MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
 fi
 [[ "$POOL" != "avg" ]] && NAME_EXTRA="${NAME_EXTRA}-${POOL}"
-BORDERLINE_WEIGHT="${BORDERLINE_WEIGHT:-1}"
-BORDERLINE_ARGS=()
-if [[ "$BORDERLINE_WEIGHT" != "1" ]]; then
-  BORDERLINE_ARGS=(--borderline_weight "$BORDERLINE_WEIGHT" --borderline_band "${BORDERLINE_BAND:-1.25,1.45}")
-  NAME_EXTRA="${NAME_EXTRA}-blw${BORDERLINE_WEIGHT}"
-fi
 if [[ -n "$TRAIN_SEED" ]]; then
   SEED_ARGS=(--train_seed "$TRAIN_SEED")
   NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
 fi
-echo "data_type: $DATA_TYPE, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL, borderline weight: $BORDERLINE_WEIGHT"
+echo "data_type: $DATA_TYPE, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
@@ -89,7 +80,6 @@ python ./run.py \
   --model_name_extra "$NAME_EXTRA" \
   "${SEED_ARGS[@]}" \
   "${MODEL_ARGS[@]}" \
-  "${BORDERLINE_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
