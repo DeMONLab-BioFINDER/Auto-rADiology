@@ -90,6 +90,8 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                 row.update({"visual_read": vr, "P_positive": round(p_pos, 4), "pred": int(p_pos >= 0.5)})
 
             # visualize
+            if vis_name == "attention":
+                print(f"ID {pid_b}:", end=" ")  # attention_vis_fn's [attention] summary line follows
             heat_class, heat_pos_vs_neg = vis_fn(model=model, x=xb, extra=extrab, **vis_kwargs)  # [D,H,W]
 
             img_np = xb[0, 0].detach().cpu().numpy()  # (D,H,W)
@@ -182,7 +184,7 @@ ATTENTION_LABEL = "attention weight, as a multiple of an even share\n(1 = every 
 
 def attention_vis_fn(model, x, extra, **kwargs):
     """Where an attention-pooling model (CNN3D pool="attention") puts its weight: the softmax weights
-    AttentionPool3D gives each location of the last feature map (e.g. 8x8x8 for a 128^3 input), times
+    AttentionPool3D gives each location of the last feature map (e.g. 5x6x5 for the cropped MNI inputs), times
     the number of locations, so 1 = an even share. Each location is drawn as its block of input voxels
     (nearest upsampling - one block = one location, no smoothing). Prints how concentrated the weight
     is: the effective number of locations (1 / sum of squared weights; all locations = even weighting,
