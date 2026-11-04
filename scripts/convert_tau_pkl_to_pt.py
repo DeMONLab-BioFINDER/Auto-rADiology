@@ -73,9 +73,10 @@ def _load_reference_mask(args):
 def _reference_scale(x_pre, mask, mask_affine, args):
     """Divide by the mean of the reference region (-> SUVR) and map to the model input:
     soft (default) = SUVR 0..--suvr_max -> 0..1, clipped, one window for every scan;
-    step (--suvr_step t) = the same window with a jump of --step_gap at SUVR t, like the reader's colour
-    scale (FDA label: shaded throughout, a sharp change between two colours at 1.65 x cerebellum):
-    0..t -> 0..(t/suvr_max - gap/2), t..suvr_max -> (t/suvr_max + gap/2)..1, clipped.
+    reader (--suvr_bands e1,...,en) = the reader's colour scale in one channel: below the first edge
+    (the colour transition, 1.65) a smooth grey ramp 0..--grey_top, then one flat level per colour band
+    [e_k, e_k+1) (the last band also takes everything above), evenly spaced from --grey_top + 0.1 to 1,
+    so the change at 1.65 is a jump, as between the two colours.
     Only reference voxels with signal (> 0, i.e. inside the head and the scanner field of view)
     count; coverage = their share of the mask. Returns (x, ref_mean, coverage)."""
     if x_pre.shape[1:] != mask.shape or not np.allclose(np.asarray(x_pre.affine, dtype=float), mask_affine, atol=1e-3):
@@ -90,10 +91,13 @@ def _reference_scale(x_pre, mask, mask_affine, args):
         return torch.zeros_like(torch.as_tensor(vol))[None], ref, coverage
     suvr = torch.as_tensor(vol / ref, dtype=torch.float32)[None]
     x = (suvr / float(args.suvr_max)).clamp(0.0, 1.0)
-    if args.suvr_step is not None:
-        t, g = float(args.suvr_step) / float(args.suvr_max), float(args.step_gap)
-        below, above = t - g / 2, t + g / 2
-        x = torch.where(x < t, x * (below / t), above + (x - t) * ((1 - above) / (1 - t)))
+    if args.suvr_bands:
+        edges = torch.tensor([float(e) for e in args.suvr_bands.split(",")])
+        grey_top = float(args.grey_top)
+        levels = torch.linspace(grey_top + 0.1, 1.0, len(edges)) if len(edges) > 1 else torch.tensor([1.0])
+        band = torch.bucketize(suvr, edges, right=True)  # 0 = below the transition, k = k-th colour band
+        grey = (suvr / edges[0]).clamp(0.0, 1.0) * grey_top
+        x = torch.where(band == 0, grey, levels[(band - 1).clamp(min=0)])
     return x, ref, coverage
 
 
@@ -168,7 +172,7 @@ def main(args):
             has_affine = bool(meta) and "affine" in meta
             # x_pre is already resized; its affine (updated by MONAI) gives the mm per output voxel
             out_vox = np.asarray(x_pre.pixdim, dtype=float)[:3] if has_affine else np.ones(3)
-            if mask is not None:  # native 0 -> 0, native ref_mean * suvr_max -> 1 (step: not linear in between)
+            if mask is not None:  # native 0 -> 0, native ref_mean * suvr_max -> 1 (reader bands: not linear in between)
                 lo, hi = 0.0, ref_mean * float(args.suvr_max)
             else:
                 lo, hi = scale.bounds(x_pre) if hasattr(scale, "bounds") else np.percentile(np.asarray(x_pre), [scale.lower, scale.upper])
@@ -273,17 +277,21 @@ if __name__ == "__main__":
                         help="NIfTI reference-region mask on the scans' grid (e.g. whole cerebellum in MNI). Replaces the "
                              "percentile scaling: each scan is divided by its mean there (SUVR) and shown on one fixed window")
     parser.add_argument("--mask_erode", type=int, default=1, help="Voxels to erode the reference mask by")
-    parser.add_argument("--suvr_max", type=float, default=3.3,
-                        help="Soft version: SUVR mapped to 1 (3.3 puts the reader's 1.65 x reference at 0.5)")
-    parser.add_argument("--suvr_step", type=float, default=None,
-                        help="Step version: a jump of --step_gap in the window at this SUVR (reader colour transition, 1.65)")
-    parser.add_argument("--step_gap", type=float, default=0.2, help="Size of the jump at --suvr_step (model-input units)")
+    parser.add_argument("--suvr_max", type=float, default=5.89,
+                        help="Soft version: SUVR mapped to 1 (5.89 = the readers' upper contrast value: 1.65 x reference "
+                             "at a colour transition at 28%% of the scale)")
+    parser.add_argument("--suvr_bands", type=str, default=None,
+                        help="Reader version: comma-separated SUVR edges of the colour bands, the first = the colour transition")
+    parser.add_argument("--grey_top", type=float, default=0.2,
+                        help="Reader version: model-input value just below the transition (top of the grey ramp)")
     parser.add_argument("--min_coverage", type=float, default=0.8,
                         help="Warn about scans whose signal covers less than this share of the reference mask")
 
     args = parser.parse_args()
     if args.reference_mask and not args.ras:
         parser.error("--reference_mask needs --ras (the mask is put in RAS like the scans)")
-    if args.suvr_step is not None and not 0 < args.suvr_step < args.suvr_max:
-        parser.error("--suvr_step must lie between 0 and --suvr_max")
+    if args.suvr_bands:
+        e = [float(v) for v in args.suvr_bands.split(",")]
+        if any(b <= a for a, b in zip(e, e[1:])) or e[0] <= 0:
+            parser.error("--suvr_bands must be positive and increasing")
     main(args)
