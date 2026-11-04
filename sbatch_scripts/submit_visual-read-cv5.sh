@@ -18,6 +18,10 @@
 #        sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
 # The data type is part of the output folder name, so runs don't overwrite each other.
 # The log ends with "Median best_epoch across folds: N" -> pass N to submit_visual-read-final.sh.
+# Pooling: POOL=attention (or avgmax / topk) instead of global average pooling; the run name gets
+# "-<POOL>". Same seed and split as the average-pooling run, so the folds are identical and the two
+# can be compared scan by scan with results_plotting/compare_cv_runs_oof.py, e.g.
+#   POOL=attention sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -39,7 +43,14 @@ elif [[ ! -d "sbatch_scripts" ]]; then
 fi
 
 DATA_TYPE="${1:-tau_raw_2mm_pts}"
-echo "data_type: $DATA_TYPE"
+NAME_EXTRA="visual-read-cv5-fixedlr"
+POOL="${POOL:-avg}"
+MODEL_ARGS=()
+if [[ "$POOL" != "avg" ]]; then
+  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+  NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+fi
+echo "data_type: $DATA_TYPE, pool: $POOL"
 
 RUN_LOG=$(mktemp)
 python "./run.py" \
@@ -58,7 +69,8 @@ python "./run.py" \
   --es_min_delta 0.001 \
   --cls_loss softmax \
   --no-lr_scheduler \
-  --model_name_extra visual-read-cv5-fixedlr \
+  --model_name_extra "$NAME_EXTRA" \
+  "${MODEL_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
