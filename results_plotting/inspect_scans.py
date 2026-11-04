@@ -12,7 +12,7 @@ For each ID:
       Same amount of tau, different read, so what differs between the two rows is what the
       read reacted to. Rows: 5 axial slices from low to high, then a left and a right lateral
       sagittal slice (temporal and parietal cortex). Each scan is shown on its own model-input
-      scale (0 to 1 after the percentile scaling), so brightness is relative within each scan.
+      scale (0 to 1 after the percentile scaling, or to --vmax), so brightness is relative within each scan.
 
 The pngs and csv have IDs in them: for looking at, not for slides.
 
@@ -54,6 +54,9 @@ def parse_args():
     p.add_argument("--twin_tol", type=float, default=0.03,
                    help="Prefer a same-site twin if its Meta-temporal SUVR is within this of the scan's.")
     p.add_argument("--no_twin", action="store_true", help="Show only the scan itself.")
+    p.add_argument("--vmax", type=float, default=1.0,
+                   help="Model-input value shown brightest (default 1). For tau_T1MNI_cbl_pts (0-1 = SUVR 0-5.89) "
+                        "e.g. 0.5 = SUVR 2.95, otherwise normal brain (~0.17) looks almost black.")
     p.add_argument("--out_dir", default=None)
     args = p.parse_args()
     args.labels = args.labels or [f"run{i + 1}" for i in range(len(args.runs))]
@@ -133,14 +136,14 @@ def head_extent(v: np.ndarray, axis: int) -> tuple[int, int]:
     return (int(idx.min()), int(idx.max())) if idx.size else (0, v.shape[axis] - 1)
 
 
-def draw_row(axes, v: np.ndarray, title: str):
+def draw_row(axes, v: np.ndarray, title: str, vmax: float = 1.0):
     lo_z, hi_z = head_extent(v, 2)
     lo_x, hi_x = head_extent(v, 0)
     panels = [(f"axial {int(f * 100)}%", v[:, :, int(lo_z + f * (hi_z - lo_z))].T) for f in AXIAL_LEVELS]
     panels += [(f"sagittal {'left' if f < 0.5 else 'right'}", v[int(lo_x + f * (hi_x - lo_x)), :, :].T)
                for f in SAGITTAL_LEVELS]
     for ax, (name, img) in zip(axes, panels):
-        ax.imshow(img, cmap="inferno", origin="lower", vmin=0, vmax=1)
+        ax.imshow(img, cmap="inferno", origin="lower", vmin=0, vmax=vmax)
         ax.set_title(name, fontsize=8)
         ax.axis("off")
     axes[0].text(-0.08, 0.5, title, transform=axes[0].transAxes, rotation=90, ha="right", va="center", fontsize=8)
@@ -198,7 +201,7 @@ def main():
         for ax_row, (sid, inf) in zip(axes, scans):
             run_probs = {lab: probs.at[sid, f"prob {lab}"] for lab in args.labels
                          if sid in probs.index and pd.notna(probs.at[sid, f"prob {lab}"])}
-            draw_row(ax_row, cache.get(sid), label(inf, run_probs))
+            draw_row(ax_row, cache.get(sid), label(inf, run_probs), args.vmax)
         title = f"Scan {scan_id}" + (" (top) and a twin with the opposite read and similar Meta-temporal SUVR (bottom)"
                                      if twin is not None else "")
         fig.suptitle(f"{title}\n{args.data_type}, model input, brightness relative within each scan", fontsize=10)
