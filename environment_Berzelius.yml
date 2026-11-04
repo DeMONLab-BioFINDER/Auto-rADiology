@@ -13,6 +13,7 @@ dependencies:
   - optuna
   - matplotlib
   - nibabel
+  - nilearn
   - pip
   - pip:
       - monai>=1.3
