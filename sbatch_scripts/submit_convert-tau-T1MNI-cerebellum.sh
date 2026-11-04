@@ -1,22 +1,16 @@
 #!/bin/bash
 # SLURM batch job script for Berzelius HOPPER - submit from a berzelius-hopper login node.
-# One-off data onboarding: the MNI scans scaled the way the reader sees them, relative to the cerebellum,
+# One-off data onboarding: the MNI scans scaled relative to the cerebellum, as for the visual read,
 # instead of each scan's own 1st-99th percentile. Same pkls and recipe as submit_convert-tau-T1MNI.sh
 # (91x109x91 MNI grid, head mask, no crop), only the brightness scaling differs:
 #
-#   data/tau_T1MNI_cbl_pts        soft: each scan divided by its whole-cerebellum mean (SUVR), then one
-#                                 fixed window for all scans, SUVR 0-5.89 -> 0-1 (the readers' scale top).
-#   data/tau_T1MNI_cblreader_pts  reader: the readers' colour scale in one channel. Below SUVR 1.65 a smooth
-#                                 grey ramp (0-0.2), then 8 flat levels (0.3, 0.4, ..., 1.0), one per colour
-#                                 band: purple 1.65, dark blue 1.94, cyan 2.49, teal 3.06, light green 3.68,
-#                                 yellow 4.21, orange 4.77, red 5.32 and above.
+#   data/tau_T1MNI_cbl_pts   each scan divided by its whole-cerebellum mean (SUVR), then one fixed window
+#                            for all scans, SUVR 0-5.89 -> 0-1, so 1.65 x cerebellum sits at 0.28.
 #
-# Where the numbers come from: FDA TAUVID label, UCV = (MCC x 1.65) x (100% / % level of colour transition),
+# Where 5.89 comes from: FDA TAUVID label, UCV = (MCC x 1.65) x (100% / % level of colour transition),
 # transition anywhere in 25-60%. The scale the labels were read on (Moscoso 2025 supplement, example figures
 # of their automated pipeline, pp. 19 and 21) has the transition at 28% of the colour bar, so the top is
-# 1.65 / 0.28 = 5.89 x cerebellum; the band edges were measured on that bar (28, 33, 42, 52, 62.5, 71.5, 81,
-# 90%) and converted to SUVR. Their bar is inverted grey (white = low) below the transition; the direction
-# does not matter to the model, so here low = 0 and outside the head stays 0.
+# 1.65 / 0.28 = 5.89 x cerebellum. The readers' colour bands are not copied (no new information for a CNN).
 #
 # The cerebellum mask is the Centiloid whole-cerebellum VOI (voi_WhlCbl_2mm.nii from GAAIN's Centiloid
 # project, MNI 2 mm); the conversion stops if it is not on the scans' grid. Eroded by 1 voxel.
@@ -75,7 +69,6 @@ convert() {
 }
 
 convert "$DATA/tau_T1MNI_cbl_pts" --suvr_max 5.89
-convert "$DATA/tau_T1MNI_cblreader_pts" --suvr_max 5.89 --suvr_bands 1.65,1.94,2.49,3.06,3.68,4.21,4.77,5.32 --grey_top 0.2
 
 # Per site: cerebellum mean in native units and how much of the mask the scan covers (ID = row in the batches)
 python - "$DATA" <<'EOF'
