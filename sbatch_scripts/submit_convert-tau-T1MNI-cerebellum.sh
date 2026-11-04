@@ -7,8 +7,10 @@
 #   data/tau_T1MNI_cbl_pts      soft: each scan divided by its whole-cerebellum mean (SUVR), then one
 #                               fixed window for all scans, SUVR 0-3.3 -> 0-1, so the reader's colour
 #                               transition at 1.65 x cerebellum sits at 0.5 in every scan.
-#   data/tau_T1MNI_cbl165_pts   hard: 1 where SUVR >= 1.65, else 0 (the two-colour display without
-#                               brightness: only where the above-1.65 voxels are, not how bright).
+#   data/tau_T1MNI_cblstep_pts  step: the same window with a jump at SUVR 1.65 (0-1.65 -> 0-0.4,
+#                               1.65-3.3 -> 0.6-1), like the reader's colour scale: shaded below and
+#                               above, a sharp change at 1.65 x cerebellum (FDA TAUVID label: transition
+#                               at 25-60% of the scale; at 50% the top is 3.3 x cerebellum).
 #
 # The cerebellum mask is the Centiloid whole-cerebellum VOI (voi_WhlCbl_2mm.nii from GAAIN's Centiloid
 # project, MNI 2 mm); the conversion stops if it is not on the scans' grid. Eroded by 1 voxel.
@@ -67,7 +69,7 @@ convert() {
 }
 
 convert "$DATA/tau_T1MNI_cbl_pts" --suvr_max 3.3
-convert "$DATA/tau_T1MNI_cbl165_pts" --suvr_threshold 1.65
+convert "$DATA/tau_T1MNI_cblstep_pts" --suvr_max 3.3 --suvr_step 1.65 --step_gap 0.2
 
 # Per site: cerebellum mean in native units and how much of the mask the scan covers (ID = row in the batches)
 python - "$DATA" <<'EOF'
