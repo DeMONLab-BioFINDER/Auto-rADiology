@@ -39,6 +39,9 @@
 module load Miniforge3/25.3.1-0
 mamba activate ai-pet
 
+# The mask path may be relative to where sbatch was run: make it absolute before changing directory
+MASK="${1:+$(realpath -m "$1")}"
+
 # Determine project root based on current directory
 if [[ "$(basename "$PWD")" == "sbatch_scripts" ]]; then
   cd .. || exit 1
@@ -47,7 +50,6 @@ elif [[ ! -d "sbatch_scripts" ]]; then
   exit 1
 fi
 
-MASK="$1"
 if [[ -z "$MASK" || ! -f "$MASK" ]]; then
   echo "Error: give the whole-cerebellum mask (voi_WhlCbl_2mm.nii) as the first argument"
   exit 1
