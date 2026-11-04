@@ -9,7 +9,10 @@ from typing import Any, Tuple, Optional
 from sklearn.metrics import roc_auc_score, accuracy_score, r2_score, mean_absolute_error, root_mean_squared_error
 
 
-def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta, class_weight=None):
+def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, reg_loss, smoothl1_beta, class_weight=None,
+                    sample_weight=None):
+    """sample_weight: optional {scan ID: loss weight} (e.g. borderline scans counting more, see
+    cv.borderline_sample_weights); scans not in it weigh 1."""
     model.train()
     loss_sum = 0.0
     sample_count = 0
@@ -24,7 +27,11 @@ def train_one_epoch(model, loader, opt, scaler, device, loss_w_cls, loss_w_reg, 
 
         #domain_weights = torch.where(idx > 20000, torch.tensor(10.0, device=idx.device),
         #                 torch.tensor(1.0, device=idx.device))  # shape [B] !!!!!!! HARD code for ADNI & IDEAS
-        domain_weights = torch.ones_like(idx, dtype=torch.float32, device=idx.device)
+        if sample_weight:
+            domain_weights = torch.tensor([sample_weight.get(int(i), 1.0) for i in idx.tolist()],
+                                          dtype=torch.float32, device=idx.device)
+        else:
+            domain_weights = torch.ones_like(idx, dtype=torch.float32, device=idx.device)
         
         opt.zero_grad(set_to_none=True)
 
