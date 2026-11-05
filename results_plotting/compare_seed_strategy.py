@@ -30,6 +30,8 @@ Descriptive; no tests. Usage:
 Outputs (default <proj_path>/results/seed_strategy/<labels>_<dataset>, outside the repo, no IDs):
     seed_summary.csv, seed_pairs.csv, seed_strategy.png (switch-point curves | probabilities vs the first seed),
     seed_crossings.csv (one row per crossing scan and pair, has IDs - not for slides),
+    seed_swaps_<a>_vs_<b>.png (slope chart: one line per scan from its distance to seed a's cut-off (matched)
+    to its distance to seed b's; red = crossing scans - short red lines close to the dashed cut-off = near-ties),
     seed_ranking_slide.png (the right panel alone, for a slide; score = log-odds, dotted lines = the 0.5 cut-off)
 """
 import argparse
@@ -87,6 +89,40 @@ def crossings(pa: np.ndarray, pb: np.ndarray, yb_calls: np.ndarray) -> tuple[np.
     a_calls[order[:k]] = 1
     thr = pa[order[k - 1]] if k > 0 else np.inf
     return a_calls != yb_calls, float(thr)
+
+
+def slope_chart(pa: np.ndarray, pb: np.ndarray, thr_a: float, cross: np.ndarray, a: str, b: str, out: Path,
+                ylim: float = 4.0):
+    """Each scan's distance from its seed's own cut-off, in log-odds: A's cut-off matched to B's positive
+    count, B's own 0.5. 0 = on the cut-off line, so a near-tie swap is a short red line close to 0."""
+    def logit(p):
+        p = np.clip(p, 1e-5, 1 - 1e-5)
+        return np.log(p / (1 - p))
+    da, db = logit(pa) - logit(thr_a), logit(pb)
+    fig, ax = plt.subplots(figsize=(5.2, 7))
+    ax.axhspan(0, ylim, color="#fbe3e3", zorder=0)
+    ax.axhspan(-ylim, 0, color="#e3ecfb", zorder=0)
+    show = (np.abs(da) < ylim) | (np.abs(db) < ylim)
+    for i in np.where(show & ~cross)[0]:
+        ax.plot([0, 1], [da[i], db[i]], color="#9a9a9a", lw=0.8, alpha=0.6, zorder=1)
+    for i in np.where(cross)[0]:
+        ax.plot([0, 1], [da[i], db[i]], color="#d62728", lw=2.2, alpha=0.95, zorder=3)
+    ax.axhline(0, color="black", ls="--", lw=1.3, zorder=2)
+    for xpos in (0, 1):
+        ax.axvline(xpos, color="#555555", lw=1.5, zorder=2)
+    ax.set_xlim(-0.12, 1.12)
+    ax.set_ylim(-ylim, ylim)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([a, b], fontsize=13)
+    ax.set_ylabel("Distance from the cut-off (log-odds)", fontsize=12)
+    ax.text(0.5, ylim * 0.93, "Model +", ha="center", va="top", fontsize=12, color="#8b1a1a")
+    ax.text(0.5, -ylim * 0.93, "Model -", ha="center", va="bottom", fontsize=12, color="#1a3f8b")
+    for side in ("top", "right", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.set_title(f"{int(cross.sum())} scans swap sides (red)", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
 
 
 def main():
@@ -159,6 +195,8 @@ def main():
         c["ranked higher by"] = np.where(pct[b][cross] > pct[a][cross], b, a)
         c["large gap"] = gap[cross] > big
         cross_rows.append(c)
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        slope_chart(pa, pb, thr, cross, a, b, args.out_dir / f"seed_swaps_{a}_vs_{b}.png")
         pairs.append({
             "pair": f"{a} vs {b}",
             "Spearman, all": round(spearmanr(pa, pb)[0], 3),
