@@ -219,7 +219,7 @@ def main():
     demo = demo[demo["visual_read"].isin([0, 1])]
     if not args.ref_mask:
         data_dir = Path(args.input_path) / args.data_type
-        demo = demo[demo["ID"] < json.loads((data_dir / "tau_pt_manifest.json").read_text())["n_subjects"]]
+        demo = demo[demo["ID"] < json.loads((data_dir / "tau_pt_manifest.json").read_text())["total_images"]]
     reads = demo.set_index("ID")["visual_read"].astype(int).sort_index()
 
     skipped, ref_values = [], {}
