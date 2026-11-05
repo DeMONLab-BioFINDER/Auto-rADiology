@@ -395,7 +395,7 @@ def main():
     ax.grid(alpha=0.25)
     fig2.tight_layout()
     fig2.savefig(args.out_dir / "seed_ranking_slide.png", dpi=200)
-    print(f"\nSaved seed_summary.csv, seed_pairs.csv, seed_crossings.csv (IDs), seed_strategy.png, seed_ranking_slide.png to {args.out_dir}")
+    print(f"\nSaved seed_summary.csv, seed_pairs.csv, seed_crossings.csv (IDs), seed_strategy.png, seed_ranking_slide.png, seed_slide_*.png, seed_swaps*.png to {args.out_dir}")
 
 
 if __name__ == "__main__":
