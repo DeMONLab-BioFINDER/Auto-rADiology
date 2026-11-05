@@ -30,7 +30,7 @@ Outputs (default <proj_path>/results/fda_regions, outside the repo):
   fda_regions_3d.html      interactive 3D view (drag to rotate; click a name to hide it); needs plotly, skipped
                            with a message if it is missing
 
-Usage (Berzelius login node the first time, since it downloads the atlas; or submit_fda-regions.sh):
+Usage (Berzelius login node: light job, about a minute, and it downloads the atlas on first use):
     python results_plotting/plot_fda_regions.py
 """
 import argparse
