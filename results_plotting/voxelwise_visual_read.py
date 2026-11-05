@@ -27,6 +27,8 @@ MNI152 brain mask.
 Outputs (default <proj_path>/results/voxelwise/<data_type or suvr_<mask>>, outside the repo; no IDs):
   mean_read_negative.nii.gz, mean_read_positive.nii.gz, difference_read_pos_minus_neg.nii.gz,
   coverage.nii.gz (share of all scans with data per voxel), group_counts.csv (n per site and read),
+  colour_scales.json (the one colour range per map used by every PNG and HTML: means 0 to the 99.5th
+  percentile of both groups, difference symmetric up to the 99th percentile of |difference|),
   axial.png (three rows: the two averages on one colour scale, then the difference on the MNI template),
   surface_<map>.png + surface_<map>.html (interactive 3D version: open in a browser, drag to rotate) (each map projected onto the fsaverage5 cortical surface; volume_to_surface only
   samples the cortex, so deep / off-target areas such as the choroid plexus do not show there),
@@ -64,6 +66,7 @@ from inspect_scans import find_demo
 MNI_2MM_RAS = np.array([[2.0, 0, 0, -90], [0, 2.0, 0, -126], [0, 0, 2.0, -72], [0, 0, 0, 1]])
 AXIAL_CUTS = [-36, -24, -12, 0, 12, 24, 36, 48, 60]  # mm, bottom -> top
 GROUPS = {0: "read_negative", 1: "read_positive"}
+MEAN_CMAP, DIFF_CMAP = "inferno", "RdBu_r"  # group means / Read + minus Read - (blue = lower, red = higher)
 
 
 def parse_args():
@@ -161,37 +164,47 @@ def brain_mask_on_grid(shape, affine) -> np.ndarray:
     return mask.get_fdata() > 0
 
 
-def plot_axial(imgs: dict, n: dict, out: Path, what: str):
+def colour_scales(maps: dict, keep: np.ndarray) -> dict:
+    """One colour range per kind of map, shared by every PNG and HTML output so a colour means the same value
+    everywhere: group means 0 to the 99.5th percentile of both groups together; the difference symmetric around 0
+    up to the 99th percentile of |difference| inside the kept voxels (one extreme voxel cannot squash the colours)."""
+    vals = np.concatenate([maps[g][keep & (maps[g] > 0)] for g in GROUPS.values()])
+    return {"mean_vmax": float(np.percentile(vals, 99.5)),
+            "difference_vmax": float(np.percentile(np.abs(maps["difference"][keep]), 99))}
+
+
+def plot_axial(imgs: dict, n: dict, out: Path, what: str, scales: dict):
     template = datasets.load_mni152_template(resolution=2)
-    vals = np.concatenate([imgs[g].get_fdata()[imgs[g].get_fdata() > 0] for g in GROUPS.values()])
-    vmax = float(np.percentile(vals, 99.5))
     fig, axes = plt.subplots(3, 1, figsize=(16, 7.5))
     for ax, (read, g) in zip(axes, GROUPS.items()):
         title = f"Mean {'Read +' if read else 'Read −'} (n = {n[read]})"
-        plotting.plot_img(imgs[g], display_mode="z", cut_coords=AXIAL_CUTS, axes=ax, cmap="inferno",
-                          vmin=0, vmax=vmax, colorbar=True, black_bg=True, title=title, annotate=False)
+        plotting.plot_img(imgs[g], display_mode="z", cut_coords=AXIAL_CUTS, axes=ax, cmap=MEAN_CMAP,
+                          vmin=0, vmax=scales["mean_vmax"], colorbar=True, black_bg=True, title=title, annotate=False)
     plotting.plot_stat_map(imgs["difference"], bg_img=template, display_mode="z", cut_coords=AXIAL_CUTS,
-                           axes=axes[2], cmap="RdBu_r", symmetric_cbar=True, colorbar=True, black_bg=True,
-                           title="Difference: mean Read + − mean Read −", annotate=False)
+                           axes=axes[2], cmap=DIFF_CMAP, symmetric_cbar=True, vmax=scales["difference_vmax"],
+                           colorbar=True, black_bg=True, title="Difference: mean Read + − mean Read −", annotate=False)
     fig.suptitle(f"{what}, axial slices z = {AXIAL_CUTS[0]} to {AXIAL_CUTS[-1]} mm", fontsize=11)
     fig.savefig(out, dpi=130, facecolor="black")
     plt.close(fig)
     print(f"[save] {out}")
 
 
-def save_volume_viewer(img: nib.Nifti1Image, title: str, out: Path, diverging: bool, vmax: float = None):
+def save_volume_viewer(img: nib.Nifti1Image, title: str, out: Path, diverging: bool, vmax: float):
     """Interactive slice viewer on the MNI template (open the .html in a browser, click to move through
     the brain). Unlike the surface view it shows the whole volume, deep areas included."""
     if diverging:
-        kw = dict(cmap="RdBu_r", symmetric_cmap=True)
+        kw = dict(cmap=DIFF_CMAP, symmetric_cmap=True, vmax=vmax)
     else:  # semi-transparent so the template edges show through, to check alignment
-        kw = dict(cmap="inferno", symmetric_cmap=False, vmin=0, vmax=vmax, opacity=0.7)
+        kw = dict(cmap=MEAN_CMAP, symmetric_cmap=False, vmin=0, vmax=vmax, opacity=0.7)
     plotting.view_img(img, title=title, colorbar=True, **kw).save_as_html(out)
     print(f"[save] {out}")
 
 
-def plot_surface(img: nib.Nifti1Image, title: str, out: Path, diverging: bool):
-    kw = dict(cmap="RdBu_r", symmetric_cbar=True) if diverging else dict(cmap="inferno", symmetric_cbar=False, vmin=0)
+def plot_surface(img: nib.Nifti1Image, title: str, out: Path, diverging: bool, vmax: float):
+    if diverging:
+        kw = dict(cmap=DIFF_CMAP, symmetric_cbar=True, vmin=-vmax, vmax=vmax)
+    else:
+        kw = dict(cmap=MEAN_CMAP, symmetric_cbar=False, vmin=0, vmax=vmax)
     fig, _ = plotting.plot_img_on_surf(img, surf_mesh="fsaverage5", views=["lateral", "medial"],
                                        hemispheres=["left", "right"], colorbar=True, cbar_tick_format="%.2f",
                                        title=title, **kw)
@@ -200,7 +213,10 @@ def plot_surface(img: nib.Nifti1Image, title: str, out: Path, diverging: bool):
     plt.close(fig)
     print(f"[save] {out}")
     # same map as an interactive 3D page (drag to rotate, scroll to zoom); open the .html in a browser
-    view_kw = dict(cmap="RdBu_r", symmetric_cmap=True) if diverging else dict(cmap="inferno", symmetric_cmap=False, vmin=0)
+    if diverging:
+        view_kw = dict(cmap=DIFF_CMAP, symmetric_cmap=True, vmax=vmax)
+    else:
+        view_kw = dict(cmap=MEAN_CMAP, symmetric_cmap=False, vmin=0, vmax=vmax)
     try:
         view = plotting.view_img_on_surf(img, surf_mesh="fsaverage5", title=title, **view_kw)
     except ImportError:  # the interactive page needs plotly; the PNG above is already saved
@@ -275,21 +291,25 @@ def main():
     print(f"[difference] median {np.median(d):+.3f}, 1st-99th percentile {np.percentile(d, 1):+.3f} to "
           f"{np.percentile(d, 99):+.3f}, max {d.max():+.3f}")
 
+    scales = colour_scales(maps, keep)
+    (out_dir / "colour_scales.json").write_text(json.dumps(
+        {**scales, "mean_cmap": MEAN_CMAP, "difference_cmap": DIFF_CMAP}, indent=1))
+    print(f"[colours] means {MEAN_CMAP} 0 to {scales['mean_vmax']:.3f}; difference {DIFF_CMAP} "
+          f"-{scales['difference_vmax']:.3f} to +{scales['difference_vmax']:.3f} (same in every PNG and HTML)")
+
     note = f", smoothed {args.smooth_fwhm:g} mm" if args.smooth_fwhm else ""
-    plot_axial(imgs, n, out_dir / "axial.png", what + note)
+    plot_axial(imgs, n, out_dir / "axial.png", what + note, scales)
     plot_surface(imgs["difference"], f"Mean Read + − mean Read −{note}", out_dir / "surface_difference.png",
-                 diverging=True)
+                 diverging=True, vmax=scales["difference_vmax"])
     for read, g in GROUPS.items():
         plot_surface(imgs[g], f"Mean {'Read +' if read else 'Read −'} (n = {n[read]}){note}",
-                     out_dir / f"surface_mean_{g}.png", diverging=False)
+                     out_dir / f"surface_mean_{g}.png", diverging=False, vmax=scales["mean_vmax"])
 
     save_volume_viewer(imgs["difference"], f"Mean Read + − mean Read −{note}", out_dir / "volume_difference.html",
-                       diverging=True)
-    vals = np.concatenate([imgs[g].get_fdata()[imgs[g].get_fdata() > 0] for g in GROUPS.values()])
-    vmax = float(np.percentile(vals, 99.5))  # same colour scale for both groups, as in axial.png
+                       diverging=True, vmax=scales["difference_vmax"])
     for read, g in GROUPS.items():
         save_volume_viewer(imgs[g], f"Mean {'Read +' if read else 'Read −'} (n = {n[read]}){note}",
-                           out_dir / f"volume_mean_{g}.html", diverging=False, vmax=vmax)
+                           out_dir / f"volume_mean_{g}.html", diverging=False, vmax=scales["mean_vmax"])
 
 
 if __name__ == "__main__":
