@@ -40,7 +40,7 @@ Usage (Berzelius, from the repo; needs nilearn in ai-pet):
         --input_path /proj/berzelius-2024-156/users/x_nadpi/data --data_type tau_T1MNI_pts
     python results_plotting/voxelwise_visual_read.py \\
         --pkl_dir /proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI \\
-        --ref_mask /proj/berzelius-2024-156/users/x_nadpi/data/masks/voi_CerebGry_2mm.nii
+        --ref_mask /proj/berzelius-2024-156/users/x_nadpi/data/masks/voi_CerebGry_tau_2mm.nii
 """
 import argparse
 import json
