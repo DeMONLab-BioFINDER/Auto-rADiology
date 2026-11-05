@@ -30,6 +30,8 @@ Outputs (default <proj_path>/results/voxelwise/<data_type or suvr_<mask>>, outsi
   axial.png (three rows: the two averages on one colour scale, then the difference on the MNI template),
   surface_<map>.png + surface_<map>.html (interactive 3D version: open in a browser, drag to rotate) (each map projected onto the fsaverage5 cortical surface; volume_to_surface only
   samples the cortex, so deep / off-target areas such as the choroid plexus do not show there),
+  volume_<map>.html (interactive slice viewer on the MNI template, whole volume incl. deep areas: open
+  in a browser and click to move through the brain; the two means share one colour scale),
   SUVR only: reference_by_site.csv (median reference-region value per site in the original units, and
   how many scans were left out).
 
@@ -177,6 +179,17 @@ def plot_axial(imgs: dict, n: dict, out: Path, what: str):
     print(f"[save] {out}")
 
 
+def save_volume_viewer(img: nib.Nifti1Image, title: str, out: Path, diverging: bool, vmax: float = None):
+    """Interactive slice viewer on the MNI template (open the .html in a browser, click to move through
+    the brain). Unlike the surface view it shows the whole volume, deep areas included."""
+    if diverging:
+        kw = dict(cmap="RdBu_r", symmetric_cmap=True)
+    else:  # semi-transparent so the template edges show through, to check alignment
+        kw = dict(cmap="inferno", symmetric_cmap=False, vmin=0, vmax=vmax, opacity=0.7)
+    plotting.view_img(img, title=title, colorbar=True, **kw).save_as_html(out)
+    print(f"[save] {out}")
+
+
 def plot_surface(img: nib.Nifti1Image, title: str, out: Path, diverging: bool):
     kw = dict(cmap="RdBu_r", symmetric_cbar=True) if diverging else dict(cmap="inferno", symmetric_cbar=False, vmin=0)
     fig, _ = plotting.plot_img_on_surf(img, surf_mesh="fsaverage5", views=["lateral", "medial"],
@@ -269,6 +282,14 @@ def main():
     for read, g in GROUPS.items():
         plot_surface(imgs[g], f"Mean {'Read +' if read else 'Read −'} (n = {n[read]}){note}",
                      out_dir / f"surface_mean_{g}.png", diverging=False)
+
+    save_volume_viewer(imgs["difference"], f"Mean Read + − mean Read −{note}", out_dir / "volume_difference.html",
+                       diverging=True)
+    vals = np.concatenate([imgs[g].get_fdata()[imgs[g].get_fdata() > 0] for g in GROUPS.values()])
+    vmax = float(np.percentile(vals, 99.5))  # same colour scale for both groups, as in axial.png
+    for read, g in GROUPS.items():
+        save_volume_viewer(imgs[g], f"Mean {'Read +' if read else 'Read −'} (n = {n[read]}){note}",
+                           out_dir / f"volume_mean_{g}.html", diverging=False, vmax=vmax)
 
 
 if __name__ == "__main__":
