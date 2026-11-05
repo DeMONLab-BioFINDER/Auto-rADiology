@@ -21,7 +21,8 @@ Descriptive; no tests. Usage:
     python results_plotting/compare_seed_strategy.py <seed42_run> <seed7_run> <seed123_run> --labels s42 s7 s123
     (add --dataset AVID_unseen --demo_csv data/demo_AVID_unseen.csv for AVID)
 Outputs (default <proj_path>/results/seed_strategy/<labels>_<dataset>, outside the repo, no IDs):
-    seed_summary.csv, seed_pairs.csv, seed_strategy.png (switch-point curves | probabilities vs the first seed)
+    seed_summary.csv, seed_pairs.csv, seed_strategy.png (switch-point curves | probabilities vs the first seed),
+    seed_ranking_slide.png (the right panel alone, for a slide; score = log-odds, dotted lines = the 0.5 cut-off)
 """
 import argparse
 from itertools import combinations
@@ -198,7 +199,25 @@ def main():
     summary.to_csv(args.out_dir / "seed_summary.csv")
     pairs.to_csv(args.out_dir / "seed_pairs.csv")
     fig.savefig(args.out_dir / "seed_strategy.png", dpi=200)
-    print(f"\nSaved seed_summary.csv, seed_pairs.csv, seed_strategy.png to {args.out_dir}")
+
+    # slide version: the ranking panel alone, larger text
+    fig2, ax = plt.subplots(figsize=(6.2, 6))
+    for i, b in enumerate(args.labels[1:], start=1):
+        lb = logit(m[f"prob_{b}"].to_numpy())
+        ax.scatter(lr, lb, s=14, alpha=0.55, color=COLORS[i % len(COLORS)], label=b)
+    ax.plot(lim, lim, color="#999999", lw=1)
+    ax.axhline(0, color="#999999", ls=":", lw=1)
+    ax.axvline(0, color="#999999", ls=":", lw=1)
+    ax.set_xlim(lim)
+    ax.set_ylim(lim)
+    ax.set_xlabel(f"Score, {ref}", fontsize=13)
+    ax.set_ylabel("Score, other seed", fontsize=13)
+    ax.tick_params(labelsize=11)
+    ax.legend(frameon=False, fontsize=12, markerscale=1.6)
+    ax.grid(alpha=0.25)
+    fig2.tight_layout()
+    fig2.savefig(args.out_dir / "seed_ranking_slide.png", dpi=200)
+    print(f"\nSaved seed_summary.csv, seed_pairs.csv, seed_strategy.png, seed_ranking_slide.png to {args.out_dir}")
 
 
 if __name__ == "__main__":
