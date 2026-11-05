@@ -6,14 +6,16 @@
 # Without a mask: on the MNI model's inputs (0-1 per scan, what the model sees).
 # With a reference mask: SUVR from the original MNI images (shared tau_T1MNI pkls), each scan divided by its
 # mean in the mask. Karagianni 2026 / CenTauR use the inferior cerebellar grey matter: voi_CerebGry_tau_2mm.nii.
-# A GPU is requested only because Berzelius jobs need one.
+# Runs on the CPU-only partition (berzelius-hopper-cpu, no GPU): the script does its maths in numpy, and the
+# CPU nodes usually have a much shorter queue than the GPU nodes.
 #
 # Usage:
 #   sbatch submit_voxelwise-visual-read.sh [smooth_fwhm_mm] [reference_mask]   (default 0 = unsmoothed, no mask)
 #   e.g. sbatch submit_voxelwise-visual-read.sh 0 /proj/berzelius-2024-156/users/x_nadpi/data/masks/voi_CerebGry_tau_2mm.nii
 
 #SBATCH -A berzelius-2026-231
-#SBATCH --gpus=1
+#SBATCH -p berzelius-hopper-cpu
+#SBATCH -c 8
 #SBATCH -t 01:00:00
 #SBATCH -J voxelwise-visual-read
 #SBATCH -o ../../logs/voxelwise-visual-read-slurm-%j.out
