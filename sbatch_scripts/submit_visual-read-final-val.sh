@@ -25,6 +25,8 @@
 # The validation scans' predictions are saved too (evaluation/<dataset>/Val_<dataset>_results.csv), so
 # variants can be compared on validation with results_plotting/score_borderline_validation.py. The AVID and occlusion scripts need the same POOL=... to rebuild
 # the model (a mismatched checkpoint now stops with an error).
+# Batch size: BATCH=8 (default 4, from src/params.py) - a cheap check of BatchNorm with a larger batch;
+# same learning rate. The run name gets "-bs<BATCH>". e.g.  BATCH=8 sbatch submit_visual-read-final-val.sh tau_T1MNI_pts
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -56,11 +58,16 @@ if [[ "$POOL" != "avg" ]]; then
   MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
 fi
 [[ "$POOL" != "avg" ]] && NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+BATCH_ARGS=()
+if [[ -n "${BATCH:-}" ]]; then
+  BATCH_ARGS=(--batch_size "$BATCH")
+  NAME_EXTRA="${NAME_EXTRA}-bs${BATCH}"
+fi
 if [[ -n "$TRAIN_SEED" ]]; then
   SEED_ARGS=(--train_seed "$TRAIN_SEED")
   NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
 fi
-echo "data_type: $DATA_TYPE, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL"
+echo "data_type: $DATA_TYPE, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL, batch_size: ${BATCH:-default}"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
@@ -80,6 +87,7 @@ python ./run.py \
   --model_name_extra "$NAME_EXTRA" \
   "${SEED_ARGS[@]}" \
   "${MODEL_ARGS[@]}" \
+  "${BATCH_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
