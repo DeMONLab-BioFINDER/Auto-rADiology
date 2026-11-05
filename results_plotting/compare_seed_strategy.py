@@ -17,11 +17,19 @@ liberal, the other more cautious. Three checks, all on the held-out test set (or
                      which scan is more positive. Also: plain flips at 0.5 in each direction (a pure
                      shift flips scans in one direction only).
 
+  4. Noise or strategy? - for the crossing scans: how far apart they sit in the two seeds' rankings
+                     (percentile rank, 0-100; "gap"), next to the usual gap over all scans. Near-ties
+                     (small gap, scans next to each other around the cut-off) = same strategy, random
+                     wobble; large gaps (bigger than 90% of all scans' gaps) = the seeds really see that
+                     scan differently - look at those (inspect_scans.py), with their regional SUVRs,
+                     amyloid, site, to see if they share something.
+
 Descriptive; no tests. Usage:
     python results_plotting/compare_seed_strategy.py <seed42_run> <seed7_run> <seed123_run> --labels s42 s7 s123
     (add --dataset AVID_unseen --demo_csv data/demo_AVID_unseen.csv for AVID)
 Outputs (default <proj_path>/results/seed_strategy/<labels>_<dataset>, outside the repo, no IDs):
     seed_summary.csv, seed_pairs.csv, seed_strategy.png (switch-point curves | probabilities vs the first seed),
+    seed_crossings.csv (one row per crossing scan and pair, has IDs - not for slides),
     seed_ranking_slide.png (the right panel alone, for a slide; score = log-odds, dotted lines = the 0.5 cut-off)
 """
 import argparse
@@ -38,6 +46,7 @@ from analyze_model_confidence_visual_read import _logistic_crossing
 from plot_utils import find_demo_csv, resolve_path, resolve_predictions_csv
 
 SUVR = "MetaTemporal"
+EXTRA = ["TemporoParietal", "MesialTemporal", "Frontal", "amyloid_status", "CL", "site", "dx"]
 BAND = (1.25, 1.45)
 N_BOOT = 1000
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#e377c2"]
@@ -69,14 +78,15 @@ def load(run: str, dataset: str) -> pd.DataFrame:
     return d
 
 
-def crossings(pa: np.ndarray, pb: np.ndarray, yb_calls: np.ndarray) -> tuple[int, float]:
-    """Give A as many positives as B has (A's top-k scans), count scans where the calls still differ."""
+def crossings(pa: np.ndarray, pb: np.ndarray, yb_calls: np.ndarray) -> tuple[np.ndarray, float]:
+    """Give A as many positives as B has (A's top-k scans); returns the mask of scans where the calls
+    still differ, and A's matching cut-off."""
     k = int(yb_calls.sum())
     order = np.argsort(-pa, kind="stable")
     a_calls = np.zeros(len(pa), int)
     a_calls[order[:k]] = 1
     thr = pa[order[k - 1]] if k > 0 else np.inf
-    return int((a_calls != yb_calls).sum()), float(thr)
+    return a_calls != yb_calls, float(thr)
 
 
 def main():
@@ -96,7 +106,8 @@ def main():
     demo_path = resolve_path(args.demo_csv, find_demo_csv)
     if demo_path is None:
         raise FileNotFoundError("No demographics csv found - pass --demo_csv.")
-    demo = pd.read_csv(demo_path)[["ID", SUVR]]
+    demo = pd.read_csv(demo_path)
+    demo = demo[["ID", SUVR] + [c for c in EXTRA if c in demo.columns]]
     m = m.merge(demo, left_on="ID_ind", right_on="ID", how="left").drop(columns="ID")
     border = m[SUVR].between(*BAND)
     ref = args.labels[0]
@@ -133,11 +144,21 @@ def main():
         rows.append(row)
     summary = pd.DataFrame(rows).set_index("judge")
 
-    pairs = []
+    pct = {lab: m[f"prob_{lab}"].rank(pct=True).to_numpy() * 100 for lab in args.labels}
+    pairs, cross_rows = [], []
     for a, b in combinations(args.labels, 2):
         pa, pb = m[f"prob_{a}"].to_numpy(), m[f"prob_{b}"].to_numpy()
         ca, cb = m[f"pred_{a}"].to_numpy(int), m[f"pred_{b}"].to_numpy(int)
-        n_cross, thr = crossings(pa, pb, cb)
+        cross, thr = crossings(pa, pb, cb)
+        n_cross = int(cross.sum())
+        gap = np.abs(pct[a] - pct[b])
+        big = np.percentile(gap, 90)
+        c = m[cross].copy()
+        c["pair"], c["gap (percentile points)"] = f"{a} vs {b}", gap[cross].round(1)
+        c[f"rank {a}"], c[f"rank {b}"] = pct[a][cross].round(1), pct[b][cross].round(1)
+        c["ranked higher by"] = np.where(pct[b][cross] > pct[a][cross], b, a)
+        c["large gap"] = gap[cross] > big
+        cross_rows.append(c)
         pairs.append({
             "pair": f"{a} vs {b}",
             "Spearman, all": round(spearmanr(pa, pb)[0], 3),
@@ -146,6 +167,9 @@ def main():
             "first - / second +": int(((ca == 0) & (cb == 1)).sum()),
             "crossings (first's cut-off moved to match second's positive count)": n_cross,
             "first's cut-off that matches": round(thr, 3),
+            "usual gap, all scans (median, pct points)": round(float(np.median(gap)), 1),
+            "crossing scans' gap (median)": round(float(np.median(gap[cross])), 1) if n_cross else np.nan,
+            "large-gap crossings (> 90% of all scans' gaps)": int((gap[cross] > big).sum()),
         })
     pairs = pd.DataFrame(pairs).set_index("pair")
 
@@ -154,6 +178,27 @@ def main():
         print(summary.to_string())
         print("\nPairs (a pure cut-off shift: high Spearman, flips in one direction only, ~0 crossings):")
         print(pairs.T.to_string())
+
+        cr = pd.concat(cross_rows) if cross_rows else pd.DataFrame()
+        if len(cr):
+            print("\nCrossing scans - near-ties vs large gaps (medians; same strategy if large gaps are rare and"
+                  " look like ordinary borderline scans):")
+            num = [c for c in [SUVR] + EXTRA if c in cr and c not in ("site", "dx", "amyloid_status")]
+            agg = cr.groupby(["pair", "large gap"]).agg(
+                n=("ID_ind", "size"), read_pos=("y", "mean"),
+                **{f"{c}": (c, "median") for c in num},
+                **({"amyloid_pos": ("amyloid_status", "mean")} if "amyloid_status" in cr else {}))
+            agg["read_pos"] = (100 * agg["read_pos"]).round(0)
+            if "amyloid_pos" in agg:
+                agg["amyloid_pos"] = (100 * agg["amyloid_pos"]).round(0)
+            print(agg.rename(columns={"read_pos": "% read +", "amyloid_pos": "% amyloid +"}).round(2).to_string())
+            big_cr = cr[cr["large gap"]]
+            if len(big_cr):
+                print("\nLarge-gap crossing scans (for inspect_scans.py):")
+                cols = ["pair", "ID_ind", "y"] + [f"prob_{l}" for l in args.labels] + \
+                       ["gap (percentile points)", "ranked higher by"] + [c for c in [SUVR] + EXTRA if c in cr]
+                print(big_cr.sort_values(["pair", "gap (percentile points)"], ascending=[True, False])[cols]
+                      .round(3).to_string(index=False))
 
     # figure: switch-point curves | probabilities of each seed vs the first
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.2))
@@ -197,6 +242,8 @@ def main():
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     summary.to_csv(args.out_dir / "seed_summary.csv")
+    if cross_rows:
+        pd.concat(cross_rows).to_csv(args.out_dir / "seed_crossings.csv", index=False)
     pairs.to_csv(args.out_dir / "seed_pairs.csv")
     fig.savefig(args.out_dir / "seed_strategy.png", dpi=200)
 
@@ -217,7 +264,7 @@ def main():
     ax.grid(alpha=0.25)
     fig2.tight_layout()
     fig2.savefig(args.out_dir / "seed_ranking_slide.png", dpi=200)
-    print(f"\nSaved seed_summary.csv, seed_pairs.csv, seed_strategy.png, seed_ranking_slide.png to {args.out_dir}")
+    print(f"\nSaved seed_summary.csv, seed_pairs.csv, seed_crossings.csv (IDs), seed_strategy.png, seed_ranking_slide.png to {args.out_dir}")
 
 
 if __name__ == "__main__":
