@@ -14,6 +14,7 @@ dependencies:
   - matplotlib
   - nibabel
   - nilearn
+  - plotly
   - pip
   - pip:
       - monai>=1.3

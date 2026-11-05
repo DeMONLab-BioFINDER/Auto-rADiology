@@ -28,7 +28,7 @@ Outputs (default <proj_path>/results/voxelwise/<data_type or suvr_<mask>>, outsi
   mean_read_negative.nii.gz, mean_read_positive.nii.gz, difference_read_pos_minus_neg.nii.gz,
   coverage.nii.gz (share of all scans with data per voxel), group_counts.csv (n per site and read),
   axial.png (three rows: the two averages on one colour scale, then the difference on the MNI template),
-  surface_<map>.png (each map projected onto the fsaverage5 cortical surface; volume_to_surface only
+  surface_<map>.png + surface_<map>.html (interactive 3D version: open in a browser, drag to rotate) (each map projected onto the fsaverage5 cortical surface; volume_to_surface only
   samples the cortex, so deep / off-target areas such as the choroid plexus do not show there),
   SUVR only: reference_by_site.csv (median reference-region value per site in the original units, and
   how many scans were left out).
@@ -186,6 +186,15 @@ def plot_surface(img: nib.Nifti1Image, title: str, out: Path, diverging: bool):
     fig.savefig(out, dpi=130)
     plt.close(fig)
     print(f"[save] {out}")
+    # same map as an interactive 3D page (drag to rotate, scroll to zoom); open the .html in a browser
+    view_kw = dict(cmap="RdBu_r", symmetric_cmap=True) if diverging else dict(cmap="inferno", symmetric_cmap=False, vmin=0)
+    try:
+        view = plotting.view_img_on_surf(img, surf_mesh="fsaverage5", title=title, **view_kw)
+    except ImportError:  # the interactive page needs plotly; the PNG above is already saved
+        print("[skip] interactive .html needs plotly (pip install plotly in ai-pet)")
+        return
+    view.save_as_html(out.with_suffix(".html"))
+    print(f"[save] {out.with_suffix('.html')}")
 
 
 def main():
