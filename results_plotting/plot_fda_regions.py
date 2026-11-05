@@ -134,8 +134,8 @@ def build_regions(atlas_dir: Path, y_cross, x_cross):
 
 
 def plot_axial(img, temporal, y_cross, x_cross, out: Path):
-    fig = plt.figure(figsize=(20, 5.4), facecolor="black")
-    ax = fig.add_axes([0, 0.25, 1, 0.56])
+    fig = plt.figure(figsize=(20, 4.9), facecolor="black")
+    ax = fig.add_axes([0, 0.17, 1, 0.70])
     d = plotting.plot_roi(img, bg_img=datasets.load_mni152_template(resolution=1), display_mode="z",
                           cut_coords=AXIAL_CUTS, axes=ax, cmap=ListedColormap([g[1] for g in GROUPS]), vmin=1,
                           vmax=len(GROUPS), alpha=0.8, black_bg=True, annotate=False, colorbar=False,
@@ -150,13 +150,6 @@ def plot_axial(img, temporal, y_cross, x_cross, out: Path):
             a.ax.axvline(x_cross, **kw)
     fig.text(0.5, 0.97, "FDA visual-read regions (TAUVID label) on the Desikan-Killiany atlas, temporal lobe split by "
              "the label's crosshairs", color="white", ha="center", va="top", fontsize=13)
-    fig.text(0.5, 0.925, "Positive = increased uptake in PLT or occipital or parietal/precuneus (either hemisphere), "
-             "with or without frontal.   Negative = no neocortical uptake, or uptake only in mesial temporal, "
-             "anterolateral temporal and/or frontal.\n"
-             f"Dashed lines (slices with temporal lobe; they split only the temporal lobe): y = {y_cross:g} mm, just "
-             f"behind the brainstem (front/back), and x = ±{x_cross:g} mm, through the widest part of the temporal "
-             "pole (inner/outer).   Left of each slice = left hemisphere.", color="white", ha="center", va="top",
-             fontsize=9.5)
     pos = [Patch(color=c, label=n) for n, c, p in GROUPS if p]
     neg = [Patch(color=c, label=n) for n, c, p in GROUPS if not p]
     for handles, anchor, loc, title in [(pos, (0.1, 0.02), "lower left", "Uptake here makes the scan positive"),
