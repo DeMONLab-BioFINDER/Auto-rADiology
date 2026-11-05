@@ -32,6 +32,7 @@ Outputs (default <proj_path>/results/seed_strategy/<labels>_<dataset>, outside t
     seed_crossings.csv (one row per crossing scan and pair, has IDs - not for slides),
     seed_swaps_<a>_vs_<b>.png (slope chart: one line per scan from its distance to seed a's cut-off (matched)
     to its distance to seed b's; red = crossing scans - short red lines close to the dashed cut-off = near-ties),
+    seed_swaps_rank_<a>_vs_<b>.png (the same scans as rankings, zoomed on the ranks around the cut-off),
     seed_ranking_slide.png (the right panel alone, for a slide; score = log-odds, dotted lines = the 0.5 cut-off)
 """
 import argparse
@@ -125,6 +126,50 @@ def slope_chart(pa: np.ndarray, pb: np.ndarray, thr_a: float, cross: np.ndarray,
     plt.close(fig)
 
 
+def rank_chart(pa: np.ndarray, pb: np.ndarray, k: int, cross: np.ndarray, a: str, b: str, out: Path,
+               window: int = 25):
+    """The scans ranked by each seed (1 = most positive), zoomed on the ranks around the matched cut-off
+    (both seeds call k scans positive, so the cut-off is the same rank on both sides). Faint grey = the
+    other scans, red = scans that swap sides; a dot per scan on each ranking."""
+    n = len(pa)
+    ra = np.empty(n, int)
+    ra[np.argsort(-pa, kind="stable")] = np.arange(1, n + 1)
+    rb = np.empty(n, int)
+    rb[np.argsort(-pb, kind="stable")] = np.arange(1, n + 1)
+    lo, hi = max(1, k - window), min(n, k + window)
+    show = ((ra >= lo) & (ra <= hi)) | ((rb >= lo) & (rb <= hi))
+    fig, ax = plt.subplots(figsize=(5.2, 7.5))
+    ax.axhspan(lo - 0.5, k + 0.5, color="#fbe3e3", zorder=0)
+    ax.axhspan(k + 0.5, hi + 0.5, color="#e3ecfb", zorder=0)
+    for i in np.where(show & ~cross)[0]:
+        ax.plot([0, 1], [ra[i], rb[i]], color="#9a9a9a", lw=0.8, alpha=0.3, zorder=1)
+    ax.scatter(np.zeros((show & ~cross).sum()), ra[show & ~cross], s=10, color="#9a9a9a", alpha=0.6, zorder=2)
+    ax.scatter(np.ones((show & ~cross).sum()), rb[show & ~cross], s=10, color="#9a9a9a", alpha=0.6, zorder=2)
+    sel = show & cross
+    for i in np.where(sel)[0]:
+        ax.plot([0, 1], [ra[i], rb[i]], color="#d62728", lw=2.2, zorder=3)
+    ax.scatter(np.zeros(sel.sum()), ra[sel], s=28, color="#d62728", zorder=4)
+    ax.scatter(np.ones(sel.sum()), rb[sel], s=28, color="#d62728", zorder=4)
+    ax.axhline(k + 0.5, color="black", ls="--", lw=1.3, zorder=2)
+    ax.set_xlim(-0.12, 1.12)
+    ax.set_ylim(hi + 0.5, lo - 0.5)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([f"{a} ranking", f"{b} ranking"], fontsize=12)
+    ax.set_ylabel("Rank (1 = most positive)", fontsize=12)
+    ax.text(0.5, lo + 0.5, "Model +", ha="center", va="top", fontsize=12, color="#8b1a1a")
+    ax.text(0.5, hi - 0.5, "Model -", ha="center", va="bottom", fontsize=12, color="#1a3f8b")
+    for side in ("top", "right", "bottom"):
+        ax.spines[side].set_visible(False)
+    outside = int((cross & ~show).sum())
+    ttl = f"{int(sel.sum())} scans swap sides (red), ranks {lo}-{hi}"
+    if outside:
+        ttl += f"\n+{outside} swapped scan(s) outside this window"
+    ax.set_title(ttl, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
+    plt.close(fig)
+
+
 def main():
     args = parse_args()
     m = None
@@ -197,6 +242,7 @@ def main():
         cross_rows.append(c)
         args.out_dir.mkdir(parents=True, exist_ok=True)
         slope_chart(pa, pb, thr, cross, a, b, args.out_dir / f"seed_swaps_{a}_vs_{b}.png")
+        rank_chart(pa, pb, int(cb.sum()), cross, a, b, args.out_dir / f"seed_swaps_rank_{a}_vs_{b}.png")
         pairs.append({
             "pair": f"{a} vs {b}",
             "Spearman, all": round(spearmanr(pa, pb)[0], 3),
