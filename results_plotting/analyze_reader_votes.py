@@ -22,13 +22,16 @@ Checks (all at the run's own `pred`, i.e. its 0.5 threshold):
      % called positive by the model and % in the uncertain band (0.3-0.7, the pre-set confidence cut-off).
      Spearman of probability vs votes within each read; Fisher's exact test of the uncertain-band share in
      split vs unanimous scans.
-  5. Case list: every scan the model disagrees with, with its votes (has IDs - not for slides).
+  5. Case list: every scan the model disagrees with, with its votes, site, diagnosis, amyloid, CDR-SB and
+     regional SUVRs from the demographics csv (has IDs - not for slides). Printed: counts per vote group
+     with median MetaTemporal SUVR.
 Groups are small: read the counts first and the p-values second.
 
 Usage:
     python results_plotting/analyze_reader_votes.py <run_dir> --votes IDs_reads.csv
     python results_plotting/analyze_reader_votes.py <run_dir> --votes AVIDIDs_reads.csv --dataset AVID_unseen
     python results_plotting/analyze_reader_votes.py <cv_run_dir> --votes IDs_reads.csv --oof
+The demographics csv defaults to data/demo_<dataset>.csv, then data/demo.csv (in the repo or next to it).
 <run_dir> uses the run's held-out test (or zero-shot validation) predictions; with --oof, a CV run's
 out-of-fold predictions (every training-pool scan once, predicted by the fold model that did not train on it).
 Relative run dirs are looked up under <proj_path>/results.
@@ -46,11 +49,13 @@ import pandas as pd
 from scipy.stats import fisher_exact, spearmanr
 from sklearn.metrics import roc_auc_score
 
-from plot_utils import resolve_predictions_csv
+from plot_utils import resolve_path, resolve_predictions_csv
 
 GROUP_ORDER = ["unanimous", "split 2-1", "single reader"]
 READ_COLS = ["read_1", "read_2", "read_3"]
 UNCERTAIN = (0.3, 0.7)
+DEMO_COLS = ["site", "dx", "age", "amyloid_status", "CL", "CDR_SB",
+             "MetaTemporal", "MesialTemporal", "TemporoParietal", "Frontal", "Universal"]
 
 
 def parse_args():
@@ -60,6 +65,7 @@ def parse_args():
     p.add_argument("--votes", required=True, help="Per-reader vote csv (ID, cohort, read_1..3, visual_read_binary, visual_read_3_cat).")
     p.add_argument("--dataset", default="Gothenburg", help="Dataset name used in the result filenames.")
     p.add_argument("--oof", action="store_true", help="Use the CV run's oof_predictions.csv.")
+    p.add_argument("--demo_csv", default=None, help="Demographics csv for the case list (default: see above).")
     p.add_argument("--results_root", default=str(repo.parent / "results"))
     p.add_argument("--out_dir", default=str(repo.parent / "results" / "reader_votes"))
     return p.parse_args()
@@ -81,6 +87,13 @@ def load_votes(path: Path) -> pd.DataFrame:
     v["agreement"] = np.select([v["n_readers"] == 1, unanimous], ["single reader", "unanimous"], "split 2-1")
     return v[["ID", "cohort", "visual_read_binary", "visual_read_3_cat", *READ_COLS,
               "n_readers", "positive_votes", "agreement"]]
+
+
+def find_dataset_demo_csv(dataset: str) -> Path | None:
+    repo = Path(__file__).resolve().parent.parent
+    candidates = [repo / "data" / f"demo_{dataset}.csv", repo.parent / "data" / f"demo_{dataset}.csv",
+                  repo / "data" / "demo.csv", repo.parent / "data" / "demo.csv"]
+    return next((p for p in candidates if p.exists()), None)
 
 
 def load_preds(args) -> pd.DataFrame:
@@ -182,12 +195,19 @@ def prob_by_votes(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return table, pd.DataFrame(tests)
 
 
-def disagreement_cases(df: pd.DataFrame) -> pd.DataFrame:
+def disagreement_cases(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFrame:
     cases = df[df["disagrees"]].copy()
     cases["direction"] = np.where(cases["y"] == 0, "Model + / Read -", "Model - / Read +")
     cols = ["ID_ind", "direction", "prob", "cohort", "agreement", "positive_votes", "n_readers",
             "read category", *READ_COLS]
-    return cases[cols].sort_values(["direction", "prob"])
+    cases = cases[cols]
+    if demo is not None:
+        demo_cols = [c for c in DEMO_COLS if c in demo.columns]
+        cases = cases.merge(demo[["ID"] + demo_cols], left_on="ID_ind", right_on="ID", how="left").drop(columns="ID")
+        n_missing = int(cases[demo_cols].isna().all(axis=1).sum())
+        if n_missing:
+            print(f"[WARNING] {n_missing} disagreement scans are not in the demographics csv.")
+    return cases.sort_values(["direction", "agreement", "read category", "prob"])
 
 
 def main():
@@ -211,7 +231,12 @@ def main():
     out["2_unanimous_rescoring"] = unanimous_rescoring(df)
     out["3_model_vs_reader"] = model_vs_reader(df)
     out["4_prob_by_votes"], out["4_tests"] = prob_by_votes(df)
-    cases = disagreement_cases(df)
+    demo_path = resolve_path(args.demo_csv, lambda: find_dataset_demo_csv(args.dataset))
+    if demo_path is None:
+        print("[WARNING] no demographics csv found - case list without site / SUVR (pass --demo_csv).")
+    else:
+        print(f"Demographics: {demo_path}")
+    cases = disagreement_cases(df, pd.read_csv(demo_path) if demo_path else None)
 
     titles = {
         "1_disagreement_by_group": "1. Disagreement with the read, by reader agreement and tau score",
@@ -225,8 +250,15 @@ def main():
     with pd.option_context("display.width", 200, "display.max_columns", None):
         for key, table in out.items():
             print(f"\n{titles[key]}:\n{table.to_string(index=False)}")
-        print("\n5. Votes of the scans the model disagrees with (counts):")
-        print(cases.groupby(["direction", "agreement", "read category"]).size().to_string())
+        print("\n5. Votes of the scans the model disagrees with:")
+        g = cases.groupby(["direction", "agreement", "read category"])
+        summary = g.size().rename("scans").to_frame()
+        summary["median prob"] = g["prob"].median().round(3)
+        if "MetaTemporal" in cases:
+            summary["median MetaTemporal"] = g["MetaTemporal"].median().round(2)
+        if "site" in cases:
+            summary["sites"] = g["site"].agg(lambda s: ", ".join(f"{k} {v}" for k, v in s.value_counts().items()))
+        print(summary.to_string())
 
     out_dir = Path(args.out_dir) / f"{Path(args.run).name}{'_oof' if args.oof else ''}_{args.dataset}"
     out_dir.mkdir(parents=True, exist_ok=True)
