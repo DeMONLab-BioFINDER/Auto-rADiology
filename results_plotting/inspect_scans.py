@@ -49,7 +49,9 @@ def parse_args():
     p.add_argument("--data_type", default="tau_T1MNI_pts", help="Cached model inputs to show (e.g. tau_raw_2mm_pts).")
     p.add_argument("--dataset", default="Gothenburg", help="Dataset name used in the result filenames.")
     p.add_argument("--demo_csv", default=None, help="Demographics csv (default data/demo_<dataset>.csv, then data/demo.csv).")
-    p.add_argument("--runs", nargs="*", default=[], help="Run dirs whose test probabilities to add.")
+    p.add_argument("--runs", nargs="*", default=[],
+                   help="Run dirs whose test probabilities to add (relative ones are looked up under --results_root).")
+    p.add_argument("--results_root", default=str(repo.parent / "results"))
     p.add_argument("--labels", nargs="*", default=None, help="One short name per run.")
     p.add_argument("--twin_tol", type=float, default=0.03,
                    help="Prefer a same-site twin if its Meta-temporal SUVR is within this of the scan's.")
@@ -172,7 +174,10 @@ def main():
 
     probs = pd.DataFrame(index=demo["ID"])
     for run, lab in zip(args.runs, args.labels):
-        preds_path, _ = resolve_predictions_csv(Path(run), args.dataset)
+        run_dir = Path(run)
+        if not (run_dir.is_absolute() or run_dir.exists()):
+            run_dir = Path(args.results_root) / run_dir
+        preds_path, _ = resolve_predictions_csv(run_dir, args.dataset)
         p = pd.read_csv(preds_path).set_index("ID_ind")
         probs[f"prob {lab}"] = p["prob"]
         probs[f"call {lab}"] = p["pred"].map({1: "+", 0: "-"})
