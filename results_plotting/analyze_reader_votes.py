@@ -5,11 +5,12 @@ Each scan gets a reader-agreement group from the per-reader votes:
     unanimous     - 3 readers, all the same call (3-0)
     split 2-1     - 3 readers, one disagreed with the majority
     single reader - 1 reader (e.g. NACC, part of ADNI)
-Positive reads are also split by the read category (visual_read_3_cat 1 vs 2).
+Positive reads are also split by the readers' tau score (visual_read_3_cat: 1 = moderate, 2 = frequent;
+both count as positive). Exploratory only: the binary read is the label (advice from the data provider).
 
 Per read (- and +) and group: number of scans, how many the model disagrees with, and the model's median
 probability. Tests (pre-specified): within each read, Fisher's exact test of disagreement in unanimous vs
-split 2-1 scans, and in 3-reader vs single-reader scans; for read + scans, category 1 vs 2. Groups are small,
+split 2-1 scans, and in 3-reader vs single-reader scans; for read + scans, moderate vs frequent (exploratory). Groups are small,
 so read the counts first and the p-values second.
 
 Usage:
@@ -98,14 +99,14 @@ def main():
                          "the IDs do not refer to the same scans.")
     df["disagrees"] = df["y"] != df["pred"]
     df["read"] = df["y"].map({0: "Read -", 1: "Read +"})
-    df["read category"] = df["visual_read_3_cat"].map({0: "-", 1: "cat 1", 2: "cat 2"})
+    df["read category"] = df["visual_read_3_cat"].map({0: "-", 1: "moderate", 2: "frequent"})
 
     rows = []
     for read, sub in df.groupby("read"):
         direction = "Model + / Read -" if read == "Read -" else "Model - / Read +"
         groups = [("agreement", g) for g in GROUP_ORDER]
         if read == "Read +":
-            groups += [("read category", c) for c in ["cat 1", "cat 2"]]
+            groups += [("read category", c) for c in ["moderate", "frequent"]]
         for col, g in groups:
             s = sub[sub[col] == g]
             if len(s):
@@ -122,7 +123,7 @@ def main():
         sub = sub.assign(n_readers=np.where(sub["agreement"] == "single reader", "1 reader", "3 readers"))
         pairs = [fisher(sub, "agreement", "unanimous", "split 2-1"), fisher(sub, "n_readers", "3 readers", "1 reader")]
         if read == "Read +":
-            pairs.append(fisher(sub, "read category", "cat 1", "cat 2"))
+            pairs.append(fisher(sub, "read category", "moderate", "frequent"))
         tests += [{"read": read, "test": t, "Fisher p": round(p, 4)} for t, p in pairs]
     tests = pd.DataFrame(tests)
 
