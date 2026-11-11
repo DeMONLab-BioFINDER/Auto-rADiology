@@ -11,8 +11,8 @@
          -> yellow. Colour top = the map's 99th percentile (same rule as the PNGs) or --color_max.
   both   FDA visual-read regions (plot_fda_regions.py) as outlines in one colour, on/off with a checkbox.
 
-The two brains move together: scroll through axial slices (the readers' view, default), switch to three planes or
-a rotating 3D brain. Open the .html by double-clicking; NiiVue is loaded from the web, the images are inside the page.
+Axial slices only (the readers' view); the two brains move together. Voxels are drawn as they are (nearest
+neighbour, no smoothing between voxels), so the page is as sharp as the occlusion PNGs. Open the .html by double-clicking; NiiVue is loaded from the web, the images are inside the page.
 
 MNI model only: the FDA regions are in MNI space, and only MNI-model inputs (91 x 109 x 91, 2 mm) sit on that grid.
 run_vis.py saves the maps without a position (identity affine); the MNI grid is put back here.
@@ -133,7 +133,7 @@ def reader_colormap() -> dict:
     stops = [(0, GREY_LOW), (t - 1, GREY_HIGH)]
     for lo, hi, c in zip(BAND_EDGES[:-1], BAND_EDGES[1:], BAND_COLOURS):
         stops += [(round(lo * 255), c), (round(hi * 255) - (0 if hi == 1.0 else 1), c)]
-    # index 0 (outside the brain) see-through: the page background shows there, and the 3D brain is not a white box
+    # index 0 (outside the brain) see-through: the page background shows there
     return colormap(stops, overlay=True)
 
 
@@ -195,8 +195,7 @@ def brain_mask(shape, affine, dilate_vox: int) -> np.ndarray:
 def region_zones(path: Path):
     """The FDA regions as zones: inside the brain, every voxel within ZONE_MM of a region's cortex gets that region
     (nearest one). Returns (zones 0-6, border lines between two different zones, affine). Lines between zones are
-    what is drawn; the zones themselves are only used to name the region under the cursor. For 3D, only the part of
-    the lines near the brain's outside is kept (lines on the surface instead of sheets through the brain)."""
+    what is drawn; the zones themselves are only used to name the region under the cursor."""
     img = nib.load(path)
     lab = np.asarray(img.dataobj).astype(np.int8)
     vox_mm = np.sqrt((img.affine[:3, :3] ** 2).sum(0))
@@ -208,8 +207,7 @@ def region_zones(path: Path):
     for ax in range(3):  # one side only, so the line is one voxel thick
         nb = np.roll(zones, 1, axis=ax)
         border |= (zones > 0) & (nb > 0) & (nb != zones)
-    surface = brain & ~binary_erosion(brain, iterations=int(round(4 / vox_mm.min())))  # outer 4 mm
-    return zones, border.astype(np.uint8), (border & surface).astype(np.uint8), img.affine
+    return zones, border.astype(np.uint8), img.affine
 
 
 def main():
@@ -226,11 +224,9 @@ def main():
     suvr = suvr_scans(Path(args.pkl_dir), set(ids), Path(args.cbl_mask), args.mask_erode) if args.pkl_dir else {}
     outline = []
     if args.regions:
-        zones, border, border3d, z_aff = region_zones(Path(args.regions))
+        zones, border, z_aff = region_zones(Path(args.regions))
         outline = [{"b64": nifti_b64(border, z_aff), "name": "regions.nii.gz", "colormap": "outline",
-                    "cal_min": 0.5, "cal_max": 1.0, "opacity": 1.0, "toggle": "regions", "only": "slices"},
-                   {"b64": nifti_b64(border3d, z_aff), "name": "regions3d.nii.gz", "colormap": "outline",
-                    "cal_min": 0.5, "cal_max": 1.0, "opacity": 1.0, "toggle": "regions", "only": "render"},
+                    "cal_min": 0.5, "cal_max": 1.0, "opacity": 1.0, "toggle": "regions"},
                    {"b64": nifti_b64(zones, z_aff), "name": "zones.nii.gz", "colormap": "gray",  # never shown
                     "cal_min": 0.0, "cal_max": 6.0, "opacity": 0.0}]
     in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 2)
@@ -329,17 +325,15 @@ TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 14px system-ui, sans-serif; }
-  #wrap { display: flex; flex-direction: column; height: 100%; }
+  html, body { margin: 0; background: #000; color: #ddd; font: 14px system-ui, sans-serif; }
+  #wrap { display: flex; flex-direction: column; max-width: 900px; }
   #bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
-  #bar button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
-  #bar button.on { border-color: #bbb; color: #fff; }
   #bar label { white-space: nowrap; }
   .sw { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; }
-  #panes { flex: 1; min-height: 0; display: flex; gap: 4px; }
+  #panes { display: flex; gap: 4px; }
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .head { padding: 5px 10px; background: #181818; font-weight: 600; }
-  .box { flex: 1; min-height: 0; }
+  .box { height: 420px; }  /* fixed size: one 91 x 109 axial slice, not the whole window */
   canvas { width: 100%; height: 100%; display: block; outline: none; }
   .legend { padding: 6px 12px 10px; background: #111; min-height: 54px; }
   .cbar { position: relative; width: min(420px, 90%); margin-bottom: 16px; }
@@ -355,12 +349,7 @@ TEMPLATE = """<!doctype html>
 <body><div id="wrap">
   <div id="bar">
     <b>__TITLE__</b>
-    <button data-view="axial" class="on">Axial slices</button>
-    <button data-view="planes">Three planes</button>
-    <button data-view="render">3D</button>
-    <button id="clip">Cut-away (3D)</button>
     __TOGGLES__
-    <button id="full">Full screen</button>
     <span id="status">loading…</span>
   </div>
   <div id="here">click a spot to see its values</div>
@@ -370,7 +359,7 @@ TEMPLATE = """<!doctype html>
     <div class="pane"><div class="head">What the model saw + occlusion map</div>
       <div class="box"><canvas id="glR" tabindex="0"></canvas></div><div class="legend">__RIGHT_LEGEND__</div></div>
   </div>
-  <div class="note" style="padding:4px 12px;background:#111">scroll = move through slices · click = jump there · drag in 3D = rotate · the two brains move together</div>
+  <div class="note" style="padding:4px 12px;background:#111">scroll = move through slices · click = see the values there · the two brains move together</div>
 </div>
 <script type="module">
 import { Niivue } from "__NIIVUE__";
@@ -379,9 +368,10 @@ const sides = { L: __LEFT__, R: __RIGHT__ };
 const toUrl = (b64) => URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))]));
 const nvs = {};
 for (const [k, layers] of Object.entries(sides)) {
-  const nv = new Niivue({ backColor: k === "L" ? [1, 1, 1, 1] : [0, 0, 0, 1], show3Dcrosshair: true, isColorbar: false,
-                          isOrientCube: false, crosshairColor: [0.2, 0.9, 0.2, 1], dragAndDropEnabled: false,
-                          clipPlaneColor: [0, 0, 0, 0], multiplanarShowRender: 0 });
+  // isNearestInterpolation: each 2 mm voxel drawn as one flat block, like the PNGs (NiiVue's default blends
+  // neighbouring voxels, which looks blurry when a 91 x 109 slice is blown up)
+  const nv = new Niivue({ backColor: k === "L" ? [1, 1, 1, 1] : [0, 0, 0, 1], isColorbar: false, isOrientCube: false,
+                          crosshairColor: [0.2, 0.9, 0.2, 1], dragAndDropEnabled: false, isNearestInterpolation: true });
   await nv.attachTo("gl" + k);
   for (const [name, cm] of Object.entries(cmaps)) nv.addColormap(name, cm);
   await nv.loadVolumes(layers.map(l => {
@@ -397,7 +387,7 @@ for (const [k, layers] of Object.entries(sides)) {
   nv.setSliceType(0);  // axial, like the readers
   nvs[k] = nv;
 }
-nvs.L.syncWith(nvs.R, { "2d": true, "3d": true }); nvs.R.syncWith(nvs.L, { "2d": true, "3d": true });
+nvs.L.syncWith(nvs.R, { "2d": true }); nvs.R.syncWith(nvs.L, { "2d": true });
 document.getElementById("status").textContent = "";
 const both = (fn) => { fn(nvs.L); fn(nvs.R); };
 const regionNames = __REGION_NAMES__;
@@ -415,38 +405,16 @@ const readout = () => {  // values at the crosshair, from both brains
 };
 nvs.L.onLocationChange = readout; nvs.R.onLocationChange = readout;
 
-let mode = "slices";
 const checked = (t) => { const c = document.querySelector(`[data-toggle="${t}"]`); return !c || c.checked; };
-const applyLayers = () => {  // a layer shows if its checkbox is ticked and it belongs to the current view
-  for (const k of ["L", "R"]) sides[k].forEach((l, i) => {
-    if (!l.toggle) return;
-    nvs[k].setOpacity(i, checked(l.toggle) && (!l.only || l.only === mode) ? l.opacity : 0);
-  });
+const applyLayers = () => {  // a layer shows if its checkbox is ticked
+  for (const k of ["L", "R"]) sides[k].forEach((l, i) => { if (l.toggle) nvs[k].setOpacity(i, checked(l.toggle) ? l.opacity : 0); });
   document.querySelectorAll(".occ").forEach(d => d.style.display = checked(d.dataset.for) ? "" : "none");
-};
-document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
-  document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("on", x === b));
-  mode = b.dataset.view === "render" ? "render" : "slices";
-  // the reader scale is white for low tau: on a white background a 3D brain would vanish, so 3D gets black
-  nvs.L.opts.backColor = mode === "render" ? [0, 0, 0, 1] : [1, 1, 1, 1];
-  both(nv => nv.setSliceType({ axial: 0, planes: 3, render: 4 }[b.dataset.view]));
-  applyLayers();
-});
-let clipped = false;
-document.getElementById("clip").onclick = (e) => {
-  clipped = !clipped; e.target.classList.toggle("on", clipped);
-  both(nv => { nv.setClipPlane(clipped ? [0, 270, 0] : [2, 0, 0]); if (clipped) nv.setRenderAzimuthElevation(45, 15); });
 };
 document.querySelectorAll("[data-toggle]").forEach(c => c.onchange = applyLayers);
 applyLayers();
-document.getElementById("full").onclick = () => document.getElementById("wrap").requestFullscreen();
-// open in a given state from the address (for testing), e.g. viewer.html#render+clip, #planes+class
-const want = location.hash.slice(1).split("+");
-for (const v of ["planes", "render"]) if (want.includes(v)) document.querySelector(`[data-view="${v}"]`).click();
-if (want.includes("clip")) document.getElementById("clip").click();
-if (want.includes("class")) { document.querySelectorAll('[data-toggle]').forEach(c => {
-  if (c.dataset.toggle === "class") c.checked = true; if (c.dataset.toggle === "pos_vs_neg") c.checked = false; }); applyLayers(); }
-const z = want.find(w => w.startsWith("z")); if (z) { both(nv => { nv.scene.crosshairPos = nv.mm2frac([-50, -55, +z.slice(1)]); nv.drawScene(); }); readout(); }
+// open at a given slice from the address (for testing), e.g. viewer.html#z10
+const z = location.hash.match(/z(-?\\d+)/);
+if (z) { both(nv => { nv.scene.crosshairPos = nv.mm2frac([-50, -55, +z[1]]); nv.drawScene(); }); readout(); }
 </script></body></html>
 """
 
