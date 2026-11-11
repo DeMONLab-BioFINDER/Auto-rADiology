@@ -6,10 +6,11 @@
          orange / red bands, scale top 5.89 x cerebellum (1.65 at 28% of the bar, as measured on the Moscoso
          supplement colour bars). Readers had a hand-traced cerebellum on reoriented native images; this is the
          Centiloid whole-cerebellum mask in MNI space instead, so it is close to their display, not identical.
-  right  the model's input in grey (as under the occlusion PNGs) with the occlusion map in the PNGs' colours:
-         'pos vs neg' red -> yellow = supports positive, blue -> light cyan = supports negative; 'class' dark red
-         -> yellow. Colour top = the map's 99th percentile (same rule as the PNGs) or --color_max.
-  both   FDA visual-read regions (plot_fda_regions.py) as outlines in one colour, on/off with a checkbox.
+  right  the model's input in grey (as under the occlusion PNGs) with the occlusion map drawn exactly like the PNGs
+         (src/vis.py): 'pos vs neg' red -> yellow = supports positive, blue -> light cyan = supports negative;
+         'class' dark red -> yellow; opacity follows strength (0 = see-through, solid 0.9 at the top and above);
+         colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
+  click  the values under the cursor, and (with --regions) which FDA visual-read region it is in (not drawn).
 
 Axial slices only (the readers' view); the two brains move together. Voxels are drawn as they are (nearest
 neighbour, no smoothing between voxels), so the page is as sharp as the occlusion PNGs. Open the .html by double-clicking; NiiVue is loaded from the web, the images are inside the page.
@@ -43,6 +44,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pandas as pd
+from matplotlib import colors as mcolors
 from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
 
 from make_niivue_viewer import NIIVUE, REGION_NAMES
@@ -62,9 +64,14 @@ GREY_LOW, GREY_HIGH = "#ffffff", "#3a3a3a"  # inverted grey below the transition
 WARM = ["#c00000", "#ff3000", "#ff9900", "#ffff66"]
 POS = ["#c00000", "#ff9900", "#ffff66"]   # WARM_COOL above 0: near zero -> top
 NEG = ["#1040ff", "#2aa0ff", "#a0ffff"]   # WARM_COOL below 0: near zero -> most negative
+# the same colour maps as src/vis.py, used to colour the map voxel by voxel exactly like the PNGs
+WARM_CMAP = mcolors.LinearSegmentedColormap.from_list("warm", WARM)
+WARM_COOL = mcolors.LinearSegmentedColormap.from_list(
+    "cool_warm_bright", [(0.0, "#a0ffff"), (0.25, "#2aa0ff"), (0.499, "#1040ff"),
+                         (0.501, "#c00000"), (0.75, "#ff9900"), (1.0, "#ffff66")])
+RGBA = np.dtype([("R", "u1"), ("G", "u1"), ("B", "u1"), ("A", "u1")])
 PET_DIM = 1.3  # src/vis.py: grey top = 1.3 x the 99.5th percentile, so yellow still stands out
-REGION_OUTLINE = "#ff2bd6"  # one colour for every FDA region (pink: not in the reader scale or the occlusion map)
-ZONE_MM = 6  # each FDA region (a thin cortical ribbon in the atlas) is grown this far, so borders become clean lines
+ZONE_MM = 6  # each FDA region (a thin cortical ribbon in the atlas) is grown this far, so a click near it finds it
 
 
 def parse_args():
@@ -74,11 +81,9 @@ def parse_args():
     p.add_argument("--pkl_dir", default=None, help="Original MNI images (tau_batch_*.pkl) for the SUVR / reader view.")
     p.add_argument("--cbl_mask", default=None, help="Whole-cerebellum mask (Centiloid voi_WhlCbl_2mm.nii).")
     p.add_argument("--mask_erode", type=int, default=1, help="Voxels to shrink the cerebellum mask by (as before: 1).")
-    p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py), drawn as outlines.")
+    p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): the click readout names the region (not drawn).")
     p.add_argument("--color_max", type=float, default=None,
                    help="Top of the occlusion colour scale (default: each map's 99th percentile, like the PNGs).")
-    p.add_argument("--hide_below", type=float, default=0.1,
-                   help="Occlusion values below this share of the top are not coloured (default 0.1).")
     p.add_argument("--out_dir", default=None, help="Default <vis_dir>/viewers.")
     args = p.parse_args()
     if bool(args.pkl_dir) != bool(args.cbl_mask):
@@ -121,6 +126,51 @@ def colormap(stops: list, overlay: bool = False) -> dict:
         cm["A"].append(0 if overlay and n == 0 else 255)
         cm["I"].append(int(idx))
     return cm
+
+
+def occlusion_rgba(m: np.ndarray, signed: bool, top: float) -> np.ndarray:
+    """src/vis.py _overlay_rgba as a colour volume: colour from the map, opacity 0.9 x strength / top (capped).
+    Coloured here rather than in NiiVue, which draws every coloured voxel solid in its slice view."""
+    cmap, norm = (WARM_COOL, mcolors.Normalize(-top, top)) if signed else (WARM_CMAP, mcolors.Normalize(0, top))
+    rgba = cmap(norm(m))
+    strength = np.abs(m) if signed else np.clip(m, 0, None)
+    rgba[..., 3] = 0.9 * np.clip(strength / top, 0, 1)
+    out = np.zeros(m.shape, RGBA)
+    for k, c in enumerate("RGBA"):
+        out[c] = np.round(rgba[..., k] * 255).astype(np.uint8)
+    return out
+
+
+def faded_colormap(colours: list) -> dict:
+    """256-step NiiVue colormap: colours spread evenly, opacity rising from 0 (see-through) to 0.9 at the top,
+    like src/vis.py _overlay_rgba (alpha = 0.9 x strength / top)."""
+    rgb = np.array([[int(c[i:i + 2], 16) for i in (1, 3, 5)] for c in colours], float)
+    f = np.arange(256) / 255
+    cm = {k: np.interp(f, np.linspace(0, 1, len(colours)), rgb[:, n]).round().astype(int).tolist()
+          for n, k in enumerate("RGB")}
+    cm["A"] = (0.9 * 255 * f).round().astype(int).tolist()
+    cm["I"] = list(range(256))
+    return cm
+
+
+def faded_css(colours: list, lo: float, hi: float) -> list:
+    """CSS gradient stops (bottom lo% -> top hi%) for the same colours and fading, for the colour bar."""
+    cm = faded_colormap(colours)
+    out = []
+    for k in range(0, 256, 32) if hi > lo else range(255, -1, -32):
+        pos = lo + (hi - lo) * k / 255
+        out.append(f"rgba({cm['R'][k]},{cm['G'][k]},{cm['B'][k]},{cm['A'][k] / 255:.2f}) {pos:.1f}%")
+    k = 255
+    out.append(f"rgba({cm['R'][k]},{cm['G'][k]},{cm['B'][k]},0.90) {hi:.1f}%") if hi > lo else \
+        out.insert(0, f"rgba({cm['R'][k]},{cm['G'][k]},{cm['B'][k]},0.90) {hi:.1f}%")
+    return out
+
+
+def vbar(stops: list, ticks: list, label: str, vt: str) -> str:
+    """Vertical colour bar beside the brain, on the PNGs' grey (0.55), ticks on the right."""
+    t = "".join(f"<span style='bottom:{b}%'>{txt}</span>" for b, txt in ticks)
+    return (f"<div class='vbar occ' data-for='{vt}'><div class='vgrad' style='background:linear-gradient(to top, "
+            f"{', '.join(stops)}), #8c8c8c'></div><div class='vticks'>{t}</div><div class='vlabel'>{label}</div></div>")
 
 
 def even(colours: list) -> list:
@@ -194,20 +244,14 @@ def brain_mask(shape, affine, dilate_vox: int) -> np.ndarray:
 
 def region_zones(path: Path):
     """The FDA regions as zones: inside the brain, every voxel within ZONE_MM of a region's cortex gets that region
-    (nearest one). Returns (zones 0-6, border lines between two different zones, affine). Lines between zones are
-    what is drawn; the zones themselves are only used to name the region under the cursor."""
+    (nearest one). Only used to name the region under the cursor. Returns (zones 0-6, affine)."""
     img = nib.load(path)
     lab = np.asarray(img.dataobj).astype(np.int8)
     vox_mm = np.sqrt((img.affine[:3, :3] ** 2).sum(0))
     dist, idx = distance_transform_edt(lab == 0, sampling=vox_mm, return_indices=True)
     zones = lab[tuple(idx)]
-    brain = brain_mask(lab.shape, img.affine, 0)
-    zones[(dist > ZONE_MM) | ~brain] = 0
-    border = np.zeros(lab.shape, bool)
-    for ax in range(3):  # one side only, so the line is one voxel thick
-        nb = np.roll(zones, 1, axis=ax)
-        border |= (zones > 0) & (nb > 0) & (nb != zones)
-    return zones, border.astype(np.uint8), img.affine
+    zones[(dist > ZONE_MM) | ~brain_mask(lab.shape, img.affine, 0)] = 0
+    return zones, img.affine
 
 
 def main():
@@ -222,13 +266,11 @@ def main():
     logit = "logit" in vis_dir.name
     summary = pd.read_csv(vis_dir / "summary.csv").set_index("ID") if (vis_dir / "summary.csv").exists() else None
     suvr = suvr_scans(Path(args.pkl_dir), set(ids), Path(args.cbl_mask), args.mask_erode) if args.pkl_dir else {}
-    outline = []
+    zones_layer = []  # invisible, only for the click readout
     if args.regions:
-        zones, border, z_aff = region_zones(Path(args.regions))
-        outline = [{"b64": nifti_b64(border, z_aff), "name": "regions.nii.gz", "colormap": "outline",
-                    "cal_min": 0.5, "cal_max": 1.0, "opacity": 1.0, "toggle": "regions"},
-                   {"b64": nifti_b64(zones, z_aff), "name": "zones.nii.gz", "colormap": "gray",  # never shown
-                    "cal_min": 0.0, "cal_max": 6.0, "opacity": 0.0}]
+        zones, z_aff = region_zones(Path(args.regions))
+        zones_layer = [{"b64": nifti_b64(zones, z_aff), "name": "zones.nii.gz", "colormap": "gray",
+                        "cal_min": 0.0, "cal_max": 6.0, "opacity": 0.0}]
     in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 2)
 
     for scan_id in ids:
@@ -263,36 +305,32 @@ def main():
             left.append({"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input_heat.nii.gz", "colormap": "inferno",
                          "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0})
             left_title = "Tau (model input, 0–1 per scan; not SUVR — no reader scale without --pkl_dir)"
-        left += outline
+        left += zones_layer
 
         # right brain
         right = [{"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input.nii.gz", "colormap": "gray",
                   "cal_min": 0.0, "cal_max": grey_top, "opacity": 1.0}]
-        legend_right = ""
+        legend_right, bars = "", ""
         for vt, m in maps.items():
             signed = vt == "pos_vs_neg"
             top = args.color_max or robust_top(m, signed)
-            lay = {"b64": nifti_b64(m, MNI_2MM_RAS), "name": f"{vt}.nii.gz", "colormap": "occ_pos" if signed else "occ_warm",
-                   "cal_min": args.hide_below * top, "cal_max": top, "opacity": 1.0, "toggle": vt,
-                   "start_hidden": vt == "class" and "pos_vs_neg" in maps}
+            hidden = vt == "class" and "pos_vs_neg" in maps
+            lay = {"b64": nifti_b64(occlusion_rgba(m, signed, top), MNI_2MM_RAS), "name": f"{vt}_shown.nii.gz",
+                   "opacity": 1.0, "toggle": vt, "start_hidden": hidden}
+            values = {"b64": nifti_b64(m, MNI_2MM_RAS), "name": f"{vt}.nii.gz", "colormap": "gray",  # never shown,
+                      "cal_min": 0.0, "cal_max": 1.0, "opacity": 0.0}                              # click readout only
             if signed:
-                lay.update(colormapNegative="occ_neg", cal_minNeg=-top, cal_maxNeg=-args.hide_below * top)
                 what = ("drop in log-odds of positive when hidden" if logit
                         else "drop in P(positive) minus drop in P(negative)")
-                grad = f"linear-gradient(to right, {', '.join(NEG[::-1])}, {', '.join(POS)})"
-                legend_right += (f"<div class='occ' data-for='{vt}'><div class='cbar'><div class='grad' style='background:{grad}'></div>"
-                                 f"<div class='ticks'><span style='left:0%'>−{top:.3g}</span><span style='left:50%'>0</span>"
-                                 f"<span style='left:100%'>+{top:.3g}</span></div></div>"
-                                 f"<div class='note'>pos vs neg: {what} · red→yellow supports positive · blue→light cyan "
-                                 f"supports negative · below {args.hide_below:g}× top not coloured</div></div>")
+                bars += vbar(faded_css(NEG, 50, 0) + faded_css(POS, 50, 100),
+                             [(100, f"+{top:.3g}"), (50, "0"), (0, f"−{top:.3g}")], what, vt)
+                legend_right += (f"<div class='note occ' data-for='{vt}'>pos vs neg: {what} · above 0 (red→yellow) "
+                                 "supports positive · below 0 (blue→light cyan) supports negative · fainter = weaker</div>")
             else:
                 what = "drop in log-odds of the predicted class" if logit else "drop in P(predicted class)"
-                legend_right += (f"<div class='occ' data-for='{vt}'><div class='cbar'><div class='grad' "
-                                 f"style='background:linear-gradient(to right, {', '.join(WARM)})'></div>"
-                                 f"<div class='ticks'><span style='left:0%'>0</span><span style='left:100%'>{top:.3g}</span>"
-                                 f"</div></div><div class='note'>class: {what} when hidden</div></div>")
-            right.append(lay)
-        right += outline
+                bars += vbar(faded_css(WARM, 0, 100), [(100, f"{top:.3g}"), (0, "0")], what + " when hidden", vt)
+                legend_right += f"<div class='note occ' data-for='{vt}'>class: {what} when hidden · fainter = weaker</div>"
+            right += [lay, values]
 
         title = f"Scan {scan_id}"
         if summary is not None and scan_id in summary.index:
@@ -304,18 +342,13 @@ def main():
         toggles = "".join(
             f"<label><input type='checkbox' data-toggle='{vt}' {'' if (vt == 'class' and 'pos_vs_neg' in maps) else 'checked'}>"
             f" Occlusion: {'pos vs neg' if vt == 'pos_vs_neg' else 'class'}</label>" for vt in maps)
-        if outline:
-            toggles += (f"<label><input type='checkbox' data-toggle='regions' checked> "
-                        f"<i class='sw' style='background:{REGION_OUTLINE}'></i> FDA region borders</label>")
 
         page = (TEMPLATE.replace("__NIIVUE__", NIIVUE).replace("__TITLE__", title)
                 .replace("__LEFT_TITLE__", left_title).replace("__LEFT_LEGEND__", left_note)
                 .replace("__RIGHT_LEGEND__", legend_right).replace("__TOGGLES__", toggles)
                 .replace("__REGION_NAMES__", json.dumps(REGION_NAMES)).replace("__LEFT__", json.dumps(left)).replace("__RIGHT__", json.dumps(right))
                 .replace("__CMAPS__", json.dumps({
-                    "reader": reader_colormap(), "occ_pos": colormap(even(POS), True), "occ_neg": colormap(even(NEG), True),
-                    "occ_warm": colormap(even(WARM), True),
-                    "outline": colormap([(0, REGION_OUTLINE), (255, REGION_OUTLINE)], True)})))
+                    "reader": reader_colormap(), })).replace("__RIGHT_BARS__", bars))
         out = out_dir / f"{scan_id}_viewer.html"
         out.write_text(page, encoding="utf-8")
         print(f"[save] {out} ({out.stat().st_size / 1e6:.1f} MB)")
@@ -334,7 +367,13 @@ TEMPLATE = """<!doctype html>
   .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .head { padding: 5px 10px; background: #181818; font-weight: 600; }
   .box { height: 420px; }  /* fixed size: one 91 x 109 axial slice, not the whole window */
-  canvas { width: 100%; height: 100%; display: block; outline: none; }
+  .box { display: flex; }
+  canvas { flex: 1; min-width: 0; height: 100%; display: block; outline: none; }
+  .vbar { position: relative; width: 78px; margin: 30px 0 30px 8px; }
+  .vgrad { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; }
+  .vticks span { position: absolute; left: 18px; transform: translateY(50%); font-size: 11px; color: #bbb; }
+  .vlabel { position: absolute; left: 52px; top: 50%; transform: translate(-50%, -50%) rotate(-90deg); white-space: nowrap;
+            font-size: 11px; color: #999; }
   .legend { padding: 6px 12px 10px; background: #111; min-height: 54px; }
   .cbar { position: relative; width: min(420px, 90%); margin-bottom: 16px; }
   .grad { height: 12px; }
@@ -357,7 +396,7 @@ TEMPLATE = """<!doctype html>
     <div class="pane"><div class="head">__LEFT_TITLE__</div><div class="box"><canvas id="glL" tabindex="0"></canvas></div>
       <div class="legend">__LEFT_LEGEND__</div></div>
     <div class="pane"><div class="head">What the model saw + occlusion map</div>
-      <div class="box"><canvas id="glR" tabindex="0"></canvas></div><div class="legend">__RIGHT_LEGEND__</div></div>
+      <div class="box"><canvas id="glR" tabindex="0"></canvas>__RIGHT_BARS__</div><div class="legend">__RIGHT_LEGEND__</div></div>
   </div>
   <div class="note" style="padding:4px 12px;background:#111">scroll = move through slices · click = see the values there · the two brains move together</div>
 </div>
@@ -370,16 +409,18 @@ const nvs = {};
 for (const [k, layers] of Object.entries(sides)) {
   // isNearestInterpolation: each 2 mm voxel drawn as one flat block, like the PNGs (NiiVue's default blends
   // neighbouring voxels, which looks blurry when a 91 x 109 slice is blown up)
-  const nv = new Niivue({ backColor: k === "L" ? [1, 1, 1, 1] : [0, 0, 0, 1], isColorbar: false, isOrientCube: false,
+  const nv = new Niivue({ backColor: [0, 0, 0, 1], isColorbar: false, isOrientCube: false,
                           crosshairColor: [0.2, 0.9, 0.2, 1], dragAndDropEnabled: false, isNearestInterpolation: true });
   await nv.attachTo("gl" + k);
   for (const [name, cm] of Object.entries(cmaps)) nv.addColormap(name, cm);
   await nv.loadVolumes(layers.map(l => {
-    const v = { url: toUrl(l.b64), name: l.name, colormap: l.colormap, opacity: l.start_hidden ? 0 : l.opacity };
+    const v = { url: toUrl(l.b64), name: l.name, opacity: l.start_hidden ? 0 : l.opacity };
+    if (l.colormap) v.colormap = l.colormap;  // colour volumes (occlusion) bring their own colours
     if (l.colormapNegative) v.colormapNegative = l.colormapNegative;
     return v;
   }));
   layers.forEach((l, i) => {  // keep the colour ranges exactly as given
+    if (l.cal_min === undefined) return;
     nv.volumes[i].cal_min = l.cal_min; nv.volumes[i].cal_max = l.cal_max;
     if (l.cal_minNeg !== undefined) { nv.volumes[i].cal_minNeg = l.cal_minNeg; nv.volumes[i].cal_maxNeg = l.cal_maxNeg; }
   });
