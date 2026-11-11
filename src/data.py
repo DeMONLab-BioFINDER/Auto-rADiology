@@ -244,7 +244,12 @@ def get_loader(df, tfm, data_file, args, batch_size, augment=False, shuffle=Fals
             # No preprocessed pt batches found; images will be loaded with MONAI transforms
             print(f"Creating {train_test} loader using MONAI transforms (from raw images).")
 
-    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats, augment=augment)
+    # Random rotation only while training (not for test-time augmentation or evaluation).
+    rot_aug_deg = getattr(args, "rot_aug_deg", None) if (augment and train_test == 'train') else None
+    dataset = PETDataset(df, tfm, args.targets, data_file=data_file, input_cl=args.input_cl, extra_global_feats=args.extra_global_feats,
+                         augment=augment, rot_aug_deg=rot_aug_deg)
+    if rot_aug_deg is not None and any(float(a) > 0 for a in rot_aug_deg):
+        print(f"Random rotation augmentation on the {train_test} loader: up to +/- {list(rot_aug_deg)} degrees (pitch, roll, yaw)")
 
     balance_col = getattr(args, "balance_sampling_by", "") or None
     if balance_col and balance_col in df.columns and train_test == 'train':
@@ -335,6 +340,40 @@ def keep_top(x, height):
 
 
 BRAIN_MM = 140  # the top 140 mm of the head hold the whole brain; centring uses only this part
+
+
+def rotation_matrix(pitch_deg: float, roll_deg: float, yaw_deg: float) -> torch.Tensor:
+    """3x3 rotation in (D, H, W) = RAS (x right, y anterior, z superior) axis order.
+    pitch = nodding forward/back (about the left-right axis), roll = tilting ear to shoulder (about
+    the back-front axis), yaw = turning left/right (about the up-down axis)."""
+    p, r, y = (float(a) * np.pi / 180.0 for a in (pitch_deg, roll_deg, yaw_deg))
+    rx = torch.tensor([[1, 0, 0], [0, np.cos(p), -np.sin(p)], [0, np.sin(p), np.cos(p)]], dtype=torch.float32)
+    ry = torch.tensor([[np.cos(r), 0, np.sin(r)], [0, 1, 0], [-np.sin(r), 0, np.cos(r)]], dtype=torch.float32)
+    rz = torch.tensor([[np.cos(y), -np.sin(y), 0], [np.sin(y), np.cos(y), 0], [0, 0, 1]], dtype=torch.float32)
+    return rz @ ry @ rx
+
+
+def rotate_volume(x: torch.Tensor, rot: torch.Tensor) -> torch.Tensor:
+    """Rotate a [C, D, H, W] volume about the centre of the box by `rot` (3x3, (D, H, W) order),
+    trilinear, zeros outside. Assumes cubic voxels (true for the 2 mm and MNI inputs), so voxel
+    units are mm units up to a constant and the rotation stays a true rotation in a non-cubic box."""
+    _, d, h, w = x.shape
+    sizes = torch.tensor([d, h, w], dtype=torch.float32)
+    # affine_grid works in normalised coordinates (-1..1 per axis, align_corners=False), where
+    # voxel offset from the centre = n * size / 2. Output voxel v samples the input at rot^-1 v.
+    m = torch.diag(1.0 / sizes) @ rot.T @ torch.diag(sizes)
+    m = m.flip(0).flip(1)  # grid_sample's coordinate order is (W, H, D)
+    theta = torch.cat([m, torch.zeros(3, 1)], dim=1).unsqueeze(0)
+    grid = torch.nn.functional.affine_grid(theta, (1, x.shape[0], d, h, w), align_corners=False)
+    out = torch.nn.functional.grid_sample(x.unsqueeze(0).float(), grid, mode="bilinear",
+                                          padding_mode="zeros", align_corners=False)
+    return out.squeeze(0).to(x.dtype)
+
+
+def random_rotate(x: torch.Tensor, max_deg) -> torch.Tensor:
+    """Training augmentation: rotate by a random angle in [-max, +max] per axis (pitch, roll, yaw)."""
+    angles = [(torch.rand(1).item() * 2 - 1) * float(a) for a in max_deg]
+    return rotate_volume(x, rotation_matrix(*angles))
 
 
 def centre_on_brain(x, size_xy, brain_vox):
@@ -453,8 +492,11 @@ class PETDataset(Dataset):
       - table columns: ["ID", "pet_path", "visual_read", <regression_target>, ...]
       - transforms: a MONAI Compose returning a (1, D, H, W) Tensor/MetaTensor (float-like)
     """
-    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None,input_cl=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32):
+    def __init__(self, table: pd.DataFrame, transforms, targets, data_file=None,input_cl=None, extra_global_feats: str | None = None, augment: bool = False, dtype=torch.float32,
+                 rot_aug_deg=None):
         self.table = table.reset_index(drop=True)
+        # (pitch, roll, yaw) maximum degrees for random_rotate, or None = no rotation. Only used when augment.
+        self.rot_aug_deg = tuple(float(a) for a in rot_aug_deg) if rot_aug_deg is not None and any(float(a) > 0 for a in rot_aug_deg) else None
         self.transforms = transforms
         self.data_file = data_file
         self.targets = [t.strip() for t in targets.split(",") if t.strip()]
@@ -591,6 +633,8 @@ class PETDataset(Dataset):
         # (Inferior-Superior) are NOT symmetric axes, so flipping them used to
         # produce front-to-back or upside-down brains. Only D is flipped now.
         if self.augment:
+            if self.rot_aug_deg is not None:
+                x = random_rotate(x, self.rot_aug_deg)
             r = torch.rand(1, device=x.device)
             if r[0] < 0.5: x = torch.flip(x, dims=[ndim-3])  # D (Right-Left)
 

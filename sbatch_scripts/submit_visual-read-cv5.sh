@@ -22,6 +22,9 @@
 # "-<POOL>". Same seed and split as the average-pooling run, so the folds are identical and the two
 # can be compared scan by scan with results_plotting/compare_cv_runs_oof.py, e.g.
 #   POOL=attention sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
+# Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" (max degrees, training only); the run name
+# gets "-rot<pitch>-<roll>-<yaw>". Same folds as the run without it, e.g.
+#   ROT_AUG="15 3 3" sbatch submit_visual-read-cv5.sh tau_raw_2mm_pts
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -50,7 +53,13 @@ if [[ "$POOL" != "avg" ]]; then
   MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
   NAME_EXTRA="${NAME_EXTRA}-${POOL}"
 fi
-echo "data_type: $DATA_TYPE, pool: $POOL"
+ROT_ARGS=()
+if [[ -n "${ROT_AUG:-}" ]]; then
+  read -r -a ROT <<< "$ROT_AUG"
+  ROT_ARGS=(--rot_aug_deg "${ROT[@]}")
+  NAME_EXTRA="${NAME_EXTRA}-rot$(IFS=-; echo "${ROT[*]}")"
+fi
+echo "data_type: $DATA_TYPE, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}"
 
 RUN_LOG=$(mktemp)
 python "./run.py" \
@@ -71,6 +80,7 @@ python "./run.py" \
   --no-lr_scheduler \
   --model_name_extra "$NAME_EXTRA" \
   "${MODEL_ARGS[@]}" \
+  "${ROT_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

@@ -18,6 +18,9 @@
 # the CV run with the same POOL; the run name gets "-<POOL>". e.g.
 #   POOL=attention sbatch submit_visual-read-final.sh tau_T1MNI_pts 17
 # The AVID and occlusion scripts need the same POOL=... to rebuild the model.
+# Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" as in the CV run (epochs from that CV run);
+# the run name gets "-rot...". Training only, so the AVID / occlusion scripts need nothing extra.
+#   ROT_AUG="15 3 3" sbatch submit_visual-read-final.sh tau_raw_2mm_pts <epochs>
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -54,11 +57,17 @@ if [[ "$POOL" != "avg" ]]; then
   MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
   NAME_EXTRA="${NAME_EXTRA}-${POOL}"
 fi
+ROT_ARGS=()
+if [[ -n "${ROT_AUG:-}" ]]; then
+  read -r -a ROT <<< "$ROT_AUG"
+  ROT_ARGS=(--rot_aug_deg "${ROT[@]}")
+  NAME_EXTRA="${NAME_EXTRA}-rot$(IFS=-; echo "${ROT[*]}")"
+fi
 if [[ -n "$TRAIN_SEED" ]]; then
   SEED_ARGS=(--train_seed "$TRAIN_SEED")
   NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
 fi
-echo "data_type: $DATA_TYPE, epochs: $EPOCHS, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL"
+echo "data_type: $DATA_TYPE, epochs: $EPOCHS, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
@@ -76,6 +85,7 @@ python ./run.py \
   --model_name_extra "$NAME_EXTRA" \
   "${SEED_ARGS[@]}" \
   "${MODEL_ARGS[@]}" \
+  "${ROT_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

@@ -67,6 +67,11 @@ def parse_arguments():
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to load (optional)")
     parser.add_argument("--amp", type=bool, default=True, help="Use automatic mixed precision if CUDA is available.")
     parser.add_argument("--train_repeat", type=int, default=1, help="Repeat each training sample this many times for augmentation.")
+    parser.add_argument("--rot_aug_deg", nargs=3, type=float, default=None, metavar=("PITCH", "ROLL", "YAW"),
+                        help="Random rotation augmentation on the training loader only: up to +/- this many degrees "
+                             "about each axis (pitch = nodding forward/back, roll = ear to shoulder, yaw = turning), "
+                             "about the centre of the box. Off by default. For cubic-voxel inputs (2 mm, MNI). "
+                             "e.g. --rot_aug_deg 15 3 3 for the head tilt measured in the 2 mm scans (scripts/check_t1_rotation.py).")
     parser.add_argument("--es_patience", "--patience", dest="es_patience", type=int, default=10, help="Early stopping patience in epochs.")
     parser.add_argument("--es_min_delta", "--min_delta", dest="es_min_delta", type=float, default=0.001, help="Minimum validation-loss improvement required to reset early stopping.")
     parser.add_argument("--run_kfold_cv", action=argparse.BooleanOptionalAction, default=False, help="Run k-fold CV on the training pool.")
