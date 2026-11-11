@@ -121,10 +121,11 @@ def parse_arguments():
                         help="Occlusion: fractional overlap between neighbouring patches (stride = mask_size * (1 - overlap)). "
                              "Lower = fewer passes (e.g. 0.5).")
     parser.add_argument("--vis_n_batch", type=int, default=16, help="Occlusion: occluded volumes per forward batch.")
-    parser.add_argument("--vis_occlusion_mode", type=str, default="gaussian",
-                        help="Occlusion fill: 'gaussian' (MONAI default, soft Gaussian dimming of the patch), 'mean_img', "
-                             "'mean_patch', 'median_brain' (this scan's median inside the head), or a constant such as 0 "
-                             "to blank the patch to zero.")
+    parser.add_argument("--vis_occlusion_mode", type=str, default="median_brain",
+                        help="Occlusion fill: 'median_brain' (default: this scan's median inside the head, i.e. ordinary "
+                             "uptake instead of an artificial dark hole), 'gaussian' (MONAI's default, soft Gaussian dimming "
+                             "of the patch; used for maps made before 2026-11-11), 'mean_img', 'mean_patch', or a constant "
+                             "such as 0 to blank the patch to zero.")
     parser.add_argument("--vis_occlusion_target", type=str, default="prob", choices=["prob", "logit"],
                         help="Occlusion: what the map measures. 'prob' = drop in class probability; 'logit' = drop in "
                              "the model's log-odds (logit of positive minus logit of negative), which does not get stuck "

@@ -16,7 +16,8 @@
 #
 # Usage:
 #   sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [target] [mask_size] [overlap] [fill]
-# Defaults: target prob, mask 4, overlap 0.5, fill gaussian.
+# Defaults: target prob, mask 4, overlap 0.5, fill median_brain (the scan's median inside the head;
+# maps made before 2026-11-11 used gaussian - pass gaussian as the 6th argument to match those).
 #   e.g. sbatch submit_vis-occlusion-cases.sh <folder> 2021,201,1922 logit
 # Input images: set DATA_TYPE to the data type the model was trained on (default tau_raw), e.g.
 #   DATA_TYPE=tau_T1MNI_pts sbatch submit_vis-occlusion-cases.sh <folder> <IDs> logit
@@ -55,7 +56,7 @@ fi
 TARGET="${3:-prob}"
 MASK_SIZE="${4:-4}"
 OVERLAP="${5:-0.5}"
-FILL="${6:-gaussian}"
+FILL="${6:-median_brain}"
 DATA_TYPE="${DATA_TYPE:-tau_raw}"
 DATASET="${DATASET:-Gothenburg}"
 POOL="${POOL:-avg}"

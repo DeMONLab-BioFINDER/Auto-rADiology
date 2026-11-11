@@ -257,7 +257,7 @@ def occlusion_vis_fn(model, x, extra, **kwargs):
     which PET always does), which is not the probability the classifier reports.
 
     kwargs: mask_size (int or 3-tuple, default 8), overlap (default 0.75), n_batch (default
-    16), mode (see _parse_occlusion_mode, default 'gaussian'), activate (default: softmax
+    16), mode (see _parse_occlusion_mode, default 'median_brain'), activate (default: softmax
     over classes; False = raw logits, or pass your own callable), brain_bbox (default False:
     only occlude inside the bounding box of the brain, the map outside is 0), target (default
     'prob'; 'logit' = both maps are the drop in the model's log-odds of positive, logit(pos) -
@@ -278,7 +278,7 @@ def occlusion_vis_fn(model, x, extra, **kwargs):
         mask_size = tuple(mask_size)
     occ = OcclusionSensitivity(nn_module=model, mask_size=mask_size,
                                n_batch=kwargs.get("n_batch", 16), overlap=kwargs.get("overlap", 0.75),
-                               mode=_parse_occlusion_mode(kwargs.get("mode", "gaussian"), x),
+                               mode=_parse_occlusion_mode(kwargs.get("mode", "median_brain"), x),
                                activate=activate if activate is not None else False,)
 
     b_box = _brain_bbox(x) if kwargs.get("brain_bbox", False) else None
