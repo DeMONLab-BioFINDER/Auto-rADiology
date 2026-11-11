@@ -185,8 +185,12 @@ ATTENTION_LABEL = "attention weight, as a multiple of an even share\n(1 = every 
 def attention_vis_fn(model, x, extra, **kwargs):
     """Where an attention-pooling model (CNN3D pool="attention") puts its weight: the softmax weights
     AttentionPool3D gives each location of the last feature map (e.g. 5x6x5 for the cropped MNI inputs), times
-    the number of locations, so 1 = an even share. Each location is drawn as its block of input voxels
-    (nearest upsampling - one block = one location, no smoothing). Prints how concentrated the weight
+    the number of locations, so 1 = an even share. Each location is drawn as its own block of input voxels,
+    no smoothing: after k max poolings (2x2x2), location i covers input voxels i*2^k .. (i+1)*2^k - 1 along
+    each axis. The pooling rounds down, so the grid covers a bit less than the scan (MNI 91x109x91 with
+    4 poolings: 80x96x80); the leftover voxels at the far end get the last block's value. (Before
+    2026-11-11 the grid was stretched over the whole scan instead, which put blocks up to ~11 voxels
+    too far towards the far end.) Prints how concentrated the weight
     is: the effective number of locations (1 / sum of squared weights; all locations = even weighting,
     i.e. average pooling) and the share of weight in the top 5% of locations."""
     pool = getattr(model, "pool", None)
@@ -204,8 +208,23 @@ def attention_vis_fn(model, x, extra, **kwargs):
     print(f"[attention] {n} locations {grid}: effective number of locations {n_eff:.0f} ({n_eff / n:.0%} of all; "
           f"100% = plain averaging), top 5% of locations hold {top5:.0%} of the weight, strongest = {float(w.max()) * n:.0f}x an even share")
     heat = (w * n).reshape(1, 1, *grid)
-    heat = F.interpolate(heat, size=tuple(x.shape[-3:]), mode="nearest")
-    return heat[0, 0].cpu().numpy(), None
+    return _blocks_to_input(heat, model, tuple(x.shape[-3:]))[0, 0].cpu().numpy(), None
+
+
+def _blocks_to_input(heat, model, in_shape):
+    """[1,1,*grid] map of the last feature map -> [1,1,*in_shape], each location as its exact block of
+    input voxels (2^k per side for k MaxPool3d(2) layers in model.features), leftover far-end voxels
+    filled with the last block (edge replicate)."""
+    k = sum(isinstance(m, torch.nn.MaxPool3d) for m in model.features.modules())
+    f = 2 ** k
+    for d in range(3):
+        heat = heat.repeat_interleave(f, dim=2 + d)
+    covered = heat.shape[2:]
+    assert all(c <= s for c, s in zip(covered, in_shape)), f"blocks {covered} larger than input {in_shape}"
+    pad = []
+    for c, s in reversed(list(zip(covered, in_shape))):  # F.pad wants last dim first
+        pad += [0, s - c]
+    return F.pad(heat, pad, mode="replicate") if any(pad) else heat
 
 
 def _parse_occlusion_mode(mode, x=None):
