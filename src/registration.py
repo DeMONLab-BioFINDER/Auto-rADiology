@@ -85,11 +85,12 @@ def head_top_mask(img, frac=0.1, top_mm=140.0):
     return mask
 
 
-def register_rigid(moving, fixed, fixed_mask=None, seed=42):
-    """Rigid (6 parameters: 3 rotations, 3 shifts) registration of `moving` (a native scan) to
-    `fixed` (the template), Mattes mutual information, 3 resolution levels. Starts from the
-    centres of mass of the top 140 mm of each head. Returns (Euler3DTransform mapping template
-    points to scan points, final metric value)."""
+def register_rigid(moving, fixed, fixed_mask=None, seed=42, scale=False):
+    """Rigid registration of `moving` (a native scan) to `fixed` (the template): 6 parameters
+    (3 rotations, 3 shifts), or with scale=True 7 (plus ONE overall scale factor, the same in every
+    direction, so the head's shape cannot be distorted - only its size matched to the template).
+    Mattes mutual information, 3 resolution levels. Starts from the centres of mass of the top
+    140 mm of each head. Returns (transform mapping template points to scan points, final metric)."""
     sitk = _sitk()
     fixed_s, moving_s = _scaled(fixed), _scaled(moving)
     moving_mask = head_top_mask(moving_s)
@@ -107,7 +108,7 @@ def register_rigid(moving, fixed, fixed_mask=None, seed=42):
 
     c_fixed = com(fixed_s, fixed_mask)
     c_moving = com(moving_s, moving_mask)
-    tx = sitk.Euler3DTransform()
+    tx = sitk.Similarity3DTransform() if scale else sitk.Euler3DTransform()
     tx.SetCenter([float(c) for c in c_fixed])
     tx.SetTranslation([float(d) for d in (c_moving - c_fixed)])
 
@@ -136,14 +137,17 @@ def rotation_summary(tx):
     axis (nodding), roll = about the back-front axis, yaw = about the up-down axis; total = the
     single rotation angle; shift = length of the translation."""
     flip = np.diag([-1.0, -1.0, 1.0])
-    r = flip @ np.array(tx.GetMatrix(), dtype=float).reshape(3, 3) @ flip  # LPS -> RAS
+    m = np.array(tx.GetMatrix(), dtype=float).reshape(3, 3)
+    # template -> scan scale (Similarity3DTransform; 1 for rigid): > 1 = the head is bigger than the template
+    scale = float(np.cbrt(np.linalg.det(m)))
+    r = flip @ (m / scale) @ flip  # LPS -> RAS, rotation only
     total = np.degrees(np.arccos(np.clip((np.trace(r) - 1) / 2, -1.0, 1.0)))
     # same convention as src.data.rotation_matrix: r = Rz(yaw) @ Ry(roll) @ Rx(pitch), RAS axes
     pitch = np.degrees(np.arctan2(r[2, 1], r[2, 2]))
     roll = np.degrees(np.arcsin(np.clip(-r[2, 0], -1.0, 1.0)))
     yaw = np.degrees(np.arctan2(r[1, 0], r[0, 0]))
     return {"pitch_deg": float(pitch), "roll_deg": float(roll), "yaw_deg": float(yaw), "total_deg": float(total),
-            "shift_mm": float(np.linalg.norm(tx.GetTranslation()))}
+            "shift_mm": float(np.linalg.norm(tx.GetTranslation())), "scale": scale}
 
 
 def resample_aligned(moving, tx, fixed, spacing_mm=2.0):
@@ -168,10 +172,10 @@ def resample_aligned(moving, tx, fixed, spacing_mm=2.0):
     return sitk.Resample(sitk.Cast(moving, sitk.sitkFloat32), ref, tx, sitk.sitkLinear, 0.0, sitk.sitkFloat32)
 
 
-def straighten(arr, affine_ras, fixed, fixed_mask=None, spacing_mm=2.0):
+def straighten(arr, affine_ras, fixed, fixed_mask=None, spacing_mm=2.0, scale=False):
     """One native scan -> (straightened array, its RAS affine, pose-change summary dict)."""
     moving = to_sitk(arr, affine_ras)
-    tx, metric = register_rigid(moving, fixed, fixed_mask)
+    tx, metric = register_rigid(moving, fixed, fixed_mask, scale=scale)
     out = resample_aligned(moving, tx, fixed, spacing_mm)
     out_arr, out_aff = from_sitk(out)
     summary = rotation_summary(tx)

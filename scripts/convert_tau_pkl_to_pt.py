@@ -99,7 +99,8 @@ def main(args):
     if args.rigid_template:
         from src.registration import load_template, straighten
         rigid = load_template(args.rigid_template)
-        print(f"Rigid alignment to {args.rigid_template} before the recipe (rotation + shift only)")
+        print(f"Rigid alignment to {args.rigid_template} before the recipe (rotation + shift"
+              f"{' + one overall scale factor' if args.rigid_scale else ' only'})")
     buffer, scan_rows = [], []
     batch_id = 0
     total = 0
@@ -122,7 +123,7 @@ def main(args):
                 # template that keeps the whole field of view; the recipe below then runs as usual
                 fixed, fixed_mask = rigid
                 arr, aff, pose = straighten(np.squeeze(img), np.asarray(meta["affine"], dtype=float), fixed, fixed_mask,
-                                            spacing_mm=args.spacing_mm or 2.0)
+                                            spacing_mm=args.spacing_mm or 2.0, scale=args.rigid_scale)
                 img = np.clip(arr, 0, None)
                 meta = dict(meta)
                 meta["affine"] = torch.as_tensor(aff, dtype=torch.float64)
@@ -188,6 +189,14 @@ def main(args):
         t = scans["rigid_total_deg"]
         print(f"Rigid alignment: head turned by median {t.median():.1f} deg (90th percentile {t.quantile(0.9):.1f}, "
               f"max {t.max():.1f}); pitch median |{scans['rigid_pitch_deg'].abs().median():.1f}| deg")
+        if args.rigid_scale:
+            sc = scans["rigid_scale"]
+            print(f"Head size vs template (scale): median {sc.median():.3f}, 5th-95th percentile "
+                  f"{sc.quantile(0.05):.3f}-{sc.quantile(0.95):.3f}, range {sc.min():.3f}-{sc.max():.3f}")
+            odd = scans.index[(sc < 0.8) | (sc > 1.25)]
+            if len(odd):
+                print(f"WARNING: {len(odd)} scans scaled by less than 0.8 or more than 1.25 - check them: "
+                      f"{list(odd[:30])}{' ...' if len(odd) > 30 else ''}")
         big = scans.index[t > args.rigid_warn_deg]
         if len(big):
             print(f"WARNING: {len(big)} scans turned by more than {args.rigid_warn_deg} deg - possibly a failed registration, "
@@ -239,6 +248,10 @@ if __name__ == "__main__":
                         help="MRI-free straightening: rigidly align each native scan (rotation + shift, no scaling) to this "
                              "PET template (scripts/make_pet_template.py) before the recipe. Needs SimpleITK. The angles "
                              "go to tau_pt_scans.csv (rigid_*).")
+    parser.add_argument("--rigid_scale", action=argparse.BooleanOptionalAction, default=False,
+                        help="With --rigid_template: also match head size with ONE overall scale factor (same in every "
+                             "direction, so no change of shape; 7 parameters). rigid_scale in tau_pt_scans.csv = head size "
+                             "vs template.")
     parser.add_argument("--rigid_warn_deg", type=float, default=30.0,
                         help="Warn about scans turned by more than this (possible failed registration).")
 
