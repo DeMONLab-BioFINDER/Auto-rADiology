@@ -69,6 +69,13 @@ class CNN3D(nn.Module):
         Feature widths per conv stage, e.g. (16, 32, 64, 128).
     pool_every : int
         Apply MaxPool3d(2) after every N conv stages (set 1 to pool after each).
+    n_pools : int or None
+        At most this many MaxPool3d(2) steps, the first ones (None = no limit, i.e. every stage that
+        pool_every picks; with 4 stages that is 4). n_pools=3 skips the last one: block 4's convolutions
+        run on the same grid either way, so the final feature map is twice as fine per side
+        (MNI: 11x13x11 at 16 mm instead of 5x6x5 at 32 mm) at almost no extra cost - finer attention
+        maps. The weights have the same shapes either way, so the setting is stored in the checkpoint
+        (buffer "n_pools") and a mismatched checkpoint fails to load instead of loading silently.
     dropout : float
         Dropout before the final linear head.
     norm : str
@@ -88,12 +95,14 @@ class CNN3D(nn.Module):
     """
     def __init__(self, in_channels: int = 1, widths=(16, 32, 64, 128), pool_every: int = 1,
                  dropout: float = 0.2, norm: str = "batch", num_classes=1, extra_dim=0,
-                 gn_groups: int = 8, pool: str = "avg", attn_hidden: int = 128, topk_frac: float = 0.05):
+                 gn_groups: int = 8, pool: str = "avg", attn_hidden: int = 128, topk_frac: float = 0.05,
+                 n_pools: int | None = None):
         super().__init__()
         assert pool_every >= 1
+        assert n_pools is None or n_pools >= 0
         assert norm in {"batch", "instance", "group"}
         assert pool in {"avg", "attention", "avgmax", "topk"}
-        print(f'in_channels: {in_channels}, widths: {widths}, pool_every: {pool_every}, dropout: {dropout}, norm: {norm}, num_classes: {num_classes}, pool: {pool}')
+        print(f'in_channels: {in_channels}, widths: {widths}, pool_every: {pool_every}, n_pools: {n_pools}, dropout: {dropout}, norm: {norm}, num_classes: {num_classes}, pool: {pool}')
         def make_norm(c):
             if norm == "batch":
                 return nn.BatchNorm3d(c)  # ok if batch_size >= ~8
@@ -105,6 +114,7 @@ class CNN3D(nn.Module):
 
         layers = []
         c_in = in_channels
+        pools_done = 0
         for i, c_out in enumerate(widths, start=1):
             layers += [
                 nn.Conv3d(c_in, c_out, 3, 1, 1, bias=False),
@@ -114,11 +124,15 @@ class CNN3D(nn.Module):
                 make_norm(c_out),
                 nn.ReLU(inplace=True),
             ]
-            if (i % pool_every) == 0:
+            if (i % pool_every) == 0 and (n_pools is None or pools_done < n_pools):
                 layers.append(nn.MaxPool3d(kernel_size=2, stride=2))
+                pools_done += 1
             c_in = c_out
 
         self.features = nn.Sequential(*layers)
+        if n_pools is not None:
+            # only when set, so checkpoints trained before this option still load into the default model
+            self.register_buffer("n_pools", torch.tensor(int(n_pools)))
         self._attention_pool = pool == "attention"
         if self._attention_pool:
             self.pool = AttentionPool3D(widths[-1], hidden_dim=attn_hidden)
@@ -130,6 +144,15 @@ class CNN3D(nn.Module):
             self.pool = nn.AdaptiveAvgPool3d(1)
         in_fc = widths[-1] * (2 if pool == "avgmax" else 1) + extra_dim
         self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_fc, num_classes))
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # both sides store n_pools but with different values (e.g. 3 vs 2): the weights would load
+        # silently into a model with a different number of poolings - refuse instead
+        key = prefix + "n_pools"
+        if key in state_dict and hasattr(self, "n_pools") and int(state_dict[key]) != int(self.n_pools):
+            raise RuntimeError(f"Checkpoint was trained with n_pools={int(state_dict[key])}, this model has "
+                               f"n_pools={int(self.n_pools)}. Pass the same --model_kwargs (NPOOLS=...).")
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x, extra):
         x = self.features(x)       # [B, C, D, H, W]

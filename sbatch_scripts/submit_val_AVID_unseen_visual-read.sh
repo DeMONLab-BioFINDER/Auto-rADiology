@@ -15,7 +15,7 @@
 #   sbatch submit_val_AVID_unseen_visual-read.sh <best_model_folder_name> [data_type]   default tau_raw
 #   e.g. sbatch submit_val_AVID_unseen_visual-read.sh <2mm final run folder> tau_raw_2mm_pts
 # data_type must be the one the final model was trained on.
-# For a model trained with POOL=attention, submit with the same POOL=attention in front.
+# For a model trained with POOL=attention (and/or NPOOLS=3), submit with the same POOL=... NPOOLS=... in front.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -43,9 +43,13 @@ if [[ -z "$BEST_MODEL_FOLDER" ]]; then
 fi
 DATA_TYPE="${2:-tau_raw}"
 POOL="${POOL:-avg}"
+NPOOLS="${NPOOLS:-}"  # e.g. NPOOLS=3: skip the last max pooling (finer attention maps); empty = all 4
+KW=()
+[[ "$POOL" != "avg" ]] && KW+=("\"pool\": \"$POOL\"")
+[[ -n "$NPOOLS" ]] && KW+=("\"n_pools\": $NPOOLS")
 MODEL_ARGS=()
-if [[ "$POOL" != "avg" ]]; then
-  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+if (( ${#KW[@]} )); then
+  MODEL_ARGS=(--model_kwargs "{$(IFS=,; echo "${KW[*]}")}")
 fi
 echo "data_type: $DATA_TYPE"
 

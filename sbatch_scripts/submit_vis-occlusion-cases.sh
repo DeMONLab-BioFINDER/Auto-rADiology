@@ -25,7 +25,7 @@
 #   DATASET=AVID_unseen DATA_TYPE=tau_raw_2mm_pts sbatch submit_vis-occlusion-cases.sh <folder> <AVID IDs> logit
 # Those maps go to .../occlusion_cases_<DATASET>_<target>_..., next to the test-set ones.
 # Pick AVID IDs from <folder>/validation/External_validation_AVID_unseen__*_zeroshot_results.csv.
-# For a model trained with POOL=attention, put the same POOL=attention in front.
+# For a model trained with POOL=attention (and/or NPOOLS=3), put the same POOL=... NPOOLS=... in front.
 # Time: ~6 min per scan.
 
 #SBATCH -A berzelius-2026-231
@@ -60,9 +60,13 @@ FILL="${6:-median_brain}"
 DATA_TYPE="${DATA_TYPE:-tau_raw}"
 DATASET="${DATASET:-Gothenburg}"
 POOL="${POOL:-avg}"
+NPOOLS="${NPOOLS:-}"  # e.g. NPOOLS=3: skip the last max pooling (finer attention maps); empty = all 4
+KW=()
+[[ "$POOL" != "avg" ]] && KW+=("\"pool\": \"$POOL\"")
+[[ -n "$NPOOLS" ]] && KW+=("\"n_pools\": $NPOOLS")
 MODEL_ARGS=()
-if [[ "$POOL" != "avg" ]]; then
-  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+if (( ${#KW[@]} )); then
+  MODEL_ARGS=(--model_kwargs "{$(IFS=,; echo "${KW[*]}")}")
 fi
 
 # Relative folder names resolve under <proj_path>/results, same as src/params.py does.

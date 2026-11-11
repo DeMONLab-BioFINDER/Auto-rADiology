@@ -21,7 +21,7 @@
 # Pooling (CNN3D pool=...) instead of the default global average pooling: POOL=attention (gated
 # attention/MIL), POOL=avgmax (average and max side by side) or POOL=topk (mean of the strongest 5% of
 # locations), e.g.  POOL=topk sbatch submit_visual-read-final-val.sh tau_T1MNI_pts
-# The run name gets "-<POOL>".
+# The run name gets "-<POOL>". NPOOLS=3 skips the last max pooling (finer attention maps), name gets "-pools3".
 # The validation scans' predictions are saved too (evaluation/<dataset>/Val_<dataset>_results.csv), so
 # variants can be compared on validation with results_plotting/score_borderline_validation.py. The AVID and occlusion scripts need the same POOL=... to rebuild
 # the model (a mismatched checkpoint now stops with an error).
@@ -53,11 +53,16 @@ TRAIN_SEED="${2:-}"
 SEED_ARGS=()
 NAME_EXTRA="visual-read-final-val"
 POOL="${POOL:-avg}"
+NPOOLS="${NPOOLS:-}"  # e.g. NPOOLS=3: skip the last max pooling (finer attention maps); empty = all 4
+KW=()
+[[ "$POOL" != "avg" ]] && KW+=("\"pool\": \"$POOL\"")
+[[ -n "$NPOOLS" ]] && KW+=("\"n_pools\": $NPOOLS")
 MODEL_ARGS=()
-if [[ "$POOL" != "avg" ]]; then
-  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
+if (( ${#KW[@]} )); then
+  MODEL_ARGS=(--model_kwargs "{$(IFS=,; echo "${KW[*]}")}")
 fi
 [[ "$POOL" != "avg" ]] && NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+[[ -n "$NPOOLS" ]] && NAME_EXTRA="${NAME_EXTRA}-pools${NPOOLS}"
 BATCH_ARGS=()
 if [[ -n "${BATCH:-}" ]]; then
   BATCH_ARGS=(--batch_size "$BATCH")

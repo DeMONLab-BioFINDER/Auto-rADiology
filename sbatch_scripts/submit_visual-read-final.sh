@@ -17,7 +17,8 @@
 # Pooling: POOL=attention (or avgmax / topk) instead of global average pooling, with the epochs from
 # the CV run with the same POOL; the run name gets "-<POOL>". e.g.
 #   POOL=attention sbatch submit_visual-read-final.sh tau_T1MNI_pts 17
-# The AVID and occlusion scripts need the same POOL=... to rebuild the model.
+# NPOOLS=3 (fewer pooling steps, as in the CV run) works the same way; run name gets "-pools3".
+# The AVID and occlusion scripts need the same POOL=... (and NPOOLS=...) to rebuild the model.
 # Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" as in the CV run (epochs from that CV run);
 # the run name gets "-rot...". Training only, so the AVID / occlusion scripts need nothing extra.
 #   ROT_AUG="15 3 3" sbatch submit_visual-read-final.sh tau_raw_2mm_pts <epochs>
@@ -52,11 +53,16 @@ TRAIN_SEED="${3:-}"
 SEED_ARGS=()
 NAME_EXTRA="visual-read-final-${EPOCHS}"
 POOL="${POOL:-avg}"
+NPOOLS="${NPOOLS:-}"  # e.g. NPOOLS=3: skip the last max pooling (finer attention maps); empty = all 4
+KW=()
+[[ "$POOL" != "avg" ]] && KW+=("\"pool\": \"$POOL\"")
+[[ -n "$NPOOLS" ]] && KW+=("\"n_pools\": $NPOOLS")
 MODEL_ARGS=()
-if [[ "$POOL" != "avg" ]]; then
-  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
-  NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+if (( ${#KW[@]} )); then
+  MODEL_ARGS=(--model_kwargs "{$(IFS=,; echo "${KW[*]}")}")
 fi
+[[ "$POOL" != "avg" ]] && NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+[[ -n "$NPOOLS" ]] && NAME_EXTRA="${NAME_EXTRA}-pools${NPOOLS}"
 ROT_ARGS=()
 if [[ -n "${ROT_AUG:-}" ]]; then
   read -r -a ROT <<< "$ROT_AUG"

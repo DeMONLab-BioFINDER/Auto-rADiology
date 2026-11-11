@@ -22,6 +22,9 @@
 # "-<POOL>". Same seed and split as the average-pooling run, so the folds are identical and the two
 # can be compared scan by scan with results_plotting/compare_cv_runs_oof.py, e.g.
 #   POOL=attention sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
+# Fewer pooling steps: NPOOLS=3 skips the last max pooling, so attention maps are twice as fine per side
+# (MNI 11x13x11 at 16 mm instead of 5x6x5 at 32 mm); the run name gets "-pools3", e.g.
+#   POOL=attention NPOOLS=3 sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
 # Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" (max degrees, training only); the run name
 # gets "-rot<pitch>-<roll>-<yaw>". Same folds as the run without it, e.g.
 #   ROT_AUG="15 3 3" sbatch submit_visual-read-cv5.sh tau_raw_2mm_pts
@@ -50,11 +53,16 @@ fi
 DATA_TYPE="${1:-tau_raw_2mm_pts}"
 NAME_EXTRA="visual-read-cv5-fixedlr"
 POOL="${POOL:-avg}"
+NPOOLS="${NPOOLS:-}"  # e.g. NPOOLS=3: skip the last max pooling (finer attention maps); empty = all 4
+KW=()
+[[ "$POOL" != "avg" ]] && KW+=("\"pool\": \"$POOL\"")
+[[ -n "$NPOOLS" ]] && KW+=("\"n_pools\": $NPOOLS")
 MODEL_ARGS=()
-if [[ "$POOL" != "avg" ]]; then
-  MODEL_ARGS=(--model_kwargs "{\"pool\": \"$POOL\"}")
-  NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+if (( ${#KW[@]} )); then
+  MODEL_ARGS=(--model_kwargs "{$(IFS=,; echo "${KW[*]}")}")
 fi
+[[ "$POOL" != "avg" ]] && NAME_EXTRA="${NAME_EXTRA}-${POOL}"
+[[ -n "$NPOOLS" ]] && NAME_EXTRA="${NAME_EXTRA}-pools${NPOOLS}"
 ROT_ARGS=()
 if [[ -n "${ROT_AUG:-}" ]]; then
   read -r -a ROT <<< "$ROT_AUG"
