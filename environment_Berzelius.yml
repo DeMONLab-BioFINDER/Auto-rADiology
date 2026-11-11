@@ -18,4 +18,5 @@ dependencies:
   - pip
   - pip:
       - monai>=1.3
+      - SimpleITK  # rigid PET-to-template alignment (scripts/convert_tau_pkl_to_pt.py --rigid_template)
 

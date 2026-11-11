@@ -95,6 +95,11 @@ def main(args):
 
     batch_size = int(args.batch_size)
     pre, scale, post = _build_transform(args)
+    rigid = None
+    if args.rigid_template:
+        from src.registration import load_template, straighten
+        rigid = load_template(args.rigid_template)
+        print(f"Rigid alignment to {args.rigid_template} before the recipe (rotation + shift only)")
     buffer, scan_rows = [], []
     batch_id = 0
     total = 0
@@ -109,6 +114,21 @@ def main(args):
             img = np.clip(img, 0, None)
 
             meta = sample.get("meta")
+            native_shape = np.squeeze(img).shape  # recorded before any straightening
+            native_vox = _voxel_mm(meta["affine"]) if meta and "affine" in meta else np.ones(3)
+            pose = None
+            if rigid is not None:
+                # turn the native scan to the template's head pose, on a 2 mm grid lined up with the
+                # template that keeps the whole field of view; the recipe below then runs as usual
+                fixed, fixed_mask = rigid
+                arr, aff, pose = straighten(np.squeeze(img), np.asarray(meta["affine"], dtype=float), fixed, fixed_mask,
+                                            spacing_mm=args.spacing_mm or 2.0)
+                img = np.clip(arr, 0, None)
+                meta = dict(meta)
+                meta["affine"] = torch.as_tensor(aff, dtype=torch.float64)
+                meta["original_affine"] = torch.as_tensor(aff, dtype=torch.float64)
+                meta["spatial_shape"] = np.array(img.shape)
+                meta["original_channel_dim"] = "no_channel"
             load_img = MetaTensor(torch.as_tensor(img, dtype=torch.float32), meta=meta)
             x_pre = pre(load_img)
             x = post(x_pre)
@@ -127,9 +147,8 @@ def main(args):
                                for i, (a, n) in enumerate(zip(nz, args.image_shape)))
             bottom_cut = bool(nz[2].size and nz[2].min() == 0)
             row = {"index": total, "file": Path(str((meta or {}).get("filename_or_obj", ""))).name,
-                   "native_shape": "x".join(str(v) for v in np.squeeze(img).shape),
+                   "native_shape": "x".join(str(v) for v in native_shape),
                    "scale_native_lo": float(lo), "scale_native_hi": float(hi)}
-            native_vox = _voxel_mm(meta["affine"]) if has_affine else np.ones(3)
             for i, ax in enumerate("xyz"):
                 row[f"native_vox_mm_{ax}"] = round(float(native_vox[i]), 3)
             for i, ax in enumerate("xyz"):
@@ -140,6 +159,9 @@ def main(args):
                 row[f"head_mm_{ax}"] = round(float(head_vox[i] * out_vox[i]), 1)
             row["head_touches_edge"] = bool(touches_edge)
             row["bottom_cut"] = bottom_cut
+            if pose is not None:  # how far the head was turned / moved to match the template
+                for k, v in pose.items():
+                    row[f"rigid_{k}"] = round(v, 3)
             scan_rows.append(row)
 
             if isinstance(x, MetaTensor):
@@ -162,6 +184,14 @@ def main(args):
     scans_csv = out_dir / "tau_pt_scans.csv"
     scans = pd.DataFrame(scan_rows)
     scans.to_csv(scans_csv, index=False)
+    if "rigid_total_deg" in scans:
+        t = scans["rigid_total_deg"]
+        print(f"Rigid alignment: head turned by median {t.median():.1f} deg (90th percentile {t.quantile(0.9):.1f}, "
+              f"max {t.max():.1f}); pitch median |{scans['rigid_pitch_deg'].abs().median():.1f}| deg")
+        big = scans.index[t > args.rigid_warn_deg]
+        if len(big):
+            print(f"WARNING: {len(big)} scans turned by more than {args.rigid_warn_deg} deg - possibly a failed registration, "
+                  f"check them (index = scan ID): {list(big[:30])}{' ...' if len(big) > 30 else ''}")
     if args.spacing_mm and scans["head_touches_edge"].any():
         print(f"WARNING: {int(scans['head_touches_edge'].sum())} of {len(scans)} heads touch a side or the top of the "
               f"{args.image_shape} box (possibly cut off): see head_touches_edge in {scans_csv.name}")
@@ -205,6 +235,12 @@ if __name__ == "__main__":
                         help="Resample to cubic voxels of this size and pad/crop to --image_shape instead of stretching")
     parser.add_argument("--pct_inside_head", action=argparse.BooleanOptionalAction, default=False,
                         help="Scaling percentiles over inside-the-head voxels only (use with --head_crop)")
+    parser.add_argument("--rigid_template", type=str, default="",
+                        help="MRI-free straightening: rigidly align each native scan (rotation + shift, no scaling) to this "
+                             "PET template (scripts/make_pet_template.py) before the recipe. Needs SimpleITK. The angles "
+                             "go to tau_pt_scans.csv (rigid_*).")
+    parser.add_argument("--rigid_warn_deg", type=float, default=30.0,
+                        help="Warn about scans turned by more than this (possible failed registration).")
 
     args = parser.parse_args()
     main(args)
