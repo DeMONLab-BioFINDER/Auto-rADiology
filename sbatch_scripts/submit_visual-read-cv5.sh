@@ -28,7 +28,9 @@
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
-#SBATCH -t 12:00:00
+#SBATCH -t 04:00:00
+# 4 h: CVs on Hopper take ~45 min (MNI) to ~1 h (2 mm), ~2 h 20 with rotation augmentation (Nov 2026);
+# a short limit lets the scheduler backfill the job sooner. Longer if needed: sbatch -t 08:00:00 ...
 #SBATCH -J visual-read-cv5
 #SBATCH -o ../../logs/visual-read-cv5-slurm-%j.out
 #SBATCH -e ../../logs/visual-read-cv5-slurm-%j.err
