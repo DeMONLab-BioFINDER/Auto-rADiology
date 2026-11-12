@@ -130,8 +130,16 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
                 vis_count[vt] += 1
             summary.append(row)
 
-    pd.DataFrame(summary).to_csv(os.path.join(vis_dir, "summary.csv"), index=False)
-    
+    # The folder keeps scans from earlier runs (same settings): summary.csv gets this run's rows added
+    # (a scan run again replaces its old row), and the group average covers every scan in the folder.
+    summary = pd.DataFrame(summary)
+    summary_path = os.path.join(vis_dir, "summary.csv")
+    if os.path.exists(summary_path) and len(summary):
+        old = pd.read_csv(summary_path)
+        summary = pd.concat([old[~old["ID"].isin(summary["ID"])], summary], ignore_index=True)
+    summary.to_csv(summary_path, index=False)
+    vis_sum, vis_count, img_sum, img_n = _folder_sums(vis_dir, vis_name, vis_type, vis_sum, vis_count, img_sum, img_n)
+
     print('saving average image to', vis_dir)
     # Brains are not registered to a common space (model input space is native/unregistered PET),
     # so the group average and its background image are only approximate overlays.
@@ -149,6 +157,35 @@ def run_visualization(model, loader, device, output_path, vis_name="gradcam",
         if use_pseudo_surface:
             shell = pet_pseudo_surface(img_avg, pseudo_surface_sigma, pseudo_surface_pct)
             save_mip_png(img_avg, vis_avg * shell, os.path.join(vis_dir, f"group_average_{vis_name}_{vt}_pseudo_surface.png"), signed=(vt == "pos_vs_neg"), label=mip_labels[vt], title=f"group average (n = {vis_count[vt]})", vmax=color_max, scale_note=None if color_max is not None else "the average's own 99th percentile")
+
+
+def _folder_sums(vis_dir, vis_name, vis_type, vis_sum, vis_count, img_sum, img_n):
+    """Sums for the group average over every scan's saved map in vis_dir (this run's and earlier runs'),
+    instead of only this run's. Maps of another shape are skipped. Falls back to this run's sums if the
+    folder holds nothing readable."""
+    sums, counts = {}, {}
+    for vt in vis_type:
+        files = sorted(f for f in Path(vis_dir).glob(f"*_{vis_name}_{vt}.nii.gz") if not f.name.startswith("group_average"))
+        ref = vis_sum[vt].shape if vis_sum[vt] is not None else None
+        tot, n = None, 0
+        for f in files:
+            h = np.asarray(nib.load(str(f)).dataobj, dtype=np.float64)
+            if (ref is not None and h.shape != ref) or (tot is not None and h.shape != tot.shape):
+                continue
+            tot = h if tot is None else tot + h
+            n += 1
+        sums[vt], counts[vt] = (tot, n) if n else (vis_sum[vt], vis_count[vt])
+    shape = next((v.shape for v in sums.values() if v is not None), None)
+    tot, n = None, 0
+    for f in sorted(Path(vis_dir).glob("*_input.nii.gz")):
+        im = np.asarray(nib.load(str(f)).dataobj, dtype=np.float64)
+        if shape is not None and im.shape != shape:
+            continue
+        tot = im if tot is None else tot + im
+        n += 1
+    if n:
+        img_sum, img_n = tot, n
+    return sums, counts, img_sum, img_n
 
 
 def gradcam_vis_fn(model, x, extra, target_layer=None, normalize=True, upsample_mode="trilinear"):

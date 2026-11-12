@@ -9,10 +9,12 @@
 # written by results_plotting/analyze_model_confidence_visual_read.py.
 # target: prob = drop in probability (default), logit = drop in the model's log-odds, needed for
 # very confident scans (P ~1 or ~0), where the probability cannot move and the map is noise.
-# Maps go to <best_model_folder>/validation/visualization/occlusion_cases_<target>_<fill>_mask<M>_ov<O>
-# (earlier output of the same settings there is replaced). Each setting writes straight into its own
-# folder, so jobs with different settings can run at the same time; two jobs with the SAME settings
-# on the same model still share a folder - wait for one to finish.
+# Maps go to <best_model_folder>/validation/visualization/occlusion_cases_<target>_<fill>_mask<M>_ov<O>.
+# The folder is kept between jobs: new scans are added, scans already in it are skipped (no GPU time
+# spent again; FORCE=1 redoes them), summary.csv gets the new rows and the group average covers every
+# scan in the folder. Each setting writes straight into its own folder, so jobs with different settings
+# can run at the same time; two jobs with the SAME settings on the same model still share a folder
+# (and its summary.csv) - wait for one to finish.
 #
 # Usage:
 #   sbatch submit_vis-occlusion-cases.sh <best_model_folder_name> <ID1,ID2,...> [target] [mask_size] [overlap] [fill]
@@ -80,7 +82,17 @@ DATASET_TAG=""
 [[ "$DATASET" != "Gothenburg" ]] && DATASET_TAG="${DATASET}_"
 OUT_NAME="occlusion_cases_${DATASET_TAG}${TARGET}_${FILL}_mask${MASK_SIZE}_ov${OVERLAP}"
 RUN_DIR="$VIS_DIR/$OUT_NAME"
-[[ -n "$VIS_DIR" ]] && rm -rf "$RUN_DIR"
+# Skip scans whose maps are already in the folder (FORCE=1 to redo them)
+if [[ "${FORCE:-0}" != "1" && -d "$RUN_DIR" ]]; then
+  TODO=()
+  IFS=, read -r -a ALL_IDS <<< "$SUBJECT_IDS"
+  for id in "${ALL_IDS[@]}"; do
+    if [[ -f "$RUN_DIR/${id}_occlusion_class.nii.gz" ]]; then echo "ID $id: already in $RUN_DIR, skipped"
+    else TODO+=("$id"); fi
+  done
+  if (( ${#TODO[@]} == 0 )); then echo "All scans already done; nothing to run."; exit 0; fi
+  SUBJECT_IDS=$(IFS=,; echo "${TODO[*]}")
+fi
 echo "Dataset $DATASET, data type $DATA_TYPE, subjects $SUBJECT_IDS, target $TARGET, mask $MASK_SIZE, overlap $OVERLAP, fill $FILL"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
