@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One .html per scan: what the reader saw next to what the model saw, two linked NiiVue brains.
 
-  left   the scan as SUVR (divided by its own whole-cerebellum mean) in the readers' colour scale: inverted grey
-         (white = low) up to 1.65 x cerebellum, then purple / dark blue / cyan / teal / light green / yellow /
+  left   the scan as SUVR (divided by its own whole-cerebellum mean) in the readers' colour scale: grey
+         (black = low; the readers' display was inverted, white = low) up to 1.65 x cerebellum, then purple / dark blue / cyan / teal / light green / yellow /
          orange / red bands, scale top 5.89 x cerebellum (1.65 at 28% of the bar, as measured on the Moscoso
          supplement colour bars). Readers had a hand-traced cerebellum on reoriented native images; this is the
          Centiloid whole-cerebellum mask in MNI space instead, so it is close to their display, not identical.
@@ -58,7 +58,8 @@ SUVR_TRANSITION, TRANSITION_AT = 1.65, 0.28
 SUVR_TOP = SUVR_TRANSITION / TRANSITION_AT  # 5.89
 BAND_EDGES = [0.28, 0.33, 0.42, 0.52, 0.625, 0.715, 0.81, 0.90, 1.0]  # share of the bar
 BAND_COLOURS = ["#7f3f98", "#1f2a9c", "#00bfe8", "#00897b", "#8fdc5a", "#ffe600", "#ff9100", "#e3000f"]
-GREY_LOW, GREY_HIGH = "#ffffff", "#3a3a3a"  # inverted grey below the transition: white = low
+GREY_LOW, GREY_HIGH = "#000000", "#c8c8c8"  # grey below the transition: black = low (the readers used inverted grey,
+# white = low; flipped here so the brain sits on black like the right brain - the 1.65 transition and bands are unchanged)
 
 # occlusion colours, copied from src/vis.py (WARM, WARM_COOL) so the viewer matches the PNGs
 WARM = ["#c00000", "#ff3000", "#ff9900", "#ffff66"]
@@ -191,7 +192,7 @@ def reader_gradient_css() -> str:
     parts = [f"{GREY_LOW} 0%", f"{GREY_HIGH} {TRANSITION_AT * 100:.1f}%"]
     for lo, hi, c in zip(BAND_EDGES[:-1], BAND_EDGES[1:], BAND_COLOURS):
         parts += [f"{c} {lo * 100:.1f}%", f"{c} {hi * 100:.1f}%"]
-    return "linear-gradient(to right, " + ", ".join(parts) + ")"
+    return "linear-gradient(to top, " + ", ".join(parts) + ")"
 
 
 def load_cbl_mask(path: Path, shape, affine, erode: int) -> np.ndarray:
@@ -281,7 +282,7 @@ def main():
         grey_top = PET_DIM * float(np.percentile(head, 99.5)) if head.size else 1.0
 
         # left brain
-        left, left_note = [], ""
+        left, left_note, left_bar = [], "", ""
         if scan_id in suvr:
             s, s_aff, cov = suvr[scan_id]
             s = s * brain_mask(s.shape, s_aff, 2)
@@ -295,12 +296,12 @@ def main():
             left.append({"b64": nifti_b64(s.astype(np.float32), s_aff), "name": "suvr.nii.gz", "colormap": "reader",
                          "cal_min": 0.0, "cal_max": SUVR_TOP, "opacity": 1.0})
             left_title = "What the reader saw: SUVR (÷ whole cerebellum), readers' colour scale"
-            ticks = "".join(f"<span class='{'low' if k % 2 else ''}' style='left:{e * 100:.1f}%'>{e * SUVR_TOP:.2f}</span>"
-                            for k, e in enumerate(BAND_EDGES[:-1]))  # every other one lower, so 1.65 / 1.94 do not overlap
-            left_note = (f"<div class='cbar'><div class='grad' style='background:{reader_gradient_css()}'></div>"
-                         f"<div class='ticks'>{ticks}</div></div>"
-                         "<div class='note'>× cerebellum · white→grey = below 1.65 (the readers' transition) · "
-                         f"top {SUVR_TOP:.2f}</div>")
+            ticks = [(0, "0")] + [(round(e * 100, 1), f"{e * SUVR_TOP:.2f}") for e in BAND_EDGES]
+            left_bar = ("<div class='vbar'><div class='vgrad' style='background:" + reader_gradient_css() + "'></div>"
+                        "<div class='vticks'>" + "".join(f"<span style='bottom:{b}%'>{t}</span>" for b, t in ticks)
+                        + "</div><div class='vlabel'>SUVR (× whole cerebellum)</div></div>")
+            left_note = ("<div class='note'>Black→grey = below 1.65 × cerebellum (the readers' transition; their display "
+                         f"showed this part inverted, white = low) · colour bands above · top {SUVR_TOP:.2f}</div>")
         else:
             left.append({"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input_heat.nii.gz", "colormap": "inferno",
                          "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0})
@@ -348,7 +349,7 @@ def main():
                 .replace("__RIGHT_LEGEND__", legend_right).replace("__TOGGLES__", toggles)
                 .replace("__REGION_NAMES__", json.dumps(REGION_NAMES)).replace("__LEFT__", json.dumps(left)).replace("__RIGHT__", json.dumps(right))
                 .replace("__CMAPS__", json.dumps({
-                    "reader": reader_colormap(), })).replace("__RIGHT_BARS__", bars))
+                    "reader": reader_colormap(), })).replace("__RIGHT_BARS__", bars).replace("__LEFT_BARS__", left_bar))
         out = out_dir / f"{scan_id}_viewer.html"
         out.write_text(page, encoding="utf-8")
         print(f"[save] {out} ({out.stat().st_size / 1e6:.1f} MB)")
@@ -359,31 +360,27 @@ TEMPLATE = """<!doctype html>
 <title>__TITLE__</title>
 <style>
   html, body { margin: 0; background: #000; color: #ddd; font: 14px system-ui, sans-serif; }
-  #wrap { display: flex; flex-direction: column; max-width: 900px; }
+  /* Fixed sizes everywhere: both brains are exactly the same size and stay put when a map is switched off
+     (its colour bar is hidden, the column keeps its width) or a legend has more text. */
+  #wrap { display: flex; flex-direction: column; width: 1084px; }
   #bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
   #bar label { white-space: nowrap; }
-  .sw { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; }
   #panes { display: flex; gap: 4px; }
-  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .head { padding: 5px 10px; background: #181818; font-weight: 600; }
-  .box { height: 420px; }  /* fixed size: one 91 x 109 axial slice, not the whole window */
-  .box { display: flex; }
-  canvas { flex: 1; min-width: 0; height: 100%; display: block; outline: none; }
-  .vbar { position: relative; width: 78px; margin: 30px 0 30px 8px; }
+  .pane { width: 540px; flex: none; display: flex; flex-direction: column; background: #000; }
+  .head { padding: 5px 10px; background: #181818; font-weight: 600; height: 38px; box-sizing: border-box;
+          overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .box { display: flex; height: 440px; }
+  canvas { width: 350px !important; height: 440px !important; flex: none; display: block; outline: none; }
+  .side { width: 190px; flex: none; display: flex; justify-content: flex-start; }
+  .vbar { position: relative; width: 80px; flex: none; margin: 30px 0 30px 10px; }
   .vgrad { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; }
   .vticks span { position: absolute; left: 18px; transform: translateY(50%); font-size: 11px; color: #bbb; }
-  .vlabel { position: absolute; left: 52px; top: 50%; transform: translate(-50%, -50%) rotate(-90deg); white-space: nowrap;
+  .vlabel { position: absolute; left: 58px; top: 50%; transform: translate(-50%, -50%) rotate(-90deg); white-space: nowrap;
             font-size: 11px; color: #999; }
-  .legend { padding: 6px 12px 10px; background: #111; min-height: 54px; }
-  .cbar { position: relative; width: min(420px, 90%); margin-bottom: 16px; }
-  .grad { height: 12px; }
-  .ticks span { position: absolute; top: 14px; transform: translateX(-50%); font-size: 11px; color: #bbb; }
-  .ticks span.low { top: 27px; }
-  .cbar:has(.low) { margin-bottom: 30px; }
+  .legend { padding: 6px 12px 10px; background: #111; height: 64px; box-sizing: border-box; overflow-y: auto; }
   .note { color: #999; font-size: 12px; }
   #status { color: #999; }
   #here { padding: 4px 12px; background: #0b0b0b; color: #ccc; font-size: 13px; min-height: 18px; }
-  @media (max-width: 800px) { #panes { flex-direction: column; } }
 </style></head>
 <body><div id="wrap">
   <div id="bar">
@@ -393,10 +390,10 @@ TEMPLATE = """<!doctype html>
   </div>
   <div id="here">click a spot to see its values</div>
   <div id="panes">
-    <div class="pane"><div class="head">__LEFT_TITLE__</div><div class="box"><canvas id="glL" tabindex="0"></canvas></div>
+    <div class="pane"><div class="head">__LEFT_TITLE__</div><div class="box"><canvas id="glL" tabindex="0" width="350" height="440"></canvas><div class="side">__LEFT_BARS__</div></div>
       <div class="legend">__LEFT_LEGEND__</div></div>
     <div class="pane"><div class="head">What the model saw + occlusion map</div>
-      <div class="box"><canvas id="glR" tabindex="0"></canvas>__RIGHT_BARS__</div><div class="legend">__RIGHT_LEGEND__</div></div>
+      <div class="box"><canvas id="glR" tabindex="0" width="350" height="440"></canvas><div class="side">__RIGHT_BARS__</div></div><div class="legend">__RIGHT_LEGEND__</div></div>
   </div>
   <div class="note" style="padding:4px 12px;background:#111">scroll = move through slices · click = see the values there · the two brains move together</div>
 </div>
