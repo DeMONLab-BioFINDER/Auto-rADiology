@@ -13,8 +13,11 @@ shown next to the model's: the readers are the reference for how often that happ
 the excluded regions shows a rise in % Model + from the "none" row to the mesial / frontal rows that is
 clearly larger than the rise in % read +.
 
-Table: among posterior-not-elevated scans, per group (none / mesial only / frontal only / both):
-n, median Meta SUVR, % read +, and per run % Model + (call at 0.5) and median probability.
+Table: among posterior-not-elevated scans, per group (none / mesial only / frontal only / both), then the
+other side of the rule: posterior elevated without / with mesial or frontal elevated (the read says positive
+either way; compare model vs read within a row - rows with more tau overall are called + more by both).
+Columns: n, median Meta SUVR, % read +, and per run % Model + (call at 0.5) and median probability.
+The odds ratios use the posterior-not-elevated scans only.
 Adjusted: in the same scans, logistic regressions of the read and of each run's call on Meta and TP SUVR
 (continuous) + mesial elevated + frontal elevated; odds ratios with 95% CI for the two excluded regions
 (larger for a model than for the read = the model leans on that region more than the readers do).
@@ -160,9 +163,14 @@ def main():
     sub["group"] = np.select([sub["mesial_elev"] & sub["frontal_elev"], sub["mesial_elev"], sub["frontal_elev"]],
                              ["mesial + frontal", "mesial only", "frontal only"], "none")
 
+    # Other side of the rule: posterior elevated -> positive, with or without mesial / frontal uptake
+    post = m[m["posterior_elev"]]
+    other = post["mesial_elev"] | post["frontal_elev"]
+    groups = [(grp, sub[sub["group"] == grp]) for grp in ["none", "mesial only", "frontal only", "mesial + frontal"]]
+    groups += [("posterior, no mesial/frontal", post[~other]), ("posterior + mesial/frontal", post[other])]
+
     rows = []
-    for grp in ["none", "mesial only", "frontal only", "mesial + frontal"]:
-        g = sub[sub["group"] == grp]
+    for grp, g in groups:
         row = {"group": grp, "n": len(g), **({f"n {nm}": int((g["set"] == nm).sum()) for nm in m["set"].unique()}
                                              if len(parts) > 1 else {}),
                "Meta median": round(g["MetaTemporal"].median(), 2) if len(g) else np.nan,
