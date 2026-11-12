@@ -20,12 +20,17 @@ Adjusted: in the same scans, logistic regressions of the read and of each run's 
 (larger for a model than for the read = the model leans on that region more than the readers do).
 Descriptive: groups can be small; no formal model-vs-read test.
 
-Predictions: <run>/oof_predictions.csv (5-fold CV, ~1800 scans) if present, else the run's test
-predictions (evaluation/<dataset>/Eval_<dataset>_results.csv). All runs must have the same scans.
+Predictions (--sets, default auto): oof = <run>/oof_predictions.csv (5-fold CV, ~1800 scans; CV models,
+not the final one); test = the final model's held-out test set (evaluation/<dataset>/Eval_<dataset>_results.csv);
+avid = the final model's zero-shot external set (validation/External_validation_<ext_dataset>__*_zeroshot_results.csv,
+SUVRs from --ext_demo_csv, default data/demo_<ext_dataset>.csv). Several sets are pooled into one table
+(e.g. --sets test avid: the frozen model on all scans it never trained on). auto = oof if present, else test.
+All runs must have the same scans.
 
 Usage:
     python results_plotting/check_excluded_regions.py <run> [<run> ...] --labels avg attention
-Outputs: <proj_path>/results/excluded_regions/<labels>.csv and _odds_ratios.csv (outside the repo; no IDs).
+    python results_plotting/check_excluded_regions.py <final_avg> <final_att> --labels avg attention --sets test avid
+Outputs: <proj_path>/results/excluded_regions/<labels>[_<sets>].csv and _odds_ratios.csv (outside the repo; no IDs).
 """
 import argparse
 import warnings
@@ -48,6 +53,10 @@ def parse_args():
     p.add_argument("--labels", nargs="+", default=None)
     p.add_argument("--dataset", default="Gothenburg")
     p.add_argument("--demo_csv", default=None, help="Demographics csv with the regional SUVRs (default data/demo.csv).")
+    p.add_argument("--sets", nargs="+", default=["auto"], choices=["auto", "oof", "test", "avid"],
+                   help="Which predictions to use; several are pooled (see above).")
+    p.add_argument("--ext_dataset", default="AVID_unseen", help="External dataset name used by run_val.py.")
+    p.add_argument("--ext_demo_csv", default=None, help="SUVR csv for the external set (default data/demo_<ext_dataset>.csv).")
     p.add_argument("--out_dir", default=str(repo.parent / "results" / "excluded_regions"))
     args = p.parse_args()
     args.labels = args.labels or [f"run{i + 1}" for i in range(len(args.runs))]
@@ -56,13 +65,30 @@ def parse_args():
     return args
 
 
-def load_preds(run: str, dataset: str) -> tuple[pd.DataFrame, str]:
-    oof = Path(run) / "oof_predictions.csv"
-    test = Path(run) / "evaluation" / dataset / f"Eval_{dataset}_results.csv"
-    f = oof if oof.exists() else test
+def pred_file(run: str, which: str, dataset: str, ext_dataset: str) -> Path:
+    r = Path(run)
+    if which == "oof":
+        f = r / "oof_predictions.csv"
+    elif which == "test":
+        f = r / "evaluation" / dataset / f"Eval_{dataset}_results.csv"
+    else:
+        hits = sorted((r / "validation").glob(f"External_validation_{ext_dataset}__*_zeroshot_results.csv"))
+        if not hits:
+            raise SystemExit(f"No validation/External_validation_{ext_dataset}__*_zeroshot_results.csv in {run}")
+        f = hits[0]
     if not f.exists():
-        raise SystemExit(f"No oof_predictions.csv or {test.relative_to(run)} in {run}")
-    return pd.read_csv(f)[["ID_ind", "y", "pred", "prob"]], ("out-of-fold" if f == oof else "test")
+        raise SystemExit(f"No {f.relative_to(r)} in {run}")
+    return f
+
+
+def load_preds(run: str, which: str, dataset: str, ext_dataset: str) -> pd.DataFrame:
+    return pd.read_csv(pred_file(run, which, dataset, ext_dataset))[["ID_ind", "y", "pred", "prob"]]
+
+
+def find_ext_demo_csv(ext_dataset: str) -> Path | None:
+    here = Path(__file__).resolve()
+    cands = [here.parents[1] / "data" / f"demo_{ext_dataset}.csv", here.parents[2] / "data" / f"demo_{ext_dataset}.csv"]
+    return next((c for c in cands if c.exists()), None)
 
 
 def odds_ratios(y: pd.Series, d: pd.DataFrame) -> dict:
@@ -89,26 +115,42 @@ def odds_ratios(y: pd.Series, d: pd.DataFrame) -> dict:
 
 def main():
     args = parse_args()
-    m, kinds = None, set()
-    for lab, run in zip(args.labels, args.runs):
-        d, kind = load_preds(run, args.dataset)
-        kinds.add(kind)
-        d = d.rename(columns={"pred": f"pred_{lab}", "prob": f"prob_{lab}"})
-        if m is None:
-            m = d
-        else:
-            n0 = len(m)
-            m = m.merge(d.drop(columns="y"), on="ID_ind", how="inner")
-            if len(m) != n0 or len(m) != len(d):
-                raise SystemExit("The runs do not have the same scans")
-    if len(kinds) > 1:
-        raise SystemExit("Mix of out-of-fold and test predictions - give runs of one kind")
+    sets = args.sets
+    if sets == ["auto"]:
+        sets = ["oof" if (Path(args.runs[0]) / "oof_predictions.csv").exists() else "test"]
+    elif "auto" in sets:
+        raise SystemExit("--sets auto can't be combined with other sets")
+    if "oof" in sets and len(sets) > 1:
+        raise SystemExit("Out-of-fold (CV models) can't be pooled with test/avid (final model)")
+    names = {"oof": "out-of-fold", "test": "held-out test", "avid": args.ext_dataset}
 
-    demo_path = resolve_path(args.demo_csv, find_demo_csv)
-    if demo_path is None:
-        raise FileNotFoundError("No demographics csv found - pass --demo_csv.")
-    demo = pd.read_csv(demo_path)[["ID"] + POSTERIOR + EXCLUDED]
-    m = m.merge(demo, left_on="ID_ind", right_on="ID", how="left").dropna(subset=POSTERIOR + EXCLUDED)
+    parts = []
+    for which in sets:
+        m = None
+        for lab, run in zip(args.labels, args.runs):
+            d = load_preds(run, which, args.dataset, args.ext_dataset)
+            d = d.rename(columns={"pred": f"pred_{lab}", "prob": f"prob_{lab}"})
+            if m is None:
+                m = d
+            else:
+                n0 = len(m)
+                m = m.merge(d.drop(columns="y"), on="ID_ind", how="inner")
+                if len(m) != n0 or len(m) != len(d):
+                    raise SystemExit(f"The runs do not have the same scans ({names[which]})")
+        if which == "avid":
+            demo_path = resolve_path(args.ext_demo_csv, lambda: find_ext_demo_csv(args.ext_dataset))
+        else:
+            demo_path = resolve_path(args.demo_csv, find_demo_csv)
+        if demo_path is None:
+            raise FileNotFoundError(f"No SUVR csv for {names[which]} - pass --{'ext_' if which == 'avid' else ''}demo_csv.")
+        demo = pd.read_csv(demo_path)[["ID"] + POSTERIOR + EXCLUDED]
+        n_pred = len(m)
+        m = m.merge(demo, left_on="ID_ind", right_on="ID", how="left").dropna(subset=POSTERIOR + EXCLUDED)
+        if len(m) < n_pred:
+            print(f"{names[which]}: {n_pred - len(m)} of {n_pred} scans have no regional SUVRs in {demo_path.name}; left out")
+        m["set"] = names[which]
+        parts.append(m)
+    m = pd.concat(parts, ignore_index=True)
 
     cut = CENTAUR_FTP_CTRZ2_SUVR
     m["posterior_elev"] = (m["MetaTemporal"] > cut["MetaTemporal"]) | (m["TemporoParietal"] > cut["TemporoParietal"])
@@ -121,7 +163,9 @@ def main():
     rows = []
     for grp in ["none", "mesial only", "frontal only", "mesial + frontal"]:
         g = sub[sub["group"] == grp]
-        row = {"group": grp, "n": len(g), "Meta median": round(g["MetaTemporal"].median(), 2) if len(g) else np.nan,
+        row = {"group": grp, "n": len(g), **({f"n {nm}": int((g["set"] == nm).sum()) for nm in m["set"].unique()}
+                                             if len(parts) > 1 else {}),
+               "Meta median": round(g["MetaTemporal"].median(), 2) if len(g) else np.nan,
                "% read +": round(100 * g["y"].mean(), 1) if len(g) else np.nan}
         for lab in args.labels:
             row[f"% {lab} Model +"] = round(100 * g[f"pred_{lab}"].mean(), 1) if len(g) else np.nan
@@ -132,7 +176,7 @@ def main():
     ors = pd.DataFrame({"read": odds_ratios(sub["y"], sub),
                         **{f"{lab} call": odds_ratios(sub[f"pred_{lab}"], sub) for lab in args.labels}})
 
-    print(f"{len(m)} {kinds.pop()} scans; {len(sub)} with posterior regions NOT elevated "
+    print(f"{len(m)} scans ({' + '.join(f'{nm} {n}' for nm, n in m['set'].value_counts(sort=False).items())}); {len(sub)} with posterior regions NOT elevated "
           f"(Meta <= {cut['MetaTemporal']:.2f} and TP <= {cut['TemporoParietal']:.2f}); "
           f"elevated = mesial > {cut['MesialTemporal']:.2f}, frontal > {cut['Frontal']:.2f} (CTRz > 2)\n")
     with pd.option_context("display.width", 250, "display.max_columns", None):
@@ -142,7 +186,7 @@ def main():
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    name = "_".join(args.labels)
+    name = "_".join(args.labels) + ("" if sets == ["oof"] else "_" + "-".join(sets))
     table.to_csv(out / f"{name}.csv")
     ors.to_csv(out / f"{name}_odds_ratios.csv")
     print(f"\nSaved {out / name}.csv and {name}_odds_ratios.csv")
