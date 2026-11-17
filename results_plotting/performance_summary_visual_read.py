@@ -161,7 +161,9 @@ def forest_figure(pc: pd.DataFrame, out: Path):
     for ax, name in zip(axes, ["agreement read +", "agreement read -"]):
         for i, r in pc.iterrows():
             c = SET_COLOURS[r["set"]]
-            ax.errorbar(100 * r[name], i, xerr=[[100 * (r[name] - r[f"{name}_lo"])], [100 * (r[f"{name}_hi"] - r[name])]],
+            # clipped at 0: at 100% (or 0%) agreement the Wilson bound can land a rounding error inside the point
+            lo, hi = max(r[name] - r[f"{name}_lo"], 0), max(r[f"{name}_hi"] - r[name], 0)
+            ax.errorbar(100 * r[name], i, xerr=[[100 * lo], [100 * hi]],
                         fmt="o", color=c, ms=5, capsize=2.5, lw=1.2)
         ax.set_title(f"Agreement with read {name.split()[-1].replace('-', '−')} scans (%)", fontsize=10)
         ax.set_xlim(0, 101); ax.grid(axis="x", color="#eeeeee"); ax.spines[["top", "right"]].set_visible(False)
