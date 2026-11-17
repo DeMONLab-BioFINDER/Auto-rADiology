@@ -50,6 +50,8 @@ Outputs (to <run_dir>/figures, next to the other visual-read figures):
 Usage:
     python results_plotting/compare_model_vs_suvr_threshold.py /path/to/run_dir --dataset Gothenburg \
         --demo_csv /path/to/demo.csv
+    python results_plotting/compare_model_vs_suvr_threshold.py /path/to/run_dir --dataset AVID_unseen \
+        --demo_csv data/demo_AVID_unseen.csv --train_demo_csv data/demo.csv
 """
 
 import argparse
@@ -94,6 +96,8 @@ def parse_args():
     parser.add_argument("--dataset", default="Gothenburg", help="Dataset name used in the result filenames.")
     parser.add_argument("--demo_csv", default=None,
                         help="Demographics csv with the regional SUVRs (default: data/demo.csv).")
+    parser.add_argument("--train_demo_csv", default=None,
+                        help="Demographics of the TRAINING pool, for fitting the Youden threshold and the SUVR model (default: same as --demo_csv; for an external set such as AVID pass data/demo.csv here, because external IDs reuse the same numbers).")
     return parser.parse_args()
 
 
@@ -288,9 +292,20 @@ def main():
     if not split_path.exists():
         raise FileNotFoundError(f"{split_path} not found - the training scans are needed to fit the Youden threshold.")
     train_ids = pd.read_csv(split_path)["ID"]
-    train = demo[demo["ID"].isin(train_ids)]
+    if args.train_demo_csv:
+        tdemo = pd.read_csv(Path(args.train_demo_csv).expanduser().resolve())
+        tdemo = tdemo.loc[:, ~tdemo.columns.astype(str).str.startswith("Unnamed")]
+        for c in REGIONS + ["visual_read"]:
+            if c in tdemo.columns:
+                tdemo[c] = pd.to_numeric(tdemo[c], errors="coerce")
+    else:
+        if "AVID" in args.dataset:
+            raise SystemExit("External set: pass --train_demo_csv data/demo.csv (the training pool's demographics); "
+                             "external IDs reuse the training IDs' numbers, so one csv cannot hold both.")
+        tdemo = demo
+    train = tdemo[tdemo["ID"].isin(train_ids)]
     test = preds.merge(demo, left_on="ID_ind", right_on="ID", how="inner")
-    overlap = set(train["ID"]) & set(test["ID"])
+    overlap = set() if "AVID" in args.dataset else set(train["ID"]) & set(test["ID"])
     print(f"[split] {len(train)} training scans, {len(test)} test scans with demographics")
     if overlap:
         raise ValueError(f"{len(overlap)} scans are in both the training list and the test predictions.")
