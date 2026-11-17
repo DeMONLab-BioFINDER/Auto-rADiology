@@ -13,8 +13,8 @@
 #   <run>/analysis_log_<date>.txt
 #
 # Parts of the OHBM plan covered: A (performance, kappa, per cohort, SUVR baseline), B (confidence, calibration),
-# C (discordant cases, subgroups, same-SUVR check), region rule, F (dataset description).
-# Not here yet: C multivariable regressions, D occlusion group maps, E voxelwise statistics.
+# C (discordant cases, subgroups, same-SUVR check, multivariable regressions), region rule, F (dataset description).
+# Not here yet: D occlusion group maps, E voxelwise statistics.
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -72,6 +72,8 @@ step "C test: discordant demographics" python results_plotting/plot_discordant_d
 step "C test: discordant findings figure" python results_plotting/plot_discordant_findings.py "$RUN" --dataset Gothenburg --demo_csv "$DEMO"
 step "C test: subgroups" python results_plotting/analyze_subgroup_performance_visual_read.py "$RUN" --dataset Gothenburg --demo_csv "$DEMO"
 step "C test: same-SUVR check" python results_plotting/analyze_errors_at_same_suvr.py "$RUN" --dataset Gothenburg --demo_csv "$DEMO"
+step "C regressions (${SETS[*]})" python results_plotting/regress_model_output_visual_read.py "$RUN" \
+  --sets "${SETS[@]}" --demo_csv "$DEMO" --ext_demo_csv "$DEMO_AVID"
 step "region rule test" python results_plotting/check_excluded_regions.py "$RUN" --labels "$LABEL" --sets test --demo_csv "$DEMO" --out_dir "$PROJ_RESULTS/excluded_regions"
 
 # ---- AVID (external, zero-shot)
