@@ -5,7 +5,7 @@
 # or as a job
 #   sbatch sbatch_scripts/run_visual-read-analysis.sh <final_run_folder>
 # Each step is independent: a failing step is reported at the end and the rest still run.
-# Needs data/demo.csv (training pool + test set) and data/demo_AVID_unseen.csv (AVID), and the model's AVID
+# Needs demo.csv (training pool + test set) and demo_AVID_unseen.csv (AVID) in data/ or ../data/, and the model's AVID
 # evaluation (submit_val_AVID_unseen_visual-read.sh) for the AVID part (skipped if it is missing).
 #
 # Outputs land where each script puts them: <run>/figures/... (test set), <run>/validation/figures/... (AVID),
@@ -36,8 +36,12 @@ if [[ -z "$RUN_ARG" ]]; then echo "Usage: bash sbatch_scripts/run_visual-read-an
 if [[ "$RUN_ARG" = /* ]]; then RUN="$RUN_ARG"; else RUN="$(cd .. && pwd)/results/$RUN_ARG"; fi
 [[ -d "$RUN" ]] || { echo "No such run folder: $RUN"; exit 1; }
 PROJ_RESULTS="${PROJ_RESULTS:-$(cd .. && pwd)/results}"
-DEMO="${DEMO:-data/demo.csv}"
-DEMO_AVID="${DEMO_AVID:-data/demo_AVID_unseen.csv}"
+# demographics: data/ inside the repo, else the data folder next to it (where they live on Berzelius),
+# the same places the results_plotting scripts look; DEMO=... / DEMO_AVID=... in front overrides
+first_existing() { for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return; }; done; echo "$1"; }
+DEMO="${DEMO:-$(first_existing data/demo.csv ../data/demo.csv)}"
+DEMO_AVID="${DEMO_AVID:-$(first_existing data/demo_AVID_unseen.csv ../data/demo_AVID_unseen.csv)}"
+for f in "$DEMO" "$DEMO_AVID"; do [[ -f "$f" ]] || echo "WARNING: $f not found (pass DEMO=... / DEMO_AVID=...)"; done
 LABEL=$(basename "$RUN" | grep -o "final-[^_]*" || echo model)
 LOG="$RUN/analysis_log_$(date +%Y%m%d_%H%M).txt"
 FAILED=()
@@ -49,6 +53,7 @@ step() {  # step "<name>" cmd args...
 }
 
 echo "Run: $RUN" | tee "$LOG"
+echo "Demographics: $DEMO (test), $DEMO_AVID (AVID)" | tee -a "$LOG"
 HAS_AVID=$(ls "$RUN"/validation/External_validation_AVID_unseen__*_zeroshot_results.csv 2>/dev/null | head -1)
 [[ -n "$HAS_AVID" ]] || echo "No AVID result in $RUN/validation: AVID steps skipped" | tee -a "$LOG"
 SETS=(test); [[ -n "$HAS_AVID" ]] && SETS+=(avid)
