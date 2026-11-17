@@ -358,7 +358,9 @@ def main():
             print(f"      {r['adjusted_for']:<42} OR {r['or']:.2f} [{r['or_lo']:.2f}-{r['or_hi']:.2f}], p = {r['p']:.3g}{fdr}, "
                   f"n={r['n']} ({r['n_disagree']} disagree){extra}")
     print("\n[regions] Visual read − scans: median SUVR Model − / Model +, difference in SD units (Model − SD)")
-    for group, sub in regions.groupby("group", sort=False):
+    if regions.empty:  # e.g. AVID: a single Model + / Read - scan, nothing to compare
+        print("  too few Model + scans among the visual read - scans to compare")
+    for group, sub in ([] if regions.empty else regions.groupby("group", sort=False)):
         print(f"  {group} (Model − n={sub['n_model_neg'].iloc[0]}, Model + n={sub['n_model_pos'].iloc[0]})")
         for _, r in sub.iterrows():
             print(f"      {r['region']:<18} {r['median_model_neg']:.2f} / {r['median_model_pos']:.2f}   "
