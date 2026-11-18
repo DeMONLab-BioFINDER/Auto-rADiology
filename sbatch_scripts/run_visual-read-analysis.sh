@@ -14,7 +14,8 @@
 #
 # Parts of the OHBM plan covered: A (performance, kappa, per cohort, SUVR baseline), B (confidence, calibration),
 # C (discordant cases, subgroups, same-SUVR check, multivariable regressions), region rule, F (dataset description).
-# Not here yet: D occlusion group maps, E voxelwise statistics.
+# Separate (long jobs): D occlusion group maps (submit_vis-occlusion-all.sh, merge_occlusion_chunks.py,
+# occlusion_group_maps.py), E voxelwise statistics (submit_voxelwise-stats.sh).
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
