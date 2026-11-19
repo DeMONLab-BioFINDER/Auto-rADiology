@@ -15,7 +15,9 @@ Models (each set separately - test and AVID are never pooled):
                      all scans -> odds ratios side by side: where do readers and model react differently?
 Then the same four with one extra variable at a time - APOE e4 carrier, Centiloid (per 25 CL), CDR-SB - each on
 the scans that have it (they are missing for whole cohorts: CDR-SB for all of Geneva, APOE / Centiloid for
-40% of NACC), so the main model keeps everyone.
+40% of NACC), so the main model keeps everyone. Frontal SUVR (CenTauR frontal region) stands in for the
+uptake outside the temporal lobe: at the same meta-temporal SUVR, does more background lower the call? The voxelwise
+statistics found that for the model's output; the read vs model odds ratios show whether readers do the same.
 
 Log-odds: probabilities clipped to [1e-4, 1 - 1e-4] (log-odds -9.2..9.2), because a saturated softmax gives
 0 or 1. OLS with robust (HC3) standard errors, since those log-odds are far from normal. The spline (natural
@@ -44,7 +46,8 @@ from plot_utils import add_subgroup_columns, find_demo_csv, resolve_path
 
 CLIP = 1e-4
 SPLINE = "cr(MetaTemporal, df=3)"
-EXTRAS = {"apoe_e4": "APOE ε4 carrier", "cl25": "Centiloid (per 25 CL)", "CDR_SB": "CDR-SB (per point)"}
+EXTRAS = {"apoe_e4": "APOE ε4 carrier", "cl25": "Centiloid (per 25 CL)", "CDR_SB": "CDR-SB (per point)",
+          "frontal10": "Frontal SUVR (per 0.1)"}
 LABELS = {"age10": "Age (per 10 years)", "C(sex)[T.Male]": "Male sex",
           "C(dx, Treatment('CU'))[T.MCI]": "MCI (vs CU)", "C(dx, Treatment('CU'))[T.AD dementia]": "AD dementia (vs CU)",
           "read": "Visual read +", **EXTRAS}
@@ -95,6 +98,7 @@ def load(run: Path, which: str, args) -> pd.DataFrame:
         "apoe_e4": pd.to_numeric(d.get("apoe"), errors="coerce"),
         "cl25": pd.to_numeric(d.get("CL"), errors="coerce") / 25,
         "CDR_SB": pd.to_numeric(d.get("CDR_SB"), errors="coerce"),
+        "frontal10": pd.to_numeric(d.get("Frontal"), errors="coerce") * 10,
     })
     # "Other" diagnoses (FTLD etc., ~1%) are too few to estimate and would not mean one thing; left out here
     return out[out["dx"].isin(["CU", "MCI", "AD dementia"])]
