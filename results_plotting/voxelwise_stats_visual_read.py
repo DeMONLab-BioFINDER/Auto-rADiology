@@ -176,7 +176,8 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None):
     vmax = float(np.abs(t_img.get_fdata()).max()) or 1.0
     fig = plt.figure(figsize=(16, 2.6), facecolor="black")
     disp = plotting.plot_stat_map(shown, display_mode="z", cut_coords=CUTS, figure=fig, cmap="cold_hot", vmax=vmax,
-                                  threshold=1e-6, colorbar=True, black_bg=True, draw_cross=False, annotate=True,
+                                  threshold=1e-6, symmetric_cbar=True,  # blue always means t < 0
+                                  colorbar=True, black_bg=True, draw_cross=False, annotate=True,
                                   title=f"{title}  (t, FWE p < {ALPHA})")
     if regions_img is not None:
         disp.add_contours(regions_img, levels=[0.5], colors="white", linewidths=0.6)
