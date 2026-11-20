@@ -121,9 +121,10 @@ def agreement(d: pd.DataFrame) -> pd.DataFrame:
 
 def panel_roc(ax, data: dict):
     d = data[next(iter(data))]  # the first set (test, or AVID when drawn on its own)
-    # the model, and the region's SUVR as a score (threshold-free comparison; pink like the cut-off line in C)
+    # the model, and classifying by a cut-off on the region's SUVR, swept over every cut-off value
+    # (threshold-free comparison; pink like the cut-off line in C)
     for score, colour, name in [("prob", CUSTOM_PALETTE[0], "Model"),
-                                ("suvr", CUSTOM_PALETTE[1], f"{REGION_NAMES.get(REGION, REGION)} SUVR")]:
+                                ("suvr", CUSTOM_PALETTE[1], f"{REGION_NAMES.get(REGION, REGION)} SUVR cut-off")]:
         fpr, tpr, _ = roc_curve(d["y"], d[score])
         ax.plot(fpr, tpr, color=colour, linewidth=2.2, label=f"{name} (AUC = {roc_auc_score(d['y'], d[score]):.3f})")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
