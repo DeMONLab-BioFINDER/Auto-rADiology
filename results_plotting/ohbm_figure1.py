@@ -5,7 +5,8 @@ meta-temporal SUVR cut-off.
 Held-out test set only by default (AVID optional, --sets test avid, until it is clear AVID can go in the abstract).
 Same style as the other results_plotting figures (seaborn whitegrid, CUSTOM_PALETTE, the ROC / confusion-matrix
 panel and the agreement-vs-cut-off plot with its checkmark legend), at panel-sized fonts.
-Laid out like that figure: A confusion matrix (the model's calls), B ROC curve, C agreement panel underneath.
+Laid out like that figure: A confusion matrix (the model's calls), B ROC curves of the model and of the region's
+SUVR (threshold-free comparison), C agreement panel underneath.
   C  Agreement by meta-temporal SUVR level (with AVID: C test, D AVID): three lines, as in the lab's amyloid
      visual-read figure (Vogel lab, PALS application Fig. 1C): model vs cut-off, read vs cut-off, model vs read
      (cut-off = CenTauR CTRz 2 = meta-temporal SUVR 1.34), over grey bars of the share of scans per bin.
@@ -120,14 +121,14 @@ def agreement(d: pd.DataFrame) -> pd.DataFrame:
 
 def panel_roc(ax, data: dict):
     d = data[next(iter(data))]  # the first set (test, or AVID when drawn on its own)
-    fpr, tpr, _ = roc_curve(d["y"], d["prob"])
-    label = f"AUC = {roc_auc_score(d['y'], d['prob']):.3f}"
-    if len(data) == 2:
-        label += f" (test)\nAUC = {roc_auc_score(data['avid']['y'], data['avid']['prob']):.3f} (AVID)"
-    ax.plot(fpr, tpr, color=CUSTOM_PALETTE[0], linewidth=2.2, label=label)
+    # the model, and the region's SUVR as a score (threshold-free comparison; pink like the cut-off line in C)
+    for score, colour, name in [("prob", CUSTOM_PALETTE[0], "Model"),
+                                ("suvr", CUSTOM_PALETTE[1], f"{REGION_NAMES.get(REGION, REGION)} SUVR")]:
+        fpr, tpr, _ = roc_curve(d["y"], d[score])
+        ax.plot(fpr, tpr, color=colour, linewidth=2.2, label=f"{name} (AUC = {roc_auc_score(d['y'], d[score]):.3f})")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
     ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
-    style(ax, "ROC curve", "False positive rate", "True positive rate")
+    style(ax, "ROC curves", "False positive rate", "True positive rate")
     ax.legend(loc="lower right", fontsize=LEGEND, frameon=True, fancybox=True, framealpha=0.9, edgecolor="0.75")
 
 
