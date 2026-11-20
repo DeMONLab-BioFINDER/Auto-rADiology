@@ -2,9 +2,10 @@
 """OHBM abstract, Figure 1: how well the model reproduces the visual read, and where it differs from the
 meta-temporal SUVR cut-off.
 
-  A  ROC curve of the model on the held-out test set, with the operating point at 0.5 (AVID AUC in the label).
-  B  Confusion matrices at 0.5, test and AVID.
-  C, D  Agreement by meta-temporal SUVR level, test (C) and AVID (D): three lines, as in the lab's amyloid
+Held-out test set only by default (AVID optional, --sets test avid, until it is clear AVID can go in the abstract).
+  A  ROC curve of the model on the held-out test set, with the operating point at 0.5.
+  B  Confusion matrix at 0.5.
+  C  Agreement by meta-temporal SUVR level (with AVID: C test, D AVID): three lines, as in the lab's amyloid
      visual-read figure (Vogel lab, PALS application Fig. 1C):
         model vs read          (blue)
         cut-off vs read        (orange; cut-off = CenTauR CTRz 2 = meta-temporal SUVR 1.34)
@@ -22,7 +23,8 @@ so lines and text stay sharp.
 Usage:
     python results_plotting/ohbm_figure1.py <final_run_dir> --demo_csv ../data/demo.csv \\
         --ext_demo_csv ../data/demo_AVID_unseen.csv
-Outputs (<run_dir>/figures/ohbm/, no IDs): figure1.png, figure1_numbers.csv
+    (add --sets test avid for the version with AVID: figure1_with_avid.png)
+Outputs (<run_dir>/figures/ohbm/, no IDs): figure1.png, figure1_numbers.csv, figure1_borderline_test.csv
 """
 import argparse
 from pathlib import Path
@@ -56,6 +58,8 @@ def parse_args():
     p.add_argument("--ext_dataset", default="AVID_unseen")
     p.add_argument("--demo_csv", default=None)
     p.add_argument("--ext_demo_csv", default=None)
+    p.add_argument("--sets", nargs="+", default=["test"], choices=list(SETS),
+                   help="test only (default; figure1.png) or test avid (figure1_with_avid.png).")
     p.add_argument("--out_dir", default=None)
     return p.parse_args()
 
@@ -109,10 +113,10 @@ def panel_roc(ax, data: dict):
     ax.plot(fp / (fp + tn), tp / (tp + fn), "o", ms=8, color=BLUE, mec="white", mew=2, zorder=3)
     ax.annotate("cut-off 0.5", (fp / (fp + tn), tp / (tp + fn)), xytext=(14, -16), textcoords="offset points",
                 fontsize=9, color=MUTED)
-    auc_t = roc_auc_score(d["y"], d["prob"])
-    auc_a = roc_auc_score(data["avid"]["y"], data["avid"]["prob"])
-    ax.text(0.97, 0.06, f"AUC {auc_t:.3f} (test)\nAUC {auc_a:.3f} (AVID, external)", ha="right", va="bottom",
-            fontsize=10, color=INK, transform=ax.transAxes, linespacing=1.5)
+    label = f"AUC {roc_auc_score(d['y'], d['prob']):.3f}"
+    if "avid" in data:
+        label += f" (test)\nAUC {roc_auc_score(data['avid']['y'], data['avid']['prob']):.3f} (AVID, external)"
+    ax.text(0.97, 0.06, label, ha="right", va="bottom", fontsize=10, color=INK, transform=ax.transAxes, linespacing=1.5)
     ax.set(xlim=(-0.02, 1), ylim=(0, 1.02), xlabel="False positive rate (1 − specificity)", ylabel="Sensitivity")
     ax.set_title("A   ROC, held-out test", loc="left", fontweight="bold")
 
@@ -164,32 +168,41 @@ def main():
     run = Path(args.run_dir).resolve()
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "ohbm"
     out.mkdir(parents=True, exist_ok=True)
-    data = {which: load(run, which, args) for which in SETS}
+    data = {which: load(run, which, args) for which in SETS if which in args.sets}
+    name = "figure1.png" if list(data) == ["test"] else "figure1_with_avid.png"
 
     plt.rcParams.update({"font.family": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
                          "font.size": 10, "axes.titlesize": 11.5, "axes.labelsize": 10, "axes.labelcolor": INK,
                          "xtick.labelsize": 9, "ytick.labelsize": 9, "xtick.color": MUTED, "ytick.color": MUTED,
                          "axes.edgecolor": "#bbbbbb", "axes.linewidth": 0.8})
-    fig = plt.figure(figsize=(10, 7.4))
-    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.05], hspace=0.55, left=0.07, right=0.985, top=0.93, bottom=0.1)
-    top = gs[0].subgridspec(1, 3, width_ratios=[1.25, 0.62, 0.62], wspace=0.45)
-    bottom = gs[1].subgridspec(1, 2, width_ratios=[1, 1.18], wspace=0.12)
+    if list(data) == ["test"]:  # one row: ROC, confusion matrix, agreement
+        fig = plt.figure(figsize=(10, 4.3))
+        gs = fig.add_gridspec(1, 3, width_ratios=[1, 0.62, 1.45], wspace=0.42, left=0.07, right=0.985,
+                              top=0.78, bottom=0.2)
+        top, bottom, legend_y = [gs[0], gs[1]], [gs[2]], 0.93
+    else:
+        fig = plt.figure(figsize=(10, 7.4))
+        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.05], hspace=0.55, left=0.07, right=0.985, top=0.93, bottom=0.1)
+        top = gs[0].subgridspec(1, 3, width_ratios=[1.25, 0.62, 0.62], wspace=0.45)
+        bottom = gs[1].subgridspec(1, 2, width_ratios=[1, 1.18], wspace=0.12)
+        legend_y = 0.505
 
     panel_roc(fig.add_subplot(top[0]), data)
-    for k, which in enumerate(SETS):
+    for k, which in enumerate(data):
         ax = fig.add_subplot(top[k + 1])
         panel_confusion(ax, data[which], f"{'Test' if which == 'test' else 'AVID'} (n = {len(data[which])})")
         pos = ax.get_position()  # a little lower, so the matrix titles clear the panel label
         ax.set_position([pos.x0, pos.y0 - 0.01, pos.width, pos.height * 0.88])
         if k == 0:
             pos = ax.get_position()
-            fig.text(pos.x0 - 0.06, 0.94, "B   At cut-off 0.5", fontweight="bold", fontsize=11.5, va="bottom")
+            fig.text(pos.x0 - 0.06, top[0].get_position(fig).y1 + 0.012 if len(data) == 1 else 0.94,
+                     "B   At cut-off 0.5", fontweight="bold", fontsize=11.5, va="bottom")
     tests, numbers, bottom_axes = [], [], []
-    for k, (which, letter) in enumerate(zip(SETS, "CD")):
+    for k, (which, letter) in enumerate(zip(data, "CD")):
         ax = fig.add_subplot(bottom[k])
         rows = agreement(data[which])
-        tests.append({"set": which, **panel_agreement(ax, rows, data[which], f"{letter}   Agreement by tau level, "
-                                                      f"{'test' if which == 'test' else 'AVID'}")})
+        title = f"{letter}   Agreement by tau level" + ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
+        tests.append({"set": which, **panel_agreement(ax, rows, data[which], title)})
         numbers.append(rows.assign(set=which))
         bottom_axes.append(ax)
     # one y range for both panels, from the lowest CI rounded down to 10
@@ -203,8 +216,13 @@ def main():
             ax.set_yticklabels([])
     handles = [plt.Line2D([], [], color=c, lw=2, ls=ls, marker="o", ms=6, mec="white", mew=1.2)
                for c, ls in [(BLUE, "-"), (ORANGE, "-"), (GREY, (0, (4, 2.5)))]]
-    fig.legend(handles, ["Model vs read", f"Cut-off (SUVR > {CUTOFF:.2f}, CTRz 2) vs read", "Model vs cut-off"],
-               loc="center", bbox_to_anchor=(0.53, 0.505), ncol=3, frameon=False, fontsize=9.5, handlelength=2.4)
+    labels = ["Model vs read", f"Cut-off (SUVR > {CUTOFF:.2f}, CTRz 2) vs read", "Model vs cut-off"]
+    if len(data) == 1:  # one row across the top of the figure
+        fig.legend(handles, labels, loc="center", bbox_to_anchor=(0.62, 0.955), ncol=3, frameon=False,
+                   fontsize=9.5, handlelength=2.4, columnspacing=1.5)
+    else:
+        fig.legend(handles, labels, loc="center", bbox_to_anchor=(0.53, legend_y), ncol=3, frameon=False,
+                   fontsize=9.5, handlelength=2.4)
     for ax in fig.axes:
         ax.spines[["top", "right"]].set_visible(False)
 
@@ -213,7 +231,7 @@ def main():
     plt.close(fig)
     img = Image.open(big)
     img = img.resize((WIDTH_PX, round(img.height * WIDTH_PX / img.width)), Image.LANCZOS)
-    img.save(out / "figure1.png", optimize=True)
+    img.save(out / name, optimize=True)
     big.unlink()
 
     pd.concat(numbers).to_csv(out / "figure1_numbers.csv", index=False)
@@ -222,8 +240,7 @@ def main():
         print(pd.concat(numbers).to_string(index=False))
         print("\nPre-specified borderline test (exact McNemar):")
         print(pd.DataFrame(tests).to_string(index=False))
-    size = (out / "figure1.png").stat().st_size / 1e6
-    print(f"\nSaved {out / 'figure1.png'} ({img.width} x {img.height} px, {size:.2f} MB)")
+    print(f"\nSaved {out / name} ({img.width} x {img.height} px, {(out / name).stat().st_size / 1e6:.2f} MB)")
 
 
 if __name__ == "__main__":
