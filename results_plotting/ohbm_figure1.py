@@ -133,7 +133,7 @@ def panel_confusion(ax, d: pd.DataFrame, title: str):
         for j in range(2):
             ax.text(j, i, str(cm[i, j]), ha="center", va="center", fontsize=LABEL + 2,
                     color="white" if cm[i, j] > cm.max() / 2 else "black")
-    style(ax, title, "Predicted (model)", "Reference (clinical read)")
+    style(ax, title, "Model", "Visual read")
     ax.grid(False)
 
 
