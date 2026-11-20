@@ -3,21 +3,19 @@
 meta-temporal SUVR cut-off.
 
 Held-out test set only by default (AVID optional, --sets test avid, until it is clear AVID can go in the abstract).
-  A  ROC curve of the model on the held-out test set, with the operating point at 0.5.
-  B  Confusion matrix at 0.5.
+Same style as the other results_plotting figures (seaborn whitegrid, CUSTOM_PALETTE, the ROC / confusion-matrix
+panel and the agreement-vs-cut-off plot with its checkmark legend), at panel-sized fonts.
+  A  ROC curve of the model on the held-out test set.
+  B  Confusion matrix (the model's calls).
   C  Agreement by meta-temporal SUVR level (with AVID: C test, D AVID): three lines, as in the lab's amyloid
-     visual-read figure (Vogel lab, PALS application Fig. 1C):
-        model vs read          (blue)
-        cut-off vs read        (orange; cut-off = CenTauR CTRz 2 = meta-temporal SUVR 1.34)
-        model vs cut-off       (grey, dashed)
-     Where the tau level is clear, all three agree. Around the cut-off, does the model side with the read or with
-     the SUVR number? Wilson 95% CIs on the two lines that compare with the read.
+     visual-read figure (Vogel lab, PALS application Fig. 1C): model vs cut-off, read vs cut-off, model vs read
+     (cut-off = CenTauR CTRz 2 = meta-temporal SUVR 1.34), over grey bars of the share of scans per bin.
      Bins: < 1.2, 1.2-1.3, 1.3-1.4 (contains the cut-off), 1.4-1.6, >= 1.6. Chosen so every bin has enough
      scans in both sets (the top bins would hold only a handful each) while keeping the two bins around the
      cut-off separate. The test of model vs cut-off is the pre-specified one, on the 1.3-1.5 range (exact
-     McNemar), printed in the panel and saved in figure1_numbers.csv.
+     McNemar), saved in figure1_borderline_test.csv (for the text, not drawn).
 
-OHBM limits: at most 1000 px per side and 2 MB. Drawn at 3x and shrunk to 1000 px wide with a Lanczos filter,
+OHBM limits: at most 1000 px per side and 2 MB. Drawn large and shrunk to 1000 px wide with a Lanczos filter,
 so lines and text stay sharp.
 
 Usage:
@@ -34,11 +32,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from matplotlib.lines import Line2D
+from matplotlib.patches import FancyBboxPatch
 from PIL import Image
 from sklearn.metrics import roc_auc_score, roc_curve
 from statsmodels.stats.contingency_tables import mcnemar
 
-from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, find_demo_csv, resolve_path, wilson_interval
+from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, find_demo_csv, resolve_path, wilson_interval
 from regress_model_output_visual_read import find_ext_demo
 
 CUTOFF = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
@@ -46,9 +47,17 @@ BINS = [(-np.inf, 1.2, "< 1.2"), (1.2, 1.3, "1.2–1.3"), (1.3, 1.4, "1.3–1.4"
         (1.6, np.inf, "≥ 1.6")]
 BORDERLINE = (1.3, 1.5)  # pre-specified range for the McNemar test
 SETS = {"test": "Held-out test", "avid": "External (AVID)"}
-BLUE, ORANGE, GREY = "#2a78d6", "#eb6834", "#8a8a8a"  # validated pair (dataviz validator) + neutral grey
-INK, MUTED = "#222222", "#666666"
-WIDTH_PX, SCALE = 1000, 3
+TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # the plot_utils sizes, scaled down to fit three panels
+WIDTH_PX = 1000
+
+
+def style(ax, title: str, xlabel: str, ylabel: str):
+    """plot_utils.style_axes at panel-sized fonts."""
+    ax.set_title(title, fontsize=TITLE, pad=10)
+    ax.set_xlabel(xlabel, fontsize=LABEL)
+    ax.set_ylabel(ylabel, fontsize=LABEL)
+    ax.tick_params(labelsize=TICK)
+    ax.grid(alpha=0.28)
 
 
 def parse_args():
@@ -106,60 +115,82 @@ def agreement(d: pd.DataFrame) -> pd.DataFrame:
 def panel_roc(ax, data: dict):
     d = data["test"]
     fpr, tpr, _ = roc_curve(d["y"], d["prob"])
-    ax.plot([0, 1], [0, 1], color="#d0d0d0", lw=1, ls=(0, (2, 2)))
-    ax.plot(fpr, tpr, color=BLUE, lw=2.2, solid_capstyle="round")
-    tn = ((d["pred"] == 0) & (d["y"] == 0)).sum(); fp = ((d["pred"] == 1) & (d["y"] == 0)).sum()
-    tp = ((d["pred"] == 1) & (d["y"] == 1)).sum(); fn = ((d["pred"] == 0) & (d["y"] == 1)).sum()
-    ax.plot(fp / (fp + tn), tp / (tp + fn), "o", ms=8, color=BLUE, mec="white", mew=2, zorder=3)
-    ax.annotate("cut-off 0.5", (fp / (fp + tn), tp / (tp + fn)), xytext=(14, -16), textcoords="offset points",
-                fontsize=9, color=MUTED)
-    label = f"AUC {roc_auc_score(d['y'], d['prob']):.3f}"
+    label = f"AUC = {roc_auc_score(d['y'], d['prob']):.3f}"
     if "avid" in data:
-        label += f" (test)\nAUC {roc_auc_score(data['avid']['y'], data['avid']['prob']):.3f} (AVID, external)"
-    ax.text(0.97, 0.06, label, ha="right", va="bottom", fontsize=10, color=INK, transform=ax.transAxes, linespacing=1.5)
-    ax.set(xlim=(-0.02, 1), ylim=(0, 1.02), xlabel="False positive rate (1 − specificity)", ylabel="Sensitivity")
-    ax.set_title("A   ROC, held-out test", loc="left", fontweight="bold")
+        label += f" (test)\nAUC = {roc_auc_score(data['avid']['y'], data['avid']['prob']):.3f} (AVID)"
+    ax.plot(fpr, tpr, color=CUSTOM_PALETTE[0], linewidth=2.2, label=label)
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
+    ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
+    style(ax, "ROC curve", "False positive rate", "True positive rate")
+    ax.legend(loc="lower right", fontsize=LEGEND, frameon=True, fancybox=True, framealpha=0.9, edgecolor="0.75")
 
 
 def panel_confusion(ax, d: pd.DataFrame, title: str):
-    m = pd.crosstab(d["y"], d["pred"]).reindex(index=[0, 1], columns=[0, 1], fill_value=0).to_numpy()
-    agree = np.array([[1, 0], [0, 1]], bool)
+    cm = pd.crosstab(d["y"], d["pred"]).reindex(index=[0, 1], columns=[0, 1], fill_value=0).to_numpy()
+    ax.imshow(cm, cmap="Blues")
+    ax.set_xticks([0, 1], ["Negative", "Positive"])
+    ax.set_yticks([0, 1], ["Negative", "Positive"])
     for i in range(2):
         for j in range(2):
-            ax.add_patch(plt.Rectangle((j - 0.47, i - 0.47), 0.94, 0.94, color="#e3eefb" if agree[i, j] else "#fbe7df",
-                                       ec="none"))
-            ax.text(j, i, str(m[i, j]), ha="center", va="center", fontsize=15, color=INK, fontweight="bold")
-    ax.set(xlim=(-0.5, 1.5), ylim=(1.5, -0.5))
-    ax.set_xticks([0, 1], ["Model −", "Model +"])
-    ax.set_yticks([0, 1], ["Read −", "Read +"])
-    ax.tick_params(length=0)
-    ax.set_title(title, fontsize=10.5, color=INK)
-    for s in ax.spines.values():
-        s.set_visible(False)
+            ax.text(j, i, str(cm[i, j]), ha="center", va="center", fontsize=LABEL + 2,
+                    color="white" if cm[i, j] > cm.max() / 2 else "black")
+    style(ax, title, "Predicted (model)", "Reference (clinical read)")
+    ax.grid(False)
 
 
-def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str):
+def checkmark_table(ax):
+    """The checkmark legend of the agreement-vs-cut-off plots (plot_utils._draw_cutoff_agreement_table),
+    drawn inside the panel (axes coordinates) so it fits in a multi-panel figure."""
+    rows = [(CUSTOM_PALETTE[5], (True, True, False)), (CUSTOM_PALETTE[1], (False, True, True)),
+            (CUSTOM_PALETTE[3], (True, False, True))]
+    x0, y0, w, h = 0.5, 0.04, 0.48, 0.4
+    ax.add_patch(FancyBboxPatch((x0, y0), w, h, boxstyle="round,pad=0,rounding_size=0.02", transform=ax.transAxes,
+                                facecolor="white", edgecolor="0.75", lw=1, zorder=10, clip_on=False))
+    slot = h / 5
+    yc = lambda k: y0 + h - slot * (k + 0.5)
+    cols = [x0 + w * f for f in (0.38, 0.62, 0.87)]
+    ax.text(x0 + w / 2, yc(0), "Agreement between", transform=ax.transAxes, ha="center", va="center",
+            fontsize=TICK, fontweight="bold", zorder=11)
+    for cx, lab in zip(cols, ["Model", "SUVR", "Human"]):
+        ax.text(cx, yc(1), lab, transform=ax.transAxes, ha="center", va="center", fontsize=TICK - 1.5, zorder=11)
+    for k in range(1, 4):
+        yb = y0 + h - slot * (k + 1)
+        ax.add_line(Line2D([x0 + 0.01, x0 + w - 0.01], [yb + slot * 0.0, yb], transform=ax.transAxes, color="0.8",
+                           lw=0.9, zorder=11)) if k < 4 else None
+    for (colour, flags), k in zip(rows, (2, 3, 4)):
+        y = yc(k)
+        ax.add_line(Line2D([x0 + 0.03, x0 + 0.13], [y, y], transform=ax.transAxes, color=colour, lw=2.2, zorder=11))
+        ax.add_line(Line2D([x0 + 0.08], [y], transform=ax.transAxes, color=colour, marker="o", ms=5, ls="None", zorder=11))
+        for cx, flag in zip(cols, flags):
+            if flag:
+                sx, sy = 0.012, 0.022
+                ax.add_line(Line2D([cx - sx, cx - sx * 0.25, cx + sx * 1.2], [y, y - sy * 0.9, y + sy],
+                                   transform=ax.transAxes, color="#2E8B45", lw=2, solid_capstyle="round", zorder=11))
+
+
+def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str, legend: bool = True):
+    labels = [b[2] for b in BINS]
     x = np.arange(len(BINS))
-    ax.axvspan(1.5, 3.5, color="#f4f4f2", zorder=0)  # the two bins around the cut-off
-    ax.text(2.5, 101.5, "around the cut-off", ha="center", va="bottom", fontsize=8.5, color=MUTED)
-    for pair, colour, ls, ci, dx in [("model vs cut-off", GREY, (0, (4, 2.5)), False, 0),
-                                     ("cut-off vs read", ORANGE, "-", True, 0.07), ("model vs read", BLUE, "-", True, -0.07)]:
-        r = rows[rows["pair"] == pair].set_index("bin").reindex([b[2] for b in BINS])
-        y = 100 * r["agree"].to_numpy()
-        if ci:  # CI whiskers nudged sideways so the two read lines' intervals don't sit on top of each other
-            ax.vlines(x + dx, 100 * r["lo"], 100 * r["hi"], color=colour, lw=1.4, alpha=0.5, zorder=2)
-        ax.plot(x + dx, y, color=colour, lw=2, ls=ls, zorder=3, solid_capstyle="round")
-        ax.plot(x + dx, y, "o", ms=6.5, color=colour, mec="white", mew=1.5, zorder=4)
-    n = rows[rows["pair"] == "model vs read"].set_index("bin").reindex([b[2] for b in BINS])["n"]
-    ax.set_xticks(x, [f"{b}\n{int(k)}" for (_, _, b), k in zip(BINS, n)])
-    ax.set(xlim=(-0.4, len(BINS) - 0.6), xlabel="Meta-temporal SUVR  (scans per bin below)")
+    n = rows[rows["pair"] == "model vs read"].set_index("bin").reindex(labels)["n"]
+    ax2 = ax.twinx()  # background: share of scans per bin, as in the original agreement-vs-cut-off plots
+    ax2.bar(x, (n / n.sum() * 100).to_numpy(), color="0.85", width=0.65, zorder=1)
+    ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL, color="0.6")
+    ax2.tick_params(axis="y", labelsize=TICK, color="0.6", labelcolor="0.6")
+    ax2.spines["right"].set_color("0.6")
+    ax2.grid(False)
+    for pair, colour in [("model vs cut-off", CUSTOM_PALETTE[5]), ("cut-off vs read", CUSTOM_PALETTE[1]),
+                         ("model vs read", CUSTOM_PALETTE[3])]:
+        r = rows[rows["pair"] == pair].set_index("bin").reindex(labels)
+        ax.plot(x, 100 * r["agree"].to_numpy(), marker="o", markersize=6, linewidth=2.2, color=colour, zorder=3)
+    ax.set_zorder(ax2.get_zorder() + 1)
+    ax.patch.set_visible(False)
+    ax.set_xticks(x, labels)
+    ax.set_ylim(0, 105)
     b = d[(d["MetaTemporal"] >= BORDERLINE[0]) & (d["MetaTemporal"] < BORDERLINE[1])]
     am, ar, p = (b["pred"] == b["y"]).mean(), (b["rule"] == b["y"]).mean(), mcnemar_p(b)
-    ax.text(0.02, 0.04, f"SUVR {BORDERLINE[0]}–{BORDERLINE[1]} (n = {len(b)}):\nmodel {am:.0%} vs cut-off {ar:.0%}, "
-            f"p = {p:.2g}", transform=ax.transAxes, fontsize=8.5, color=MUTED, linespacing=1.4)
-    ax.set_title(title, loc="left", fontweight="bold")
-    ax.yaxis.grid(True, color="#ececec", lw=0.8)
-    ax.set_axisbelow(True)
+    style(ax, title, f"Meta-temporal tau SUVR (cut-off {CUTOFF:.2f} = CTRz 2)", "Agreement (%)")
+    if legend:
+        checkmark_table(ax)
     return {"range": f"{BORDERLINE[0]}-{BORDERLINE[1]}", "n": len(b), "model": am, "cutoff": ar, "mcnemar_p": p}
 
 
@@ -171,64 +202,36 @@ def main():
     data = {which: load(run, which, args) for which in SETS if which in args.sets}
     name = "figure1.png" if list(data) == ["test"] else "figure1_with_avid.png"
 
-    plt.rcParams.update({"font.family": ["Arial", "Helvetica", "Liberation Sans", "Nimbus Sans", "Nimbus Sans L", "TeX Gyre Heros",
-                                         "DejaVu Sans"],
-                         "font.size": 10, "axes.titlesize": 11.5, "axes.labelsize": 10, "axes.labelcolor": INK,
-                         "xtick.labelsize": 9, "ytick.labelsize": 9, "xtick.color": MUTED, "ytick.color": MUTED,
-                         "axes.edgecolor": "#bbbbbb", "axes.linewidth": 0.8})
+    sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)  # the style of the other results_plotting figures
     if list(data) == ["test"]:  # one row: ROC, confusion matrix, agreement
-        fig = plt.figure(figsize=(10, 4.3))
-        gs = fig.add_gridspec(1, 3, width_ratios=[1, 0.62, 1.45], wspace=0.42, left=0.07, right=0.985,
-                              top=0.78, bottom=0.2)
-        top, bottom, legend_y = [gs[0], gs[1]], [gs[2]], 0.93
+        fig = plt.figure(figsize=(10.5, 4.2))
+        gs = fig.add_gridspec(1, 3, width_ratios=[1, 0.9, 1.6], wspace=0.45, left=0.065, right=0.935,
+                              top=0.88, bottom=0.15)
+        top, bottom = [gs[0], gs[1]], [gs[2]]
     else:
-        fig = plt.figure(figsize=(10, 7.4))
-        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.05], hspace=0.55, left=0.07, right=0.985, top=0.93, bottom=0.1)
-        top = gs[0].subgridspec(1, 3, width_ratios=[1.25, 0.62, 0.62], wspace=0.45)
-        bottom = gs[1].subgridspec(1, 2, width_ratios=[1, 1.18], wspace=0.12)
-        legend_y = 0.505
+        fig = plt.figure(figsize=(10.5, 8.4))
+        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1], hspace=0.38, left=0.05, right=0.955, top=0.94, bottom=0.08)
+        top = gs[0].subgridspec(1, 3, width_ratios=[1.2, 0.85, 0.85], wspace=0.4)
+        bottom = gs[1].subgridspec(1, 2, wspace=0.35)
 
     panel_roc(fig.add_subplot(top[0]), data)
     for k, which in enumerate(data):
-        ax = fig.add_subplot(top[k + 1])
-        panel_confusion(ax, data[which], f"{'Test' if which == 'test' else 'AVID'} (n = {len(data[which])})")
-        pos = ax.get_position()  # a little lower, so the matrix titles clear the panel label
-        ax.set_position([pos.x0, pos.y0 - 0.01, pos.width, pos.height * 0.88])
-        if k == 0:
-            pos = ax.get_position()
-            fig.text(pos.x0 - 0.06, top[0].get_position(fig).y1 + 0.012 if len(data) == 1 else 0.94,
-                     "B   At cut-off 0.5", fontweight="bold", fontsize=11.5, va="bottom")
-    tests, numbers, bottom_axes = [], [], []
-    for k, (which, letter) in enumerate(zip(data, "CD")):
+        title = "Confusion matrix" + ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
+        panel_confusion(fig.add_subplot(top[k + 1]), data[which], title)
+    tests, numbers = [], []
+    for k, which in enumerate(data):
         ax = fig.add_subplot(bottom[k])
         rows = agreement(data[which])
-        title = f"{letter}   Agreement by tau level" + ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
-        tests.append({"set": which, **panel_agreement(ax, rows, data[which], title)})
+        title = "Agreement with SUVR cut-off" + ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
+        tests.append({"set": which, **panel_agreement(ax, rows, data[which], title, legend=(k == len(data) - 1))})
         numbers.append(rows.assign(set=which))
-        bottom_axes.append(ax)
-    # one y range for both panels, from the lowest CI rounded down to 10
-    low = min(100 * pd.concat(numbers)[["lo", "agree"]].min().min(), 90)
-    for k, ax in enumerate(bottom_axes):
-        ax.set_ylim(np.floor(low / 10) * 10 - 2, 106)
-        ax.set_yticks(np.arange(np.ceil(low / 20) * 20, 101, 20))
-        if k == 0:
-            ax.set_ylabel("Agreement (%)")
-        else:
-            ax.set_yticklabels([])
-    handles = [plt.Line2D([], [], color=c, lw=2, ls=ls, marker="o", ms=6, mec="white", mew=1.2)
-               for c, ls in [(BLUE, "-"), (ORANGE, "-"), (GREY, (0, (4, 2.5)))]]
-    labels = ["Model vs read", f"Cut-off (SUVR > {CUTOFF:.2f}, CTRz 2) vs read", "Model vs cut-off"]
-    if len(data) == 1:  # one row across the top of the figure
-        fig.legend(handles, labels, loc="center", bbox_to_anchor=(0.62, 0.955), ncol=3, frameon=False,
-                   fontsize=9.5, handlelength=2.4, columnspacing=1.5)
-    else:
-        fig.legend(handles, labels, loc="center", bbox_to_anchor=(0.53, legend_y), ncol=3, frameon=False,
-                   fontsize=9.5, handlelength=2.4)
-    for ax in fig.axes:
-        ax.spines[["top", "right"]].set_visible(False)
+    axes = [a for a in fig.axes if a.get_label() != "<colorbar>"]
+    for ax, letter in zip([a for a in axes if not a.get_ylabel().startswith("Percentage")], "ABCDE"):
+        ax.annotate(letter, xy=(0, 1), xycoords="axes fraction", xytext=(-14, 8), textcoords="offset points",
+                    ha="right", va="bottom", fontsize=LABEL + 2, fontweight="bold")
 
-    big = out / "_figure1_3x.png"
-    fig.savefig(big, dpi=100 * SCALE, facecolor="white")
+    big = out / "_figure1_large.png"
+    fig.savefig(big, dpi=300, facecolor="white")
     plt.close(fig)
     img = Image.open(big)
     img = img.resize((WIDTH_PX, round(img.height * WIDTH_PX / img.width)), Image.LANCZOS)
