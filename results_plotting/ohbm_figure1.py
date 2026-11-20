@@ -9,9 +9,10 @@ Laid out like that figure: A confusion matrix (the model's calls), B ROC curve, 
   C  Agreement by meta-temporal SUVR level (with AVID: C test, D AVID): three lines, as in the lab's amyloid
      visual-read figure (Vogel lab, PALS application Fig. 1C): model vs cut-off, read vs cut-off, model vs read
      (cut-off = CenTauR CTRz 2 = meta-temporal SUVR 1.34), over grey bars of the share of scans per bin.
-     Bins: < 1.2, 1.2-1.3, 1.3-1.4 (contains the cut-off), 1.4-1.6, >= 1.6. Chosen so every bin has enough
-     scans in both sets (the top bins would hold only a handful each) while keeping the two bins around the
-     cut-off separate. The test of model vs cut-off is the pre-specified one, on the 1.3-1.5 range (exact
+     Bins: 0.1 SUVR wide, merged from low to high until each holds >= 15 test scans (the lab's
+     _density_adaptive_bin_labels), so fine where the scans are and coarser in the sparse high-tau tail; set from
+     the test set's SUVR alone (not the outcomes) and reused for AVID. --region Universal (or another CenTauR
+     region) draws the same figure with that region's SUVR and CTRz-2 cut-off. The test of model vs cut-off is the pre-specified one, on the 1.3-1.5 range (exact
      McNemar), saved in figure1_borderline_test.csv (for the text, not drawn).
 
 OHBM limits: at most 1000 px per side and 2 MB. Drawn large and shrunk to 1000 px wide with a Lanczos filter,
@@ -38,13 +39,16 @@ from PIL import Image
 from sklearn.metrics import roc_auc_score, roc_curve
 from statsmodels.stats.contingency_tables import mcnemar
 
-from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, find_demo_csv, resolve_path, wilson_interval
+from plot_utils import (CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, SUVR_BIN_EDGES, _density_adaptive_bin_labels,
+                        find_demo_csv, resolve_path, wilson_interval)
 from regress_model_output_visual_read import find_ext_demo
 
-CUTOFF = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
-BINS = [(-np.inf, 1.2, "< 1.2"), (1.2, 1.3, "1.2–1.3"), (1.3, 1.4, "1.3–1.4"), (1.4, 1.6, "1.4–1.6"),
-        (1.6, np.inf, "≥ 1.6")]
-BORDERLINE = (1.3, 1.5)  # pre-specified range for the McNemar test
+# set in main() from --region: the SUVR column, its CTRz-2 cut-off and the bins (from the test set's distribution)
+REGION, CUTOFF, BINS = "MetaTemporal", CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"], []
+REGION_NAMES = {"MetaTemporal": "Meta-temporal", "Universal": "Universal", "TemporoParietal": "Temporoparietal",
+                "MesialTemporal": "Mesial temporal", "Frontal": "Frontal"}
+MIN_BIN = 15  # scans per bin (plot_utils._density_adaptive_bin_labels: 0.1-wide bins merged until >= 15)
+BORDERLINE = (1.3, 1.5)  # pre-specified meta-temporal range for the McNemar test (meta-temporal only)
 SETS = {"test": "Held-out test", "avid": "External (AVID)"}
 TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # the plot_utils sizes, scaled down to fit three panels
 WIDTH_PX = 1000
@@ -68,6 +72,8 @@ def parse_args():
     p.add_argument("--ext_demo_csv", default=None)
     p.add_argument("--sets", nargs="+", default=["test"], choices=list(SETS),
                    help="test only (default; figure1.png) or test avid (figure1_with_avid.png).")
+    p.add_argument("--region", default="MetaTemporal", choices=list(REGION_NAMES),
+                   help="SUVR region for panel C (default meta-temporal; e.g. Universal -> figure1_universal.png).")
     p.add_argument("--out_dir", default=None)
     return p.parse_args()
 
@@ -83,11 +89,11 @@ def load(run: Path, which: str, args) -> pd.DataFrame:
     if demo_path is None or not f.exists():
         raise SystemExit(f"Missing predictions ({f}) or demographics for the {which} set")
     d = pd.read_csv(f)[["ID_ind", "y", "pred", "prob"]]
-    demo = pd.read_csv(demo_path)[["ID", "MetaTemporal"]]
+    demo = pd.read_csv(demo_path)[["ID", REGION]].rename(columns={REGION: "suvr"})
     d = d.merge(demo, left_on="ID_ind", right_on="ID", how="left")
-    d["MetaTemporal"] = pd.to_numeric(d["MetaTemporal"], errors="coerce")
-    d = d.dropna(subset=["MetaTemporal"])
-    d["rule"] = (d["MetaTemporal"] > CUTOFF).astype(int)
+    d["suvr"] = pd.to_numeric(d["suvr"], errors="coerce")
+    d = d.dropna(subset=["suvr"])
+    d["rule"] = (d["suvr"] > CUTOFF).astype(int)
     return d
 
 
@@ -101,7 +107,7 @@ def mcnemar_p(b: pd.DataFrame) -> float:
 def agreement(d: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for lo, hi, label in BINS:
-        b = d[(d["MetaTemporal"] >= lo) & (d["MetaTemporal"] < hi)]
+        b = d[(d["suvr"] >= lo) & (d["suvr"] < hi)]
         for pair, a, c in [("model vs read", b["pred"], b["y"]), ("cut-off vs read", b["rule"], b["y"]),
                            ("model vs cut-off", b["pred"], b["rule"])]:
             k, n = int((a == c).sum()), len(b)
@@ -161,9 +167,9 @@ def checkmark_table(ax):
         ax.text(x0 + 0.02, y, name, va="center", fontsize=TICK, **T)
         for cx, flag in zip(cols, flags):
             if flag:
-                sx, sy = 0.012, 0.03
-                ax.add_line(Line2D([cx - sx, cx - sx * 0.25, cx + sx * 1.2], [y, y - sy * 0.9, y + sy], color="#5aa832",
-                                   lw=2.4, solid_capstyle="round", solid_joinstyle="round", **T))
+                sx, sy = 0.008, 0.024  # same shape and colour as plot_utils._draw_checkmark
+                ax.add_line(Line2D([cx - sx, cx - sx * 0.25, cx + sx * 1.2], [y, y - sy * 0.9, y + sy], color="#2E8B45",
+                                   lw=2.0, solid_capstyle="round", solid_joinstyle="round", **T))
 
 
 def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str, legend: bool = True):
@@ -185,11 +191,13 @@ def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str, legend:
     ax.set_xticks(x, labels)
     low = 100 * rows["agree"].min()  # zoomed in, as in the amyloid figure, but always showing every point
     ax.set_ylim(max(0, np.floor(low / 10) * 10 - 10), 102)
-    b = d[(d["MetaTemporal"] >= BORDERLINE[0]) & (d["MetaTemporal"] < BORDERLINE[1])]
+    b = d[(d["suvr"] >= BORDERLINE[0]) & (d["suvr"] < BORDERLINE[1])]
     am, ar, p = (b["pred"] == b["y"]).mean(), (b["rule"] == b["y"]).mean(), mcnemar_p(b)
-    style(ax, title, f"Meta-temporal tau SUVR (cut-off {CUTOFF:.2f} = CTRz 2)", "Agreement (%)")
+    style(ax, title, f"{REGION_NAMES.get(REGION, REGION)} tau SUVR (cut-off {CUTOFF:.2f} = CTRz 2)", "Agreement (%)")
     if legend:
         checkmark_table(ax)
+    if REGION != "MetaTemporal":
+        return {}
     return {"range": f"{BORDERLINE[0]}-{BORDERLINE[1]}", "n": len(b), "model": am, "cutoff": ar, "mcnemar_p": p}
 
 
@@ -198,8 +206,13 @@ def main():
     run = Path(args.run_dir).resolve()
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "ohbm"
     out.mkdir(parents=True, exist_ok=True)
+    global REGION, CUTOFF, BINS
+    REGION, CUTOFF = args.region, CENTAUR_FTP_CTRZ2_SUVR[args.region]
     data = {which: load(run, which, args) for which in SETS if which in args.sets}
-    name = "figure1.png" if list(data) == ["test"] else "figure1_with_avid.png"
+    edges, labels = _density_adaptive_bin_labels(data["test"]["suvr"], SUVR_BIN_EDGES, MIN_BIN)
+    BINS = [(lo, hi, lab.replace("<", "< ").replace(">", "> ")) for lo, hi, lab in zip(edges[:-1], edges[1:], labels)]
+    suffix = "" if REGION == "MetaTemporal" else f"_{REGION.lower()}"
+    name = f"figure1{suffix}.png" if list(data) == ["test"] else f"figure1{suffix}_with_avid.png"
 
     sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)  # the style of the other results_plotting figures
     # layout of the amyloid figure: confusion matrix and ROC on top, the agreement panel wide underneath
@@ -238,8 +251,9 @@ def main():
     img.save(out / name, optimize=True)
     big.unlink()
 
-    pd.concat(numbers).to_csv(out / "figure1_numbers.csv", index=False)
-    pd.DataFrame(tests).to_csv(out / "figure1_borderline_test.csv", index=False)
+    pd.concat(numbers).to_csv(out / f"figure1{suffix}_numbers.csv", index=False)
+    if REGION == "MetaTemporal":
+        pd.DataFrame(tests).to_csv(out / "figure1_borderline_test.csv", index=False)
     with pd.option_context("display.width", 160, "display.float_format", "{:.3f}".format):
         print(pd.concat(numbers).to_string(index=False))
         print("\nPre-specified borderline test (exact McNemar):")
