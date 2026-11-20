@@ -55,6 +55,11 @@ TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # the plot_utils sizes, scaled do
 WIDTH_PX = 1000
 
 
+def cutoff_name() -> str:
+    """One name for the SUVR cut-off everywhere in the figure (ROC legend, panel C title and legend)."""
+    return f"{REGION_NAMES.get(REGION, REGION)} SUVR cut-off"
+
+
 def style(ax, title: str, xlabel: str, ylabel: str):
     """plot_utils.style_axes at panel-sized fonts."""
     ax.set_title(title, fontsize=TITLE, pad=10)
@@ -124,7 +129,7 @@ def panel_roc(ax, data: dict):
     # the model, and classifying by a cut-off on the region's SUVR, swept over every cut-off value
     # (threshold-free comparison; pink like the cut-off line in C)
     for score, colour, name in [("prob", CUSTOM_PALETTE[0], "Model"),
-                                ("suvr", CUSTOM_PALETTE[1], f"{REGION_NAMES.get(REGION, REGION)} SUVR cut-off")]:
+                                ("suvr", CUSTOM_PALETTE[1], cutoff_name())]:
         fpr, tpr, _ = roc_curve(d["y"], d[score])
         ax.plot(fpr, tpr, color=colour, linewidth=2.2, label=f"{name} (AUC = {roc_auc_score(d['y'], d[score]):.3f})")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
@@ -151,14 +156,14 @@ def checkmark_table(ax):
     one row per rater, a checkmark where that line compares that rater, dashed dividers between the columns.
     Drawn inside the panel, bottom left: at low tau every line sits near 100%, so nothing is covered."""
     lines = [CUSTOM_PALETTE[5], CUSTOM_PALETTE[1], CUSTOM_PALETTE[3]]  # model vs cut-off, read vs cut-off, model vs read
-    raters = [("Model", (True, False, True)), ("SUVR cut-off", (True, True, False)), ("Human read", (False, True, True))]
-    x0, y0, w, h = 0.035, 0.05, 0.36, 0.44
+    raters = [("Model", (True, False, True)), (cutoff_name(), (True, True, False)), ("Visual read", (False, True, True))]
+    x0, y0, w, h = 0.03, 0.05, 0.42, 0.44  # right edge stays left of the cut-off bin's points
     ax.add_patch(FancyBboxPatch((x0, y0), w, h, boxstyle="round,pad=0,rounding_size=0.015", transform=ax.transAxes,
                                 facecolor="white", edgecolor="0.75", lw=1, zorder=10, clip_on=False))
     T = dict(transform=ax.transAxes, zorder=11)
     row_h = h / 5.2
     ax.text(x0 + 0.02, y0 + h - row_h * 0.6, "Agreement between", va="center", fontsize=TICK, **T)
-    cols = [x0 + w * f for f in (0.57, 0.73, 0.89)]
+    cols = [x0 + w * f for f in (0.68, 0.8, 0.92)]
     y_sw = y0 + h - row_h * 1.5
     for cx, colour in zip(cols, lines):
         ax.add_line(Line2D([cx - 0.022, cx + 0.022], [y_sw, y_sw], color=colour, lw=2, **T))
@@ -196,7 +201,7 @@ def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str, legend:
     ax.set_ylim(max(0, np.floor(low / 10) * 10 - 10), 102)
     b = d[(d["suvr"] >= BORDERLINE[0]) & (d["suvr"] < BORDERLINE[1])]
     am, ar, p = (b["pred"] == b["y"]).mean(), (b["rule"] == b["y"]).mean(), mcnemar_p(b)
-    style(ax, title, f"{REGION_NAMES.get(REGION, REGION)} tau SUVR (cut-off {CUTOFF:.2f} = CTRz 2)", "Agreement (%)")
+    style(ax, title, f"{REGION_NAMES.get(REGION, REGION)} SUVR (cut-off {CUTOFF:.2f} = CTRz 2)", "Agreement (%)")
     if legend:
         checkmark_table(ax)
     if REGION != "MetaTemporal":
@@ -237,7 +242,8 @@ def main():
     for k, which in enumerate(data):
         ax = fig.add_subplot(bottom[k])
         rows = agreement(data[which])
-        title = "Agreement with SUVR cut-off" + ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
+        title = f"Agreement by {REGION_NAMES.get(REGION, REGION).lower()} SUVR" + \
+            ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
         tests.append({"set": which, **panel_agreement(ax, rows, data[which], title, legend=(k == len(data) - 1))})
         numbers.append(rows.assign(set=which))
     axes = [a for a in fig.axes if a.get_label() != "<colorbar>"]
