@@ -20,8 +20,8 @@ so lines and text stay sharp.
 Usage:
     python results_plotting/ohbm_figure1.py <final_run_dir> --demo_csv ../data/demo.csv \\
         --ext_demo_csv ../data/demo_AVID_unseen.csv
-    (add --sets test avid for the version with AVID: figure1_with_avid.png)
-Outputs (<run_dir>/figures/ohbm/, no IDs): figure1.png, figure1_numbers.csv, figure1_borderline_test.csv
+    (--sets avid: the same figure for AVID, figure1_avid.png; --sets test avid: both, figure1_with_avid.png)
+Outputs (<run_dir>/figures/ohbm/, no IDs): figure1[_avid].png, <figure>_numbers.csv, <figure>_borderline_test.csv
 """
 import argparse
 from pathlib import Path
@@ -71,7 +71,8 @@ def parse_args():
     p.add_argument("--demo_csv", default=None)
     p.add_argument("--ext_demo_csv", default=None)
     p.add_argument("--sets", nargs="+", default=["test"], choices=list(SETS),
-                   help="test only (default; figure1.png) or test avid (figure1_with_avid.png).")
+                   help="test (default; figure1.png), avid (the same figure for AVID: figure1_avid.png), "
+                        "or test avid (both: figure1_with_avid.png).")
     p.add_argument("--region", default="MetaTemporal", choices=list(REGION_NAMES),
                    help="SUVR region for panel C (default meta-temporal; e.g. Universal -> figure1_universal.png).")
     p.add_argument("--out_dir", default=None)
@@ -118,10 +119,10 @@ def agreement(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def panel_roc(ax, data: dict):
-    d = data["test"]
+    d = data[next(iter(data))]  # the first set (test, or AVID when drawn on its own)
     fpr, tpr, _ = roc_curve(d["y"], d["prob"])
     label = f"AUC = {roc_auc_score(d['y'], d['prob']):.3f}"
-    if "avid" in data:
+    if len(data) == 2:
         label += f" (test)\nAUC = {roc_auc_score(data['avid']['y'], data['avid']['prob']):.3f} (AVID)"
     ax.plot(fpr, tpr, color=CUSTOM_PALETTE[0], linewidth=2.2, label=label)
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
@@ -210,11 +211,12 @@ def main():
     REGION, CUTOFF = args.region, CENTAUR_FTP_CTRZ2_SUVR[args.region]
     data = {which: load(run, which, args) for which in SETS if which in args.sets}
     suffix = "" if REGION == "MetaTemporal" else f"_{REGION.lower()}"
-    name = f"figure1{suffix}.png" if list(data) == ["test"] else f"figure1{suffix}_with_avid.png"
+    name = {("test",): f"figure1{suffix}.png", ("avid",): f"figure1{suffix}_avid.png"}.get(
+        tuple(data), f"figure1{suffix}_with_avid.png")
 
     sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)  # the style of the other results_plotting figures
     # layout of the amyloid figure: confusion matrix and ROC on top, the agreement panel wide underneath
-    if list(data) == ["test"]:
+    if len(data) == 1:
         fig = plt.figure(figsize=(10, 7.6))
         gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.05], hspace=0.42, left=0.1, right=0.92, top=0.95, bottom=0.08)
         top = gs[0].subgridspec(1, 2, width_ratios=[0.8, 1.2], wspace=0.35)
@@ -249,9 +251,10 @@ def main():
     img.save(out / name, optimize=True)
     big.unlink()
 
-    pd.concat(numbers).to_csv(out / f"figure1{suffix}_numbers.csv", index=False)
+    stem = Path(name).stem  # numbers saved next to their figure, so the test and AVID runs don't overwrite each other
+    pd.concat(numbers).to_csv(out / f"{stem}_numbers.csv", index=False)
     if REGION == "MetaTemporal":
-        pd.DataFrame(tests).to_csv(out / "figure1_borderline_test.csv", index=False)
+        pd.DataFrame(tests).to_csv(out / f"{stem}_borderline_test.csv", index=False)
     with pd.option_context("display.width", 160, "display.float_format", "{:.3f}".format):
         print(pd.concat(numbers).to_string(index=False))
         print("\nPre-specified borderline test (exact McNemar):")
