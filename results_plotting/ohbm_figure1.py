@@ -9,9 +9,8 @@ Laid out like that figure: A confusion matrix (the model's calls), B ROC curve, 
   C  Agreement by meta-temporal SUVR level (with AVID: C test, D AVID): three lines, as in the lab's amyloid
      visual-read figure (Vogel lab, PALS application Fig. 1C): model vs cut-off, read vs cut-off, model vs read
      (cut-off = CenTauR CTRz 2 = meta-temporal SUVR 1.34), over grey bars of the share of scans per bin.
-     Bins: 0.1 SUVR wide, merged from low to high until each holds >= 15 test scans (the lab's
-     _density_adaptive_bin_labels), so fine where the scans are and coarser in the sparse high-tau tail; set from
-     the test set's SUVR alone (not the outcomes) and reused for AVID. --region Universal (or another CenTauR
+     Bins: < 1.2, 1.2-1.3, 1.3-1.4 (contains the cut-off), 1.4-1.6, >= 1.6, every one with >= 29 test scans
+     (0.1-wide bins in the high-tau tail hold 15-25 scans, where one scan moves a point by 4-6 points). --region Universal (or another CenTauR
      region) draws the same figure with that region's SUVR and CTRz-2 cut-off. The test of model vs cut-off is the pre-specified one, on the 1.3-1.5 range (exact
      McNemar), saved in figure1_borderline_test.csv (for the text, not drawn).
 
@@ -39,15 +38,16 @@ from PIL import Image
 from sklearn.metrics import roc_auc_score, roc_curve
 from statsmodels.stats.contingency_tables import mcnemar
 
-from plot_utils import (CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, SUVR_BIN_EDGES, _density_adaptive_bin_labels,
-                        find_demo_csv, resolve_path, wilson_interval)
+from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, find_demo_csv, resolve_path, wilson_interval
 from regress_model_output_visual_read import find_ext_demo
 
 # set in main() from --region: the SUVR column, its CTRz-2 cut-off and the bins (from the test set's distribution)
-REGION, CUTOFF, BINS = "MetaTemporal", CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"], []
+REGION, CUTOFF = "MetaTemporal", CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
+# fixed bins, every one with >= 29 test scans; the cut-off bin (1.3-1.4) on its own
+BINS = [(-np.inf, 1.2, "< 1.2"), (1.2, 1.3, "1.2–1.3"), (1.3, 1.4, "1.3–1.4"), (1.4, 1.6, "1.4–1.6"),
+        (1.6, np.inf, "≥ 1.6")]
 REGION_NAMES = {"MetaTemporal": "Meta-temporal", "Universal": "Universal", "TemporoParietal": "Temporoparietal",
                 "MesialTemporal": "Mesial temporal", "Frontal": "Frontal"}
-MIN_BIN = 15  # scans per bin (plot_utils._density_adaptive_bin_labels: 0.1-wide bins merged until >= 15)
 BORDERLINE = (1.3, 1.5)  # pre-specified meta-temporal range for the McNemar test (meta-temporal only)
 SETS = {"test": "Held-out test", "avid": "External (AVID)"}
 TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # the plot_utils sizes, scaled down to fit three panels
@@ -206,11 +206,9 @@ def main():
     run = Path(args.run_dir).resolve()
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "ohbm"
     out.mkdir(parents=True, exist_ok=True)
-    global REGION, CUTOFF, BINS
+    global REGION, CUTOFF
     REGION, CUTOFF = args.region, CENTAUR_FTP_CTRZ2_SUVR[args.region]
     data = {which: load(run, which, args) for which in SETS if which in args.sets}
-    edges, labels = _density_adaptive_bin_labels(data["test"]["suvr"], SUVR_BIN_EDGES, MIN_BIN)
-    BINS = [(lo, hi, lab.replace("<", "< ").replace(">", "> ")) for lo, hi, lab in zip(edges[:-1], edges[1:], labels)]
     suffix = "" if REGION == "MetaTemporal" else f"_{REGION.lower()}"
     name = f"figure1{suffix}.png" if list(data) == ["test"] else f"figure1{suffix}_with_avid.png"
 
