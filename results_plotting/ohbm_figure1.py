@@ -155,8 +155,8 @@ def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str):
     ax.set(xlim=(-0.4, len(BINS) - 0.6), xlabel="Meta-temporal SUVR  (scans per bin below)")
     b = d[(d["MetaTemporal"] >= BORDERLINE[0]) & (d["MetaTemporal"] < BORDERLINE[1])]
     am, ar, p = (b["pred"] == b["y"]).mean(), (b["rule"] == b["y"]).mean(), mcnemar_p(b)
-    ax.text(0.02, 0.04, f"SUVR {BORDERLINE[0]}–{BORDERLINE[1]} (n = {len(b)}): model {am:.0%} vs cut-off {ar:.0%}, "
-            f"p = {p:.2g}", transform=ax.transAxes, fontsize=8.5, color=MUTED)
+    ax.text(0.02, 0.04, f"SUVR {BORDERLINE[0]}–{BORDERLINE[1]} (n = {len(b)}):\nmodel {am:.0%} vs cut-off {ar:.0%}, "
+            f"p = {p:.2g}", transform=ax.transAxes, fontsize=8.5, color=MUTED, linespacing=1.4)
     ax.set_title(title, loc="left", fontweight="bold")
     ax.yaxis.grid(True, color="#ececec", lw=0.8)
     ax.set_axisbelow(True)
@@ -171,7 +171,8 @@ def main():
     data = {which: load(run, which, args) for which in SETS if which in args.sets}
     name = "figure1.png" if list(data) == ["test"] else "figure1_with_avid.png"
 
-    plt.rcParams.update({"font.family": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
+    plt.rcParams.update({"font.family": ["Arial", "Helvetica", "Liberation Sans", "Nimbus Sans", "Nimbus Sans L", "TeX Gyre Heros",
+                                         "DejaVu Sans"],
                          "font.size": 10, "axes.titlesize": 11.5, "axes.labelsize": 10, "axes.labelcolor": INK,
                          "xtick.labelsize": 9, "ytick.labelsize": 9, "xtick.color": MUTED, "ytick.color": MUTED,
                          "axes.edgecolor": "#bbbbbb", "axes.linewidth": 0.8})
