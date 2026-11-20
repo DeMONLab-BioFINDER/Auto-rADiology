@@ -218,7 +218,7 @@ def main():
     # layout of the amyloid figure: confusion matrix and ROC on top, the agreement panel wide underneath
     if list(data) == ["test"]:
         fig = plt.figure(figsize=(10, 7.6))
-        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.05], hspace=0.42, left=0.08, right=0.92, top=0.95, bottom=0.08)
+        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.05], hspace=0.42, left=0.1, right=0.92, top=0.95, bottom=0.08)
         top = gs[0].subgridspec(1, 2, width_ratios=[0.8, 1.2], wspace=0.35)
         bottom = [gs[1]]
     else:
