@@ -11,15 +11,15 @@ from src.model_factory import build_model_from_args, classifier_out_dim
 from src.checkpoints import load_state_dict_checked
 from src.data import get_train_val_loaders
 from src.vis import run_visualization, benchmark_occlusion
-from src.validation import load_validation_data
+from src.validation import is_external, load_validation_data
 
 import torch.multiprocessing as mp
 os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
 mp.set_sharing_strategy("file_system")
 
 def main(args):
-    if 'AVID' in args.dataset:
-        # External set (AVID_unseen): the same scan table run_val.py evaluates on
+    if is_external(args.dataset):
+        # External set (AVID_unseen, or a left-out cohort such as OASIS_unseen): the scan table run_val.py evaluates on
         _, _, df, _ = load_validation_data(args)
     else:
         df_train = pd.read_csv(args.best_model_folder + '/splits/train_subjects.csv')
@@ -33,7 +33,7 @@ def main(args):
         missing = sorted(set(subject_id_list) - set(df_select['ID']))
         if missing:
             raise SystemExit(f"IDs not found in the {args.dataset} scan table: {missing} "
-                             f"(AVID IDs need --dataset AVID_unseen; Gothenburg IDs must be in the run's train/test splits)")
+                             f"(external IDs need --dataset AVID_unseen / <site>_unseen; Gothenburg IDs must be in the run's train/test splits)")
     else:
         df_select = df
     print('df_select:',df_select)

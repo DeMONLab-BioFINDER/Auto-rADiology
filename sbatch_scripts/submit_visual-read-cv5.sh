@@ -28,6 +28,9 @@
 # Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" (max degrees, training only); the run name
 # gets "-rot<pitch>-<roll>-<yaw>". Same folds as the run without it, e.g.
 #   ROT_AUG="15 3 3" sbatch submit_visual-read-cv5.sh tau_raw_2mm_pts
+# Leaving a cohort out as an external set: EXCLUDE=OASIS (run name gets "-noOASIS"); the split is made
+# without it, so the final run with the same EXCLUDE gets the same train/test split, e.g.
+#   POOL=attention EXCLUDE=OASIS sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -69,6 +72,12 @@ if [[ -n "${ROT_AUG:-}" ]]; then
   ROT_ARGS=(--rot_aug_deg "${ROT[@]}")
   NAME_EXTRA="${NAME_EXTRA}-rot$(IFS=-; echo "${ROT[*]}")"
 fi
+EXCLUDE_ARGS=()
+if [[ -n "${EXCLUDE:-}" ]]; then  # e.g. EXCLUDE=OASIS: that cohort is left out entirely (an external set)
+  read -r -a EXCL <<< "$EXCLUDE"
+  EXCLUDE_ARGS=(--exclude_sites "${EXCL[@]}")
+  NAME_EXTRA="${NAME_EXTRA}-no$(IFS=-; echo "${EXCL[*]}")"
+fi
 echo "data_type: $DATA_TYPE, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}"
 
 RUN_LOG=$(mktemp)
@@ -91,6 +100,7 @@ python "./run.py" \
   --model_name_extra "$NAME_EXTRA" \
   "${MODEL_ARGS[@]}" \
   "${ROT_ARGS[@]}" \
+  "${EXCLUDE_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

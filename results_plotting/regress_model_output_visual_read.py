@@ -42,7 +42,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 from statsmodels.stats.multitest import multipletests
 
-from plot_utils import add_subgroup_columns, find_demo_csv, resolve_path
+from plot_utils import external_name, add_subgroup_columns, find_demo_csv, resolve_path
 
 CLIP = 1e-4
 SPLINE = "cr(MetaTemporal, df=3)"
@@ -196,7 +196,7 @@ def main():
     run = Path(args.run_dir).resolve()
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "regressions"
     out.mkdir(parents=True, exist_ok=True)
-    names = {"test": "Held-out test", "avid": "External (AVID)"}
+    names = {"test": "Held-out test", "avid": f"External ({external_name(args.ext_dataset)})"}
     for which in args.sets:
         d = load(run, which, args)
         t = run_set(d)

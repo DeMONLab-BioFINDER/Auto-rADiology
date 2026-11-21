@@ -24,6 +24,13 @@ os.environ["NIBABEL_KEEP_FILE_OPEN"] = "0"
 mp.set_sharing_strategy("file_system")
 
 
+
+def is_external(dataset: str) -> bool:
+    """External sets evaluated zero-shot from data/demo_<dataset>.csv: AVID, or a cohort that training left out
+    with --exclude_sites (named <site>_unseen, e.g. OASIS_unseen)."""
+    return "AVID" in dataset or dataset.endswith("_unseen")
+
+
 def run_few_shots(args, df, tfm, data_file, base_model, targets_list):
     finetune_path = os.path.join(args.output_path, f"fewshot-{args.few_shot}")
     os.makedirs(finetune_path, exist_ok=True)
@@ -146,8 +153,8 @@ def load_validation_data(args):
         print(test_set)
         df = pd.read_csv(test_set, index_col=0)
         tfm = args.input_path
-    elif 'AVID' in args.dataset: # Berzelius, load torch tensors
-        print('Validate on AVID dataset...')
+    elif is_external(args.dataset):  # AVID, or a cohort left out of training (<site>_unseen): torch tensors
+        print(f'Validate on external set {args.dataset}...')
         test_set = os.path.join(args.proj_path, "data", f'demo_{args.dataset}.csv')
         print(test_set)
         df = pd.read_csv(test_set, index_col=0)

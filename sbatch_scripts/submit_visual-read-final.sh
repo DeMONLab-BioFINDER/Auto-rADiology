@@ -22,6 +22,7 @@
 # Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" as in the CV run (epochs from that CV run);
 # the run name gets "-rot...". Training only, so the AVID / occlusion scripts need nothing extra.
 #   ROT_AUG="15 3 3" sbatch submit_visual-read-final.sh tau_raw_2mm_pts <epochs>
+# EXCLUDE=OASIS leaves that cohort out (as in the CV run with the same EXCLUDE; run name gets "-noOASIS").
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -69,6 +70,12 @@ if [[ -n "${ROT_AUG:-}" ]]; then
   ROT_ARGS=(--rot_aug_deg "${ROT[@]}")
   NAME_EXTRA="${NAME_EXTRA}-rot$(IFS=-; echo "${ROT[*]}")"
 fi
+EXCLUDE_ARGS=()
+if [[ -n "${EXCLUDE:-}" ]]; then  # e.g. EXCLUDE=OASIS: that cohort is left out entirely (an external set)
+  read -r -a EXCL <<< "$EXCLUDE"
+  EXCLUDE_ARGS=(--exclude_sites "${EXCL[@]}")
+  NAME_EXTRA="${NAME_EXTRA}-no$(IFS=-; echo "${EXCL[*]}")"
+fi
 if [[ -n "$TRAIN_SEED" ]]; then
   SEED_ARGS=(--train_seed "$TRAIN_SEED")
   NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
@@ -92,6 +99,7 @@ python ./run.py \
   "${SEED_ARGS[@]}" \
   "${MODEL_ARGS[@]}" \
   "${ROT_ARGS[@]}" \
+  "${EXCLUDE_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 

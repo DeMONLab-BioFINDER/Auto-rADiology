@@ -21,7 +21,8 @@ so lines and text stay sharp.
 Usage:
     python results_plotting/ohbm_figure1.py <final_run_dir> --demo_csv ../data/demo.csv \\
         --ext_demo_csv ../data/demo_AVID_unseen.csv
-    (--sets avid: the same figure for AVID, figure1_avid.png; --sets test avid: both, figure1_with_avid.png)
+    (--sets avid: the same figure for the external set --ext_dataset, e.g. figure1_avid.png / figure1_oasis.png;
+     --sets test avid: both, figure1_with_<ext>.png)
 Outputs (<run_dir>/figures/ohbm/, no IDs): figure1[_avid].png, <figure>_numbers.csv, <figure>_borderline_test.csv
 """
 import argparse
@@ -39,7 +40,7 @@ from PIL import Image
 from sklearn.metrics import roc_auc_score, roc_curve
 from statsmodels.stats.contingency_tables import mcnemar
 
-from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, find_demo_csv, resolve_path, wilson_interval
+from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, CUSTOM_PALETTE, external_name, find_demo_csv, resolve_path, wilson_interval
 from regress_model_output_visual_read import find_ext_demo
 
 # set in main() from --region: the SUVR column, its CTRz-2 cut-off and the bins (from the test set's distribution)
@@ -50,7 +51,8 @@ BINS = [(-np.inf, 1.2, "< 1.2"), (1.2, 1.3, "1.2–1.3"), (1.3, 1.4, "1.3–1.4"
 REGION_NAMES = {"MetaTemporal": "Meta-temporal", "Universal": "Universal", "TemporoParietal": "Temporoparietal",
                 "MesialTemporal": "Mesial temporal", "Frontal": "Frontal"}
 BORDERLINE = (1.3, 1.5)  # pre-specified meta-temporal range for the McNemar test (meta-temporal only)
-SETS = {"test": "Held-out test", "avid": "External (AVID)"}
+SETS = {"test": "Held-out test", "avid": "External"}  # "avid" = the external set (--ext_dataset), whichever it is
+EXT = "AVID"
 TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # the plot_utils sizes, scaled down to fit three panels
 WIDTH_PX = 1000
 
@@ -214,12 +216,14 @@ def main():
     run = Path(args.run_dir).resolve()
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "ohbm"
     out.mkdir(parents=True, exist_ok=True)
-    global REGION, CUTOFF
+    global REGION, CUTOFF, EXT
+    EXT = external_name(args.ext_dataset)  # AVID, OASIS, ...
     REGION, CUTOFF = args.region, CENTAUR_FTP_CTRZ2_SUVR[args.region]
     data = {which: load(run, which, args) for which in SETS if which in args.sets}
     suffix = "" if REGION == "MetaTemporal" else f"_{REGION.lower()}"
-    name = {("test",): f"figure1{suffix}.png", ("avid",): f"figure1{suffix}_avid.png"}.get(
-        tuple(data), f"figure1{suffix}_with_avid.png")
+    ext = EXT.lower()
+    name = {("test",): f"figure1{suffix}.png", ("avid",): f"figure1{suffix}_{ext}.png"}.get(
+        tuple(data), f"figure1{suffix}_with_{ext}.png")
 
     sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)  # the style of the other results_plotting figures
     # layout of the amyloid figure: confusion matrix and ROC on top, the agreement panel wide underneath
@@ -235,7 +239,7 @@ def main():
         bottom = gs[1].subgridspec(1, 2, wspace=0.38)
 
     for k, which in enumerate(data):
-        title = "Confusion matrix" + ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
+        title = "Confusion matrix" + ("" if len(data) == 1 else f", {'test' if which == 'test' else EXT}")
         panel_confusion(fig.add_subplot(top[k]), data[which], title)
     panel_roc(fig.add_subplot(top[len(data)]), data)
     tests, numbers = [], []
@@ -243,7 +247,7 @@ def main():
         ax = fig.add_subplot(bottom[k])
         rows = agreement(data[which])
         title = f"Agreement by {REGION_NAMES.get(REGION, REGION).lower()} SUVR" + \
-            ("" if len(data) == 1 else f", {'test' if which == 'test' else 'AVID'}")
+            ("" if len(data) == 1 else f", {'test' if which == 'test' else EXT}")
         tests.append({"set": which, **panel_agreement(ax, rows, data[which], title, legend=(k == len(data) - 1))})
         numbers.append(rows.assign(set=which))
     axes = [a for a in fig.axes if a.get_label() != "<colorbar>"]

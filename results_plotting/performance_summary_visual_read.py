@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, cohen_kappa_score, roc_auc_score, roc_curve
 
-from plot_utils import bootstrap_auc_ci, find_demo_csv, resolve_path, wilson_interval
+from plot_utils import external_name, bootstrap_auc_ci, find_demo_csv, resolve_path, wilson_interval
 
 SUVR_COL = "MetaTemporal"
 SET_COLOURS = {"test": "#1f4e79", "avid": "#c0504d"}
@@ -175,6 +175,7 @@ def forest_figure(pc: pd.DataFrame, out: Path):
 def main():
     args = parse_args()
     run = Path(args.run_dir).resolve()
+    SET_LABELS["avid"] = f"External ({external_name(args.ext_dataset)})"  # the external set, whichever it is
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "performance_summary"
     out.mkdir(parents=True, exist_ok=True)
     sets = {w: load_set(run, w, args) for w in args.sets}

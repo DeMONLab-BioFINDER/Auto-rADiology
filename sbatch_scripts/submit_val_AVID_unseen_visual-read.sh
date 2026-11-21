@@ -53,7 +53,7 @@ if (( ${#KW[@]} )); then
 fi
 echo "data_type: $DATA_TYPE"
 
-DATASET=AVID_unseen
+DATASET="${DATASET:-AVID_unseen}"  # or a cohort the run left out, e.g. DATASET=OASIS_unseen (needs data/demo_OASIS_unseen.csv)
 
 RUN_LOG=$(mktemp)
 python "./run_val.py" \

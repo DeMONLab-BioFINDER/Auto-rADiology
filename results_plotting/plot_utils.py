@@ -37,6 +37,11 @@ PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "
 # ------------------------------
 # Formatting helpers
 # ------------------------------
+def external_name(ext_dataset: str) -> str:
+    """Display name of an external set from its run_val.py dataset name: AVID_unseen -> AVID, OASIS_unseen -> OASIS."""
+    return ext_dataset.removesuffix("_unseen")
+
+
 def combine_dx_groups(s: pd.Series) -> pd.Series:
     """CU / MCI / AlzCS dem kept as is; every other diagnosis (e.g. DLB, FTD) -> "Other".
     A missing diagnosis stays missing rather than being counted as "Other"."""

@@ -20,6 +20,13 @@ def main(args):
 
     # 1) data
     df = build_master_table(args.input_path, args.data_suffix, args.targets, args.dataset, args.data_type)
+    if args.exclude_sites:  # cohorts kept out as external sets: removed before any split is made
+        missing = set(args.exclude_sites) - set(df["site"].astype(str))
+        if missing:
+            raise SystemExit(f"--exclude_sites: no scans from {sorted(missing)} (sites: {sorted(df['site'].astype(str).unique())})")
+        n0 = len(df)
+        df = df[~df["site"].astype(str).isin(args.exclude_sites)].reset_index(drop=True)
+        print(f"Excluded {n0 - len(df)} scans from {', '.join(args.exclude_sites)}; {len(df)} scans left for train/test.")
     df_clean, stratify_labels = get_stratify_labels(df, args.stratifycvby, args.seed)
 
     # 'visual_read' is the only classification target; everything else is a regression
