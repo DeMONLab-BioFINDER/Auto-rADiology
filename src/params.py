@@ -13,6 +13,9 @@ def parse_arguments():
 
     parser.add_argument("--model", type=str, default="CNN3D", help="Class name in models.py (e.g., CNN3D, UNet3D, ResNet50_3D, DenseNet121_3D...)")
     parser.add_argument('--model_name_extra', type=str, default="", help='Extra name to be used as the result folder name. E.g. parameters or others tests names')
+    parser.add_argument('--run_name', type=str, default="",
+                        help="Fixed name for the run folder in <proj_path>/results (instead of the name built from the settings "
+                             "plus a timestamp), so a workflow (workflow/Snakefile) knows where the outputs land.")
     parser.add_argument('--exclude_sites', nargs='*', default=[],
                         help="Cohorts (values of the 'site' column) left out of training, validation and test entirely, "
                              "e.g. --exclude_sites OASIS to keep OASIS as an external set (evaluated with run_val.py "
@@ -206,7 +209,7 @@ def make_output_dir(args, proj_path, script_path):
         else:
             tune = format_split_tag(args.train_size, args.val_size, args.test_size)
         extra_cl = f'extra-lastlayer-input-{args.input_cl}' if args.input_cl else ''
-        args.output_name = "_".join(s for s in [args.data_type, args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
+        args.output_name = args.run_name or "_".join(s for s in [args.data_type, args.dataset, args.model, args.targets, tune, f"stratify-{args.stratifycvby}", args.model_name_extra, extra_cl, args.output_date_time] if s)
         # "_".join([args.model, args.targets, tune, f'stratify-{args.stratifycvby}', args.model_name_extra, extra_cl, args.output_date_time])
         args.output_path = os.path.join(proj_path, "results", args.output_name)
 
