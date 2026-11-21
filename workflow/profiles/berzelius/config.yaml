@@ -1,0 +1,12 @@
+# Snakemake profile for NSC Berzelius: every rule becomes a SLURM job (except the local ones).
+# Use: snakemake --profile workflow/profiles/berzelius   (from the Auto-rADiology root, in the snakemake env)
+executor: slurm
+jobs: 30                 # jobs in the queue at once
+latency-wait: 120        # shared file system: wait for outputs to show up after a job ends
+rerun-incomplete: true
+printshellcmds: true
+keep-going: true         # one failed branch (e.g. an occlusion chunk) doesn't stop the others
+default-resources:
+  slurm_account: "berzelius-2026-231"
+  runtime: 120           # minutes; rules set their own where needed
+  slurm_extra: "'--gpus=1'"   # every Berzelius job needs a GPU, even CPU-only work

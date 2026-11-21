@@ -1,0 +1,72 @@
+# Full visual-read experiment, from training to figures:
+#
+#   demographics split -> 5-fold CV -> final model (median best epoch of the CV)
+#     -> zero-shot evaluation on each external set
+#     -> occlusion maps of every scan (test + each external set) -> group maps
+#     -> voxelwise statistics (test + each external set)
+#     -> all analyses and figures (sbatch_scripts/run_visual-read-analysis.sh)
+#
+# Run from the Auto-rADiology root, inside tmux (Snakemake keeps running on the login node and submits the jobs):
+#   module load Miniforge3/25.3.1-0 && mamba activate snakemake
+#   snakemake --profile workflow/profiles/berzelius -n       # dry run: what would run
+#   snakemake --profile workflow/profiles/berzelius          # run it
+# After a failure (e.g. a job hit its time limit), run the same command again: only what's missing reruns.
+# Settings: workflow/config.yaml (or e.g. --config exclude=Geneva).
+
+import json
+import os
+
+configfile: "workflow/config.yaml"
+
+EXCLUDE = config["exclude"]
+EXTERNALS = [f"{EXCLUDE}_unseen"] + list(config.get("extra_externals", []))
+DATA = os.path.abspath(config["data"])        # absolute paths: every script resolves them the same way
+RESULTS = os.path.abspath(config["results"])
+NAME = f"{config['data_type']}-{config['pool']}-no{EXCLUDE}"   # e.g. tau_T1MNI_pts-attention-noOASIS
+CV_RUN = f"{RESULTS}/{NAME}-cv5"
+RUN = f"{RESULTS}/{NAME}-final"
+FLAGS = f"{RUN}/workflow_flags"          # "done" markers for steps whose own outputs move around
+DEMO_POOL = f"{DATA}/demo_no{EXCLUDE}.csv"  # training pool + test set, without the left-out cohort
+MODEL_KWARGS = json.dumps({"pool": config["pool"]})  # passed through params: its braces would clash with {placeholders}
+
+# the sets every per-set step runs on: "test" plus the external sets
+SETS = ["test"] + EXTERNALS
+DATASET = {"test": "Gothenburg", **{e: e for e in EXTERNALS}}   # run.py / run_val.py dataset name
+
+
+def label(s):
+    """Short lower-case name used in folder names: test, oasis, avid."""
+    return s.removesuffix("_unseen").lower()
+
+
+def predictions(s):
+    """The predictions file of a set (its existence means the model has been evaluated on it)."""
+    if s == "test":
+        return f"{RUN}/evaluation/Gothenburg/Eval_Gothenburg_results.csv"
+    return f"{RUN}/validation/External_validation_{s}__visual_read_zeroshot_results.csv"
+
+
+def occlusion_dir(s):
+    tag = "" if s == "test" else f"{s}_"
+    return f"{RUN}/validation/visualization/occlusion_all_{tag}logit_median_brain_mask4_ov0.5"
+
+
+# Every job loads the project environment itself (Snakemake runs in its own small environment)
+shell.executable("/bin/bash")
+shell.prefix("set +eu; module load Miniforge3/25.3.1-0 2>/dev/null || module load Miniforge3/24.7.1-2-hpc1-bdist; "
+             "mamba activate ai-pet; set -eo pipefail; ")
+
+localrules: all, split_demographics
+
+
+rule all:
+    input:
+        f"{FLAGS}/analysis.done",
+        [f"{FLAGS}/group_maps_{s}.done" for s in SETS],
+        [f"{RUN}/figures/voxelwise_stats_{label(s)}/summary.csv" for s in SETS],
+
+
+include: "rules/training.smk"
+include: "rules/evaluation.smk"
+include: "rules/occlusion.smk"
+include: "rules/statistics.smk"

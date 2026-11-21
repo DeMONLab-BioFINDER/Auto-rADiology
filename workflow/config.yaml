@@ -1,0 +1,18 @@
+# Settings for one full visual-read experiment (workflow/Snakefile). Change these, not the rules.
+
+# Cohort left out of training entirely and evaluated zero-shot (a value of the 'site' column in demo.csv)
+exclude: OASIS
+# Other external sets, evaluated zero-shot as well (each needs data/demo_<name>.csv)
+extra_externals: [AVID_unseen]
+
+data_type: tau_T1MNI_pts   # model input (cached tensors in <data>/<data_type>)
+pool: attention            # pooling before the classifier head (avg, attention, ...)
+
+# Folders, relative to the Auto-rADiology repository (run Snakemake from there)
+data: ../data              # demo.csv, demo_<external>.csv, reader-vote files, masks/, <data_type>/
+results: ../results        # run folders (the same place run.py writes to)
+pkl_dir: /proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI   # original MNI images (SUVR analyses)
+fda_regions: ../results/fda_regions/fda_regions_MNI152NLin2009cAsym.nii.gz
+
+occlusion_chunks: 8        # parallel occlusion jobs per set (~6 min per scan)
+voxelwise_permutations: 5000
