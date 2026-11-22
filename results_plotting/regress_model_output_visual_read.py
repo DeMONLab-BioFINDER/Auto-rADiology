@@ -200,8 +200,9 @@ def main():
     for which in args.sets:
         d = load(run, which, args)
         t = run_set(d)
-        t.to_csv(out / f"regressions_{which}.csv", index=False)
-        figure(t, f"{names[which]} (n = {len(d)})", out / f"regressions_{which}.png")
+        stem = "test" if which == "test" else external_name(args.ext_dataset).lower()  # e.g. regressions_oasis
+        t.to_csv(out / f"regressions_{stem}.csv", index=False)
+        figure(t, f"{names[which]} (n = {len(d)})", out / f"regressions_{stem}.png")
         print(f"\n===== {names[which]}: {len(d)} scans (CU / MCI / AD dementia) =====")
         for (model, extra), g in t.groupby(["model", "extra"], sort=False):
             g = g[g["term"] != "(not estimable)"]
