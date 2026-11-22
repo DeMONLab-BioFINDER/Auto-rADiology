@@ -26,8 +26,9 @@ rule occlusion_chunk:
 
 
 rule occlusion_group_maps:
-    """Merge the chunks (the chunk folders are emptied, hence the flag files); group mean maps, FDA-region
-    shares and their tests, in <occlusion folder>/group_maps/."""
+    """Merge the chunks (the chunk folders are emptied, hence the flag files); group mean maps, shares of the
+    cortical evidence in the CenTauR regions and their tests (FDA-region approximation as a supplement), in
+    <occlusion folder>/group_maps/."""
     input:
         lambda wc: [f"{FLAGS}/occlusion_{wc.set}_chunk{k}.done" for k in CHUNKS],
     output:
@@ -40,5 +41,6 @@ rule occlusion_group_maps:
         runtime=60,
     shell:
         "python results_plotting/merge_occlusion_chunks.py {params.base}; "
-        f"python results_plotting/occlusion_group_maps.py {{params.base}} --regions {config['fda_regions']} "
+        f"python results_plotting/occlusion_group_maps.py {{params.base}} --centaur_dir {DATA}/masks "
+        f"--atlas_dir {ATLAS} --regions {config['fda_regions']} "
         "--label {wildcards.set}"

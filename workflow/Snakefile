@@ -27,6 +27,7 @@ CV_RUN = f"{RESULTS}/{NAME}-cv5"
 RUN = f"{RESULTS}/{NAME}-final"
 FLAGS = f"{RUN}/workflow_flags"          # "done" markers for steps whose own outputs move around
 DEMO_POOL = f"{DATA}/demo_no{EXCLUDE}.csv"  # training pool + test set, without the left-out cohort
+ATLAS = f"{DATA}/atlases/lotter2025_mni_freesurfer"   # Desikan-Killiany on the MNI template (plot_fda_regions.py)
 MODEL_KWARGS = json.dumps({"pool": config["pool"]})  # passed through params: its braces would clash with {placeholders}
 
 # the sets every per-set step runs on: "test" plus the external sets

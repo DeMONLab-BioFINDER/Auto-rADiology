@@ -32,7 +32,7 @@ if [[ "$RUN_ARG" = /* ]]; then RUN="$RUN_ARG"; else RUN="$(cd .. && pwd)/results
 DATA=/proj/berzelius-2024-156/users/x_nadpi/data
 PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
 REF_MASK="${REF_MASK:-$DATA/masks/voi_CerebGry_tau_2mm.nii}"
-REGIONS="${REGIONS:-$(cd .. && pwd)/results/fda_regions/fda_regions_MNI152NLin2009cAsym.nii.gz}"
+ATLAS_DIR="${ATLAS_DIR:-$DATA/atlases/lotter2025_mni_freesurfer}"   # DK cortex mask + peak names
 SETS="${SETS:-test avid}"
 N_PERM="${N_PERM:-5000}"
 N_JOBS="${SLURM_CPUS_ON_NODE:-$(nproc)}"
@@ -41,7 +41,7 @@ echo "Run: $RUN | sets: $SETS | $N_PERM permutations on $N_JOBS CPUs"
 for SET in $SETS; do
   echo -e "\n================ $SET ================"
   python results_plotting/voxelwise_stats_visual_read.py "$RUN" --set "$SET" \
-    --pkl_dir "$PKL_DIR" --ref_mask "$REF_MASK" --regions "$REGIONS" \
+    --pkl_dir "$PKL_DIR" --ref_mask "$REF_MASK" --atlas_dir "$ATLAS_DIR" \
     --demo_csv "$DATA/demo.csv" --ext_demo_csv "$DATA/demo_AVID_unseen.csv" \
     --n_perm "$N_PERM" --n_jobs "$N_JOBS"
 done

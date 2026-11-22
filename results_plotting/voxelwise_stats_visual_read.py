@@ -17,11 +17,14 @@ General linear models, fitted at every voxel (voxel SUVR is the outcome):
   read_pos_vs_neg     SUVR ~ read + age + sex [+ site]. Reference map: where read-positive scans have more tau.
 
 Inference: permutation test (nilearn permuted_ols, Freedman-Lane, two-sided), family-wise error corrected
-over the whole brain, with threshold-free cluster enhancement (TFCE) as the main map and voxel-level max-t
+over the cortex, with threshold-free cluster enhancement (TFCE) as the main map and voxel-level max-t
 alongside. Significant = FWE p < 0.05. Model log-odds use probabilities clipped to [1e-4, 1 - 1e-4], as in
 regress_model_output_visual_read.py. Continuous covariates are z-scored.
 
-Voxels: inside nilearn's MNI152 brain mask and covered (non-zero) in every scan used. Scans covering less than
+Voxels: cortex only (Desikan-Killiany cortical labels on the MNI152NLin2009cAsym template, atlas_utils.py;
+--whole_brain for the whole MNI152 brain mask), and covered (non-zero) in every scan used. Images are smoothed
+before the cortex is taken. Tau pathology is cortical; white matter and deep structures carry mostly off-target
+signal. Scans covering less than
 --min_scan_coverage of the brain (scanner field of view cuts off the top of the head) are left out, so a few
 short scans do not remove the top of the brain for everyone; how many is printed.
 
@@ -29,10 +32,12 @@ Usage (Berzelius, a job: the permutations take a while, see sbatch_scripts/submi
     python results_plotting/voxelwise_stats_visual_read.py <final_run_dir> --set test \\
         --pkl_dir /proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI \\
         --ref_mask /proj/berzelius-2024-156/users/x_nadpi/data/masks/voi_CerebGry_tau_2mm.nii \\
-        [--regions <fda_regions_MNI152NLin2009cAsym.nii.gz>] [--n_perm 5000] [--n_jobs 16]
+        [--atlas_dir <DK atlas folder>] [--n_perm 5000] [--n_jobs 16]
 Outputs (<run_dir>/figures/voxelwise_stats_<set>/, no IDs): per analysis <name>_t.nii.gz,
 <name>_logp_tfce.nii.gz, <name>_logp_maxt.nii.gz (-log10 FWE p), <name>.png; summary.csv (n, voxels
-significant each way, peak), fda_region_overlap.csv (with --regions: share of significant voxels per FDA region).
+significant each way, peak and its DK region), dk_regions.csv (per analysis and direction: significant voxels
+in each DK region and the % of that region they cover, largest first), fda_region_overlap.csv (only with
+--regions: share per FDA region, an approximation, supplementary).
 """
 import argparse
 import time
@@ -49,6 +54,7 @@ from nilearn.maskers import NiftiMasker
 from nilearn.mass_univariate import permuted_ols
 from scipy.ndimage import gaussian_filter
 
+from atlas_utils import DKCortex
 from make_case_viewer import region_zones
 from plot_utils import add_subgroup_columns, find_demo_csv, resolve_path
 from regress_model_output_visual_read import CLIP, find_ext_demo
@@ -72,7 +78,9 @@ def parse_args():
     p.add_argument("--set", default="test", choices=["test", "avid"])
     p.add_argument("--pkl_dir", required=True, help="Folder with the original MNI tau_batch_*.pkl.")
     p.add_argument("--ref_mask", required=True, help="Reference-region mask (NIfTI, MNI space).")
-    p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py) for the overlap table.")
+    p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): optional overlap table.")
+    p.add_argument("--atlas_dir", default=None, help="DK atlas folder (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
+    p.add_argument("--whole_brain", action="store_true", help="Whole brain instead of cortex only.")
     p.add_argument("--dataset", default="Gothenburg")
     p.add_argument("--ext_dataset", default="AVID_unseen")
     p.add_argument("--demo_csv", default=None, help="Demographics for the test set (default data/demo.csv).")
@@ -203,11 +211,14 @@ def main():
               f"(field of view)")
     X, cover, table = X[ok], cover[ok], table[ok].reset_index(drop=True)
     vox = cover.all(0)
+    dk = DKCortex(brain.shape, affine, args.atlas_dir)
+    if not args.whole_brain:
+        vox &= dk.mask[brain]
     X = X[:, vox]
     keep = brain.copy()
     keep[brain] = vox
     print(f"[data] {len(table)} scans ({int(table['read'].sum())} read +), {int(vox.sum())} of {int(brain.sum())} "
-          f"brain voxels covered in every scan; smoothing {args.fwhm:g} mm")
+          f"brain voxels used ({'whole brain' if args.whole_brain else 'cortex'}, covered in every scan); smoothing {args.fwhm:g} mm")
     masker = NiftiMasker(nib.Nifti1Image(keep.astype(np.int8), affine)).fit()
     # the masker orders voxels like keep[...] boolean indexing, the same order as X's columns
 
@@ -219,7 +230,9 @@ def main():
                                       interpolation="nearest", force_resample=True, copy_header=True).get_fdata().astype(int)
         regions_img = nib.Nifti1Image(np.isin(zones, [1, 2, 3]).astype(np.int8), affine)
 
-    summary, overlap = [], []
+    summary, overlap, dk_rows = [], [], []
+    dk_in = dk.labels[keep]
+    dk_size = pd.Series(dk_in[dk_in > 0]).value_counts()
     for name in args.analyses:
         rows, tested, conf = design(table, name)
         if name == "missed_vs_detected" and min(tested.sum(), len(tested) - tested.sum()) < 5:
@@ -249,7 +262,13 @@ def main():
                         "voxels_sig_higher": int((sig & (t > 0)).sum()), "voxels_sig_lower": int((sig & (t < 0)).sum()),
                         "voxels_sig_maxt": int((res["logp_max_t"][0] > -np.log10(ALPHA)).sum()),
                         "peak_t": float(t[peak]), "peak_x": xyz[0], "peak_y": xyz[1], "peak_z": xyz[2],
+                        "peak_region": dk.name_at(ijk),
                         "min_fwe_p": float(10 ** -logp.max()), "minutes": (time.time() - t0) / 60})
+        for sign, mask in [("higher", sig & (t > 0)), ("lower", sig & (t < 0))]:
+            counts = pd.Series(dk_in[mask & (dk_in > 0)]).value_counts()
+            for lab, n in counts.items():
+                dk_rows.append({"analysis": name, "direction": sign, "region": dk.names[int(lab)],
+                                "n_voxels": int(n), "pct_of_region": 100 * n / dk_size[lab]})
         if zones is not None:
             z_in = zones[keep]
             for sign, mask in [("higher", sig & (t > 0)), ("lower", sig & (t < 0))]:
@@ -258,10 +277,17 @@ def main():
                                     **{ZONES[k]: float((z_in[mask] == k).mean()) for k in ZONES}})
         s = summary[-1]
         print(f"[{name}] n = {s['n_scans']}: {s['voxels_sig_higher']} voxels tau higher, {s['voxels_sig_lower']} lower "
-              f"(TFCE FWE p < {ALPHA}); peak t = {s['peak_t']:+.2f} at ({xyz[0]:.0f}, {xyz[1]:.0f}, {xyz[2]:.0f}); "
+              f"(TFCE FWE p < {ALPHA}); peak t = {s['peak_t']:+.2f} at ({xyz[0]:.0f}, {xyz[1]:.0f}, {xyz[2]:.0f}), "
+              f"{s['peak_region']}; "
               f"{s['minutes']:.1f} min")
 
     pd.DataFrame(summary).to_csv(out / "summary.csv", index=False)
+    if dk_rows:
+        dkt = pd.DataFrame(dk_rows).sort_values(["analysis", "direction", "n_voxels"], ascending=[True, True, False])
+        dkt.to_csv(out / "dk_regions.csv", index=False)
+        with pd.option_context("display.width", 200, "display.float_format", "{:.0f}".format):
+            print("\nLargest significant DK regions (voxels, % of the region):")
+            print(dkt.groupby(["analysis", "direction"]).head(5).to_string(index=False))
     if overlap:
         ov = pd.DataFrame(overlap)
         ov.to_csv(out / "fda_region_overlap.csv", index=False)
