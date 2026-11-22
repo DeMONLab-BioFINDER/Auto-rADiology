@@ -32,12 +32,13 @@ rule voxelwise_stats:
     log:
         f"{RESULTS}/workflow_logs/{NAME}-voxelwise-{{label}}.log",
     resources:
-        runtime=360,
+        runtime=720,
+        cpus_per_task=16,   # Snakemake asks SLURM for 1 CPU unless told; the permutations need many
     shell:
         f"python results_plotting/voxelwise_stats_visual_read.py {RUN} {{params.set_args}} --demo_csv {DEMO_POOL} "
         f"--pkl_dir {config['pkl_dir']} --ref_mask {DATA}/masks/voi_CerebGry_tau_2mm.nii "
         f"--regions {config['fda_regions']} --n_perm {config['voxelwise_permutations']} "
-        "--n_jobs ${{SLURM_CPUS_ON_NODE:-8}} --out_dir $(dirname {output}) 2>&1 | tee {log}"
+        "--n_jobs {resources.cpus_per_task} --out_dir $(dirname {output}) 2>&1 | tee {log}"
 
 
 rule analysis:
