@@ -11,6 +11,7 @@
 #
 # Usage (from the Auto-rADiology root):
 #   sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final_run_folder>
+#   ANALYSES=model_neg_read_pos_vs_neg sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final_run_folder>   # one map only
 #   EXTS="OASIS_unseen" N_PERM=1000 sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final_run_folder>   # quicker check
 
 #SBATCH -A berzelius-2026-231
@@ -39,7 +40,7 @@ EXTS="${EXTS:-OASIS_unseen AVID_unseen}"
 PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
 N_PERM="${N_PERM:-5000}"
 N_JOBS="${SLURM_CPUS_PER_TASK:-16}"
-ANALYSES="read_neg_above_cutoff read_pos_below_cutoff model_neg_read_pos_vs_neg"
+ANALYSES="${ANALYSES:-read_neg_above_cutoff read_pos_below_cutoff model_neg_read_pos_vs_neg}"   # e.g. ANALYSES=model_neg_read_pos_vs_neg
 COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$DATA/masks/voi_CerebGry_tau_2mm.nii"
         --atlas_dir "$DATA/atlases/lotter2025_mni_freesurfer" --demo_csv "$DEMO"
         --n_perm "$N_PERM" --n_jobs "$N_JOBS" --analyses $ANALYSES)
