@@ -60,7 +60,14 @@ def load_mask(path: Path, target) -> nib.Nifti1Image:
 
 
 def panel_maps(fig, gs_cell, maps: dict, mask_img, n: dict):
-    sub = gs_cell.subgridspec(len(maps), 1, hspace=0.08)
+    """One row per group on the 1 mm MNI template, a smoothed outline of the meta temporal region, z under each
+    slice column once, one L/R marker, and a numeric colour bar per row (each row scaled to its own maximum)."""
+    from nilearn import datasets
+    bg = datasets.load_mni152_template(resolution=1)
+    # outline on a 1 mm grid, lightly smoothed, so it is not drawn as 2 mm steps
+    outline = image.smooth_img(image.resample_to_img(mask_img, bg, interpolation="continuous", force_resample=True,
+                                                     copy_header=True), fwhm=2)
+    sub = gs_cell.subgridspec(len(maps), 1, hspace=0.12)
     axes = []
     for k, (g, label) in enumerate(GROUPS):
         # each row scaled to its own 99.5th percentile: compare patterns, not colour strength (strongly positive
@@ -68,23 +75,37 @@ def panel_maps(fig, gs_cell, maps: dict, mask_img, n: dict):
         d = maps[g].get_fdata()
         vmax = float(np.percentile(np.abs(d[d != 0]), 99.5))
         ax = fig.add_subplot(sub[k])
-        disp = plotting.plot_stat_map(maps[g], display_mode="z", cut_coords=CUTS, axes=ax, cmap="RdBu_r",
-                                      vmax=vmax, symmetric_cbar=True, threshold=vmax * 0.08,
-                                      colorbar=False, black_bg=False, draw_cross=False, annotate=(k == len(maps) - 1),
-                                      dim=-0.3)
-        disp.add_contours(mask_img, levels=[0.5], colors="0.1", linewidths=0.8)
+        # drawn on the 1 mm template grid (continuous interpolation), so blob edges are not 2 mm steps
+        # plus 3 mm display smoothing (occlusion patches are 8 mm), so the maps do not end in a hard brain-mask edge
+        shown = image.resample_to_img(image.smooth_img(maps[g], fwhm=3), bg, interpolation="continuous",
+                                      force_resample=True, copy_header=True)
+        disp = plotting.plot_stat_map(shown, bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, cmap="RdBu_r",
+                                      vmax=vmax, symmetric_cbar=True, threshold=vmax * 0.08, colorbar=False,
+                                      black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
+                                      resampling_interpolation="continuous")
+        disp.add_contours(outline, levels=[0.5], colors="0.1", linewidths=0.9)
         ax.text(-0.01, 0.5, f"{label}\nn = {n[g]}", transform=ax.transAxes, ha="right", va="center",
                 fontsize=TICK, color=GROUP_COLOURS[g], fontweight="bold")
+        # colour bar for this row, in the map's own units
+        pos = ax.get_position()
+        cax = fig.add_axes([0.915, pos.y0 + pos.height * 0.12, 0.01, pos.height * 0.76])
+        sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-vmax, vmax))
+        cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
+        cb.ax.set_yticklabels([f"{-vmax:.2f}", "0", f"{vmax:.2f}"], fontsize=TICK - 1.5)
+        cb.outline.set_visible(False)
         axes.append(ax)
-    axes[0].set_title("Group-average occlusion, held-out test set (each row scaled to its own maximum)",
-                      fontsize=TITLE, pad=6)
-    # one colour bar for the three rows, labelled at -max / 0 / +max only
-    pos = axes[-1].get_position(), axes[0].get_position()
-    cax = fig.add_axes([0.925, pos[0].y0 + 0.02, 0.012, pos[1].y1 - pos[0].y0 - 0.04])
-    sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-1, 1))
-    cb = fig.colorbar(sm, cax=cax, ticks=[-1, 0, 1])
-    cb.ax.set_yticklabels(["supports\nnegative", "0", "supports\npositive"], fontsize=TICK - 1)
-    cb.outline.set_visible(False)
+    # z of each slice column, once, under the last row; one L/R marker on the first slice
+    for j, z in enumerate(CUTS):
+        axes[-1].text((j + 0.5) / len(CUTS), -0.06, f"z = {z}", transform=axes[-1].transAxes, ha="center", va="top",
+                      fontsize=TICK - 1, color="0.35")
+    axes[0].text(0.5 / len(CUTS) - 0.055, 1.0, "L", transform=axes[0].transAxes, ha="center", va="bottom",
+                 fontsize=TICK - 1, color="0.35")
+    axes[0].text(0.5 / len(CUTS) + 0.055, 1.0, "R", transform=axes[0].transAxes, ha="center", va="bottom",
+                 fontsize=TICK - 1, color="0.35")
+    axes[0].set_title("Group-average occlusion, held-out test set", fontsize=TITLE, pad=12)
+    fig.text(0.975, (axes[-1].get_position().y0 + axes[0].get_position().y1) / 2,
+             "Drop in log-odds when hidden\n(each row scaled to its own maximum)", rotation=90, ha="center",
+             va="center", fontsize=TICK - 1, color="0.3")
     return axes
 
 
