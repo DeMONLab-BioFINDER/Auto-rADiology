@@ -33,7 +33,7 @@ from plot_utils import CUSTOM_PALETTE
 TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # as ohbm_figure1.py
 WIDTH_PX = 1000
 CUTS = [-30, -20, -10, 0, 10, 20]  # axial slices (MNI z, mm): meta temporal region and above
-GROUPS = [("TP", "True positives"), ("FN", "Missed (read +)"), ("TN", "True negatives")]
+GROUPS = [("TP", "True positives"), ("TN", "True negatives")]
 GROUP_COLOURS = {"TP": CUSTOM_PALETTE[1], "FN": CUSTOM_PALETTE[4], "TN": CUSTOM_PALETTE[0]}
 REGIONS = [("Meta-temporal", "Meta-\ntemporal"), ("Temporoparietal", "Temporo-\nparietal"),
            ("Mesial temporal", "Mesial\ntemporal"), ("Outside CenTauR regions", "Rest of\ncortex")]
@@ -60,11 +60,13 @@ def load_mask(path: Path, target) -> nib.Nifti1Image:
 
 
 def panel_maps(fig, gs_cell, maps: dict, mask_img, n: dict):
-    vals = np.concatenate([np.abs(m.get_fdata()[m.get_fdata() != 0]) for m in maps.values()])
-    vmax = float(np.percentile(vals, 99.5))
     sub = gs_cell.subgridspec(len(maps), 1, hspace=0.08)
     axes = []
     for k, (g, label) in enumerate(GROUPS):
+        # each row scaled to its own 99.5th percentile: compare patterns, not colour strength (strongly positive
+        # scans change little when one patch is hidden, so their raw values are small)
+        d = maps[g].get_fdata()
+        vmax = float(np.percentile(np.abs(d[d != 0]), 99.5))
         ax = fig.add_subplot(sub[k])
         disp = plotting.plot_stat_map(maps[g], display_mode="z", cut_coords=CUTS, axes=ax, cmap="RdBu_r",
                                       vmax=vmax, symmetric_cbar=True, threshold=vmax * 0.08,
@@ -74,13 +76,13 @@ def panel_maps(fig, gs_cell, maps: dict, mask_img, n: dict):
         ax.text(-0.01, 0.5, f"{label}\nn = {n[g]}", transform=ax.transAxes, ha="right", va="center",
                 fontsize=TICK, color=GROUP_COLOURS[g], fontweight="bold")
         axes.append(ax)
-    axes[0].set_title("Group-average occlusion, held-out test set (black outline: meta-temporal region)",
+    axes[0].set_title("Group-average occlusion, held-out test set (each row scaled to its own maximum)",
                       fontsize=TITLE, pad=6)
     # one colour bar for the three rows, labelled at -max / 0 / +max only
     pos = axes[-1].get_position(), axes[0].get_position()
     cax = fig.add_axes([0.925, pos[0].y0 + 0.02, 0.012, pos[1].y1 - pos[0].y0 - 0.04])
-    sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-vmax, vmax))
-    cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
+    sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-1, 1))
+    cb = fig.colorbar(sm, cax=cax, ticks=[-1, 0, 1])
     cb.ax.set_yticklabels(["supports\nnegative", "0", "supports\npositive"], fontsize=TICK - 1)
     cb.outline.set_visible(False)
     return axes
@@ -89,14 +91,14 @@ def panel_maps(fig, gs_cell, maps: dict, mask_img, n: dict):
 def panel_shares(ax, table: pd.DataFrame, title: str):
     vol = table.loc["volume share"]
     x = np.arange(len(REGIONS))
-    w = 0.26
+    w = 0.34
     for j, (g, label) in enumerate(GROUPS):
         if g not in table.index:
             continue
         vals = [100 * table.loc[g, r] for r, _ in REGIONS]
-        ax.bar(x + (j - 1) * w, vals, w, color=GROUP_COLOURS[g], label=label, edgecolor="white", linewidth=1, zorder=3)
+        ax.bar(x + (j - 0.5) * w, vals, w, color=GROUP_COLOURS[g], label=label, edgecolor="white", linewidth=1, zorder=3)
     for i, (r, _) in enumerate(REGIONS):
-        ax.plot([i - 1.6 * w, i + 1.6 * w], [100 * vol[r]] * 2, color="0.1", lw=1.8, zorder=4)
+        ax.plot([i - 1.2 * w, i + 1.2 * w], [100 * vol[r]] * 2, color="0.1", lw=1.8, zorder=4)
     ax.set_xticks(x)
     ax.set_xticklabels([lab for _, lab in REGIONS], fontsize=TICK)
     ax.set_ylim(0, 100)
@@ -120,8 +122,8 @@ def main():
     n = t_test["n"].dropna().astype(int).to_dict()
 
     sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)
-    fig = plt.figure(figsize=(10, 8.2))
-    gs = fig.add_gridspec(2, 1, height_ratios=[1.35, 1], hspace=0.32, left=0.13, right=0.9, top=0.95, bottom=0.12)
+    fig = plt.figure(figsize=(10, 7.4))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 1], hspace=0.32, left=0.13, right=0.9, top=0.95, bottom=0.12)
     map_axes = panel_maps(fig, gs[0], maps, mask_img, n)
     bottom = gs[1].subgridspec(1, 2, wspace=0.12)
     axl, axr = fig.add_subplot(bottom[0]), fig.add_subplot(bottom[1], sharey=None)
@@ -131,7 +133,8 @@ def main():
     axr.set_yticklabels([])
     handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLOURS[g]) for g, _ in GROUPS] + \
               [Line2D([0], [0], color="0.1", lw=1.8)]
-    fig.legend(handles, [lab for _, lab in GROUPS] + ["Share of cortex volume"], loc="lower center", ncol=4,
+    fig.legend(handles, [lab for _, lab in GROUPS] + ["Share of cortex volume (meta-temporal region outlined in A)"],
+               loc="lower center", ncol=3,
                fontsize=LEGEND, frameon=False, bbox_to_anchor=(0.55, 0.0))
     for ax, letter in [(map_axes[0], "A"), (axl, "B")]:
         ax.annotate(letter, xy=(0, 1), xycoords="axes fraction", xytext=(-62 if ax is axl else -80, 6),
