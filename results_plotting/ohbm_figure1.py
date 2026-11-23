@@ -189,6 +189,7 @@ def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str, legend:
     n = rows[rows["pair"] == "model vs read"].set_index("bin").reindex(labels)["n"]
     ax2 = ax.twinx()  # background: share of scans per bin, as in the original agreement-vs-cut-off plots
     ax2.bar(x, (n / n.sum() * 100).to_numpy(), color="0.85", width=0.65, zorder=1)
+    ax2.set_ylim(0, max(50, float(np.ceil((n / n.sum() * 100).max() / 10) * 10)))  # fixed 0-50% unless a bin is bigger
     ax2.set_ylabel("Percentage of scans (%)", fontsize=LABEL, color="0.6")
     ax2.tick_params(axis="y", labelsize=TICK, color="0.6", labelcolor="0.6")
     ax2.spines["right"].set_color("0.6")
