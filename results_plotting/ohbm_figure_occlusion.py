@@ -2,7 +2,7 @@
 """OHBM abstract Figure 2: where the model finds its evidence (group-level occlusion).
 
   A  Group-average occlusion maps (log-odds; red = supports a positive call, blue = supports a negative call) for
-     true positives, missed positive reads and true negatives of the held-out test set, axial slices, with the
+     Model + / Read + and Model − / Read − scans of the held-out test set, axial slices, with the
      CenTauR meta temporal region outlined. From <occlusion folder>/group_maps/group_mean_{TP,FN,TN}.nii.gz
      (occlusion_group_maps.py); one colour scale for all three rows.
   B  (--with_shares, poster version) Share of each scan's positive evidence in the cortex that lies in each CenTauR region (median per group),
@@ -33,7 +33,7 @@ from plot_utils import CUSTOM_PALETTE
 TITLE, LABEL, TICK, LEGEND = 12, 11, 9.5, 9.5  # as ohbm_figure1.py
 WIDTH_PX = 1000
 CUTS = [-30, -20, -10, 0, 10, 20]  # axial slices (MNI z, mm): meta temporal region and above
-GROUPS = [("TP", "True positives"), ("TN", "True negatives")]
+GROUPS = [("TP", "Model + / Read +"), ("TN", "Model − / Read −")]
 GROUP_COLOURS = {"TP": CUSTOM_PALETTE[1], "FN": CUSTOM_PALETTE[4], "TN": CUSTOM_PALETTE[0]}
 REGIONS = [("Meta-temporal", "Meta-\ntemporal"), ("Temporoparietal", "Temporo-\nparietal"),
            ("Mesial temporal", "Mesial\ntemporal"), ("Outside CenTauR regions", "Rest of\ncortex")]
