@@ -46,7 +46,7 @@ from nilearn import image
 from sklearn.metrics import roc_auc_score
 from statsmodels.stats.multitest import multipletests
 
-from plot_utils import add_subgroup_columns, find_demo_csv, resolve_path
+from plot_utils import add_subgroup_columns, external_name, find_demo_csv, resolve_path
 from regress_model_output_visual_read import CLIP, find_ext_demo
 from voxelwise_visual_read import suvr_images
 
@@ -241,7 +241,8 @@ def main():
         ax.set_xticks(range(1, len(order) + 1), [f"{g}\n(n = {len(v)})" for g, v in zip(order, vals)], fontsize=8)
         ax.set_ylabel("|asymmetry index|")
         ax.set_title(name)
-    fig.suptitle(f"Left-right tau asymmetry by outcome ({args.set})")
+    set_name = "held-out test" if args.set == "test" else external_name(args.ext_dataset)
+    fig.suptitle(f"Left-right tau asymmetry by outcome ({set_name})")
     fig.tight_layout()
     fig.savefig(out / "asymmetry.png", dpi=130)
     plt.close(fig)
