@@ -121,8 +121,10 @@ def surfaces(means: dict, n: dict, vmax: float, out: Path):
 
 
 def load_mask(path: Path) -> np.ndarray:
-    """A mask (any MNI file) on the model's 2 mm MNI grid."""
-    return image.resample_to_img(nib.load(path), nib.Nifti1Image(np.zeros(MNI_SHAPE, np.int8), MNI_2MM_RAS),
+    """A mask (any MNI file) on the model's 2 mm MNI grid. The CenTauR files are 4D (x, y, z, 1): squeezed."""
+    img = nib.load(path)
+    img = nib.Nifti1Image(np.squeeze(np.asarray(img.dataobj)), img.affine)
+    return image.resample_to_img(img, nib.Nifti1Image(np.zeros(MNI_SHAPE, np.int8), MNI_2MM_RAS),
                                  interpolation="nearest", force_resample=True, copy_header=True).get_fdata() > 0
 
 
