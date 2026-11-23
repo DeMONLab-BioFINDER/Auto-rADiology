@@ -5,7 +5,7 @@
      true positives, missed positive reads and true negatives of the held-out test set, axial slices, with the
      CenTauR meta temporal region outlined. From <occlusion folder>/group_maps/group_mean_{TP,FN,TN}.nii.gz
      (occlusion_group_maps.py); one colour scale for all three rows.
-  B  Share of each scan's positive evidence in the cortex that lies in each CenTauR region (median per group),
+  B  (--with_shares, poster version) Share of each scan's positive evidence in the cortex that lies in each CenTauR region (median per group),
      next to the region's share of the cortex volume (black line = what its size alone would give), for the
      held-out test set and the left-out cohort. From group_maps/centaur_shares_by_group.csv. The meta temporal
      and temporoparietal masks overlap, so the shares do not add up to 100%.
@@ -45,6 +45,8 @@ def parse_args():
     p.add_argument("--meta_mask", required=True, help="CenTauR meta temporal mask (Meta_CenTauR.nii.gz).")
     p.add_argument("--ext", default="OASIS", help="Left-out cohort as in the folder names.")
     p.add_argument("--ext_label", default=None, help="Name shown (default: OASIS -> OASIS-3).")
+    p.add_argument("--with_shares", action="store_true",
+                   help="Add panel B (evidence share per CenTauR region, test + left-out cohort): poster version.")
     return p.parse_args()
 
 
@@ -143,23 +145,28 @@ def main():
     n = t_test["n"].dropna().astype(int).to_dict()
 
     sns.set_theme(style="whitegrid", palette=CUSTOM_PALETTE)
-    fig = plt.figure(figsize=(10, 7.4))
-    gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 1], hspace=0.32, left=0.13, right=0.9, top=0.95, bottom=0.12)
-    map_axes = panel_maps(fig, gs[0], maps, mask_img, n)
-    bottom = gs[1].subgridspec(1, 2, wspace=0.12)
-    axl, axr = fig.add_subplot(bottom[0]), fig.add_subplot(bottom[1], sharey=None)
-    panel_shares(axl, t_test, "Held-out test set")
-    panel_shares(axr, t_ext, f"{ext_label} (unseen)")
-    axl.set_ylabel("Share of cortical evidence (%)", fontsize=LABEL)
-    axr.set_yticklabels([])
-    handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLOURS[g]) for g, _ in GROUPS] + \
-              [Line2D([0], [0], color="0.1", lw=1.8)]
-    fig.legend(handles, [lab for _, lab in GROUPS] + ["Share of cortex volume (meta-temporal region outlined in A)"],
-               loc="lower center", ncol=3,
-               fontsize=LEGEND, frameon=False, bbox_to_anchor=(0.55, 0.0))
-    for ax, letter in [(map_axes[0], "A"), (axl, "B")]:
-        ax.annotate(letter, xy=(0, 1), xycoords="axes fraction", xytext=(-62 if ax is axl else -80, 6),
-                    textcoords="offset points", ha="right", va="bottom", fontsize=LABEL + 2, fontweight="bold")
+    if args.with_shares:  # maps + evidence shares per CenTauR region (poster version)
+        t_ext = pd.read_csv(occlusion_dir(run, args.ext) / "centaur_shares_by_group.csv", index_col=0)
+        fig = plt.figure(figsize=(10, 7.4))
+        gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 1], hspace=0.32, left=0.13, right=0.9, top=0.95, bottom=0.12)
+        map_axes = panel_maps(fig, gs[0], maps, mask_img, n)
+        bottom = gs[1].subgridspec(1, 2, wspace=0.12)
+        axl, axr = fig.add_subplot(bottom[0]), fig.add_subplot(bottom[1])
+        panel_shares(axl, t_test, "Held-out test set")
+        panel_shares(axr, t_ext, f"{ext_label} (unseen)")
+        axl.set_ylabel("Share of cortical evidence (%)", fontsize=LABEL)
+        axr.set_yticklabels([])
+        handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLOURS[g]) for g, _ in GROUPS] + \
+                  [Line2D([0], [0], color="0.1", lw=1.8)]
+        fig.legend(handles, [lab for _, lab in GROUPS] + ["Share of cortex volume (meta-temporal region outlined in A)"],
+                   loc="lower center", ncol=3, fontsize=LEGEND, frameon=False, bbox_to_anchor=(0.55, 0.0))
+        for ax, letter in [(map_axes[0], "A"), (axl, "B")]:
+            ax.annotate(letter, xy=(0, 1), xycoords="axes fraction", xytext=(-62 if ax is axl else -80, 6),
+                        textcoords="offset points", ha="right", va="bottom", fontsize=LABEL + 2, fontweight="bold")
+    else:  # abstract version: the maps only
+        fig = plt.figure(figsize=(10, 4.1))
+        gs = fig.add_gridspec(1, 1, left=0.13, right=0.9, top=0.88, bottom=0.1)
+        panel_maps(fig, gs[0], maps, mask_img, n)
 
     big = out / "_figure_occlusion_large.png"
     fig.savefig(big, dpi=300, facecolor="white")
