@@ -60,7 +60,7 @@ WIDTH_PX = 1000
 def cutoff_name() -> str:
     """One name for the SUVR cut-off everywhere in the figure (ROC legend, panel C legend). Just the region's SUVR:
     the x-axis of panel C gives the cut-off value (1.34 = CTRz 2)."""
-    return f"{REGION_NAMES.get(REGION, REGION)} SUVR"
+    return f"{REGION_NAMES.get(REGION, REGION)} SUVR dichotomy"
 
 
 def style(ax, title: str, xlabel: str, ylabel: str):
@@ -154,13 +154,15 @@ def panel_confusion(ax, d: pd.DataFrame, title: str):
     ax.grid(False)
 
 
-def checkmark_table(ax):
+def checkmark_table(ax, right: bool = True, y0_right: float = 0.17):
     """Legend as in the lab's amyloid figure (PALS application Fig. 1C): one column per line (its swatch on top),
     one row per rater, a checkmark where that line compares that rater, dashed dividers between the columns.
-    Drawn inside the panel, bottom left: at low tau every line sits near 100%, so nothing is covered."""
+    Drawn inside the panel, bottom right, above the short grey bars of the high-SUVR bins; panel_agreement keeps
+    the y-axis low enough that every point in those bins stays above the box (falls back to bottom left)."""
     lines = [CUSTOM_PALETTE[5], CUSTOM_PALETTE[1], CUSTOM_PALETTE[3]]  # model vs cut-off, read vs cut-off, model vs read
     raters = [("Model", (True, False, True)), (cutoff_name(), (True, True, False)), ("Visual read", (False, True, True))]
-    x0, y0, w, h = 0.03, 0.05, 0.42, 0.44  # right edge stays left of the cut-off bin's points
+    w, h = 0.44, 0.38
+    x0, y0 = (1 - w - 0.02, y0_right) if right else (0.03, 0.05)
     ax.add_patch(FancyBboxPatch((x0, y0), w, h, boxstyle="round,pad=0,rounding_size=0.015", transform=ax.transAxes,
                                 facecolor="white", edgecolor="0.75", lw=1, zorder=10, clip_on=False))
     T = dict(transform=ax.transAxes, zorder=11)
@@ -200,13 +202,22 @@ def panel_agreement(ax, rows: pd.DataFrame, d: pd.DataFrame, title: str, legend:
     ax.set_zorder(ax2.get_zorder() + 1)
     ax.patch.set_visible(False)
     ax.set_xticks(x, labels)
-    low = 100 * rows["agree"].min()  # zoomed in, as in the amyloid figure, but always showing every point
-    ax.set_ylim(max(0, np.floor(low / 10) * 10 - 10), 102)
+    # legend box bottom right, just above the grey bars of the two highest-SUVR bins, with the y-axis from 0; the
+    # points of those bins must stay above the box, otherwise it goes bottom left (zoomed axis, as before)
+    share = (n / n.sum() * 100).to_numpy()
+    y0_right = max(share[-2:]) / ax2.get_ylim()[1] + 0.03
+    right_min = 100 * rows[rows["bin"].isin(labels[-2:])]["agree"].min()
+    right = y0_right + 0.38 < 0.9 and right_min > 102 * (y0_right + 0.38) + 4
+    if right:
+        ax.set_ylim(0, 102)
+    else:
+        low = 100 * rows["agree"].min()
+        ax.set_ylim(max(0, np.floor(low / 10) * 10 - 10), 102)
     b = d[(d["suvr"] >= BORDERLINE[0]) & (d["suvr"] < BORDERLINE[1])]
     am, ar, p = (b["pred"] == b["y"]).mean(), (b["rule"] == b["y"]).mean(), mcnemar_p(b)
     style(ax, title, f"{REGION_NAMES.get(REGION, REGION)} SUVR (cut-off {CUTOFF:.2f} = CTRz 2)", "Agreement (%)")
     if legend:
-        checkmark_table(ax)
+        checkmark_table(ax, right=right, y0_right=y0_right)
     if REGION != "MetaTemporal":
         return {}
     return {"range": f"{BORDERLINE[0]}-{BORDERLINE[1]}", "n": len(b), "model": am, "cutoff": ar, "mcnemar_p": p}
