@@ -58,8 +58,9 @@ WIDTH_PX = 1000
 
 
 def cutoff_name() -> str:
-    """One name for the SUVR cut-off everywhere in the figure (ROC legend, panel C title and legend)."""
-    return f"{REGION_NAMES.get(REGION, REGION)} SUVR cut-off"
+    """One name for the SUVR cut-off everywhere in the figure (ROC legend, panel C legend). Just the region's SUVR:
+    the x-axis of panel C gives the cut-off value (1.34 = CTRz 2)."""
+    return f"{REGION_NAMES.get(REGION, REGION)} SUVR"
 
 
 def style(ax, title: str, xlabel: str, ylabel: str):
