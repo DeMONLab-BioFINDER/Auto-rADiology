@@ -15,6 +15,14 @@ General linear models, fitted at every voxel (voxel SUVR is the outcome):
                       + MetaTemporal SUVR + age + sex [+ site]. Where do missed scans have less (or more) tau
                       than detected ones at the same meta-temporal level?
   read_pos_vs_neg     SUVR ~ read + age + sex [+ site]. Reference map: where read-positive scans have more tau.
+Extra analyses (not in the default set; --analyses ...), age + sex [+ site] adjusted, no SUVR adjustment (the
+groups are defined by it, so the meta temporal region itself differs by construction: read the rest of the map):
+  read_neg_above_cutoff      read - scans only: meta temporal SUVR >= cut point (CTRz 2) vs below. Where is the
+                             tau of the scans the cut point calls positive but readers do not (focal or diffuse)?
+  read_pos_below_cutoff      read + scans only: below vs at or above the cut point. Where is the tau of the
+                             read-positive scans the cut point misses?
+  model_neg_read_pos_vs_neg  scans the model calls negative: Read + vs Read -. What do readers see in the
+                             Model - / Read + scans, compared with scans everyone calls negative?
 
 Inference: permutation test (nilearn permuted_ols, Freedman-Lane, two-sided), family-wise error corrected
 over the cortex, with threshold-free cluster enhancement (TFCE) as the main map and voxel-level max-t
@@ -56,7 +64,7 @@ from scipy.ndimage import gaussian_filter
 
 from atlas_utils import DKCortex
 from make_case_viewer import region_zones
-from plot_utils import add_subgroup_columns, find_demo_csv, resolve_path
+from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, add_subgroup_columns, find_demo_csv, resolve_path
 from regress_model_output_visual_read import CLIP, find_ext_demo
 from voxelwise_visual_read import brain_mask_on_grid, suvr_images
 
@@ -70,6 +78,13 @@ TITLES = {
     "missed_vs_detected": "Missed (Model − / Read +) vs detected (Model + / Read +), same meta-temporal SUVR",
     "read_pos_vs_neg": "Read + vs Read − (age, sex, site adjusted)",
 }
+CORE = list(TITLES)  # the default set (the Snakemake workflow runs these)
+# extra analyses (--analyses ...): where read and SUVR cut point disagree, and the Model - / Read + scans
+TITLES.update({
+    "read_neg_above_cutoff": "Read − scans: meta-temporal SUVR above vs below the cut point",
+    "read_pos_below_cutoff": "Read + scans: meta-temporal SUVR below vs above the cut point",
+    "model_neg_read_pos_vs_neg": "Model − scans: Read + vs Read −",
+})
 
 
 def parse_args():
@@ -86,7 +101,7 @@ def parse_args():
     p.add_argument("--demo_csv", default=None, help="Demographics for the test set (default data/demo.csv).")
     p.add_argument("--ext_demo_csv", default=None, help="Demographics for AVID (default data/demo_AVID_unseen.csv).")
     p.add_argument("--female_code", type=float, default=2)
-    p.add_argument("--analyses", nargs="+", default=list(TITLES), choices=list(TITLES))
+    p.add_argument("--analyses", nargs="+", default=CORE, choices=list(TITLES))
     p.add_argument("--fwhm", type=float, default=6.0, help="Smoothing in mm (0 = none).")
     p.add_argument("--min_scan_coverage", type=float, default=0.95)
     p.add_argument("--n_perm", type=int, default=5000)
@@ -156,8 +171,13 @@ def load_images(table: pd.DataFrame, args):
 def design(t: pd.DataFrame, analysis: str):
     """(rows used, tested variable, confounds) for one analysis."""
     base = t
-    if analysis == "missed_vs_detected":
+    cut = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
+    if analysis in ("missed_vs_detected", "read_pos_below_cutoff"):
         base = t[t["read"] == 1]
+    elif analysis == "read_neg_above_cutoff":
+        base = t[t["read"] == 0]
+    elif analysis == "model_neg_read_pos_vs_neg":
+        base = t[t["call"] == 0]
     z = lambda s: (s - s.mean()) / s.std()
     conf = {"age": z(base["age"]), "male": (base["sex"] == "Male").astype(float)}
     if base["site"].nunique() > 1:
@@ -172,7 +192,11 @@ def design(t: pd.DataFrame, analysis: str):
     elif analysis == "missed_vs_detected":
         tested = (base["call"] == 0).astype(float)
         conf.update(meta=z(base["MetaTemporal"]))
-    else:
+    elif analysis == "read_neg_above_cutoff":
+        tested = (base["MetaTemporal"] >= cut).astype(float)
+    elif analysis == "read_pos_below_cutoff":
+        tested = (base["MetaTemporal"] < cut).astype(float)
+    else:  # read_pos_vs_neg, model_neg_read_pos_vs_neg
         tested = base["read"].astype(float)
     return base.index.to_numpy(), tested.to_numpy()[:, None], pd.DataFrame(conf).to_numpy()
 
@@ -235,7 +259,7 @@ def main():
     dk_size = pd.Series(dk_in[dk_in > 0]).value_counts()
     for name in args.analyses:
         rows, tested, conf = design(table, name)
-        if name == "missed_vs_detected" and min(tested.sum(), len(tested) - tested.sum()) < 5:
+        if name != "model_beyond_read" and min(tested.sum(), len(tested) - tested.sum()) < 5:
             print(f"[skip] {name}: fewer than 5 scans in a group")
             continue
         t0 = time.time()
