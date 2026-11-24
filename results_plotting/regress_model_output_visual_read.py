@@ -207,7 +207,7 @@ def figure_odds(t: pd.DataFrame, title: str, out: Path):
     ax.axvline(1, color="#999", lw=0.8); ax.set_xscale("log")
     ticks = [t for t in [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50] if ax.get_xlim()[0] <= t <= ax.get_xlim()[1]]
     ax.set_xticks(ticks, [f"{t:g}" for t in ticks]); ax.minorticks_off()
-    ax.set_xlabel("Odds of being called positive (same meta-temporal SUVR)\n< 1 less likely · 1 = no effect · > 1 more likely")
+    ax.set_xlabel("Odds of being called positive (same meta-temporal SUVR)\n< 1 less likely, 1 = no effect, > 1 more likely")
     ax.set_yticks(list(y.values())); ax.set_yticklabels(list(y.keys()), fontsize=9)
     ax.legend(fontsize=8, loc="lower right", frameon=False)
     ax.spines[["top", "right"]].set_visible(False)

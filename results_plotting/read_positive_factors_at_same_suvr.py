@@ -133,7 +133,7 @@ def forest(t: pd.DataFrame, n_read_pos: int, out: Path):
     ax.set_yticks(y, [f"{f} (n = {n})" for f, n in zip(t["factor"], t["n"])], fontsize=13)
     ax.tick_params(axis="x", labelsize=12)
     ax.set_ylim(-0.7, len(t) - 0.2)
-    ax.set_xlabel("Odds of Model − among Read + scans\n< 1 called negative less often · > 1 more often", fontsize=13)
+    ax.set_xlabel("Odds of Model − among Read + scans\n< 1 called negative less often, > 1 more often", fontsize=13)
     ax.set_title(with_set(f"Patient characteristics, Read + scans (n = {n_read_pos})"), fontsize=15, pad=30, loc="left",
                  x=-0.45)
     from matplotlib.lines import Line2D
