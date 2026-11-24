@@ -12,6 +12,7 @@
 #   3. occlusion_vs_tau.py (evidence share per CenTauR region next to the Read + vs Read - SUVR difference)
 #   4. discordant_summary_table.py (one table: plain + same-tau-level results, collated)
 #   5. discordant_by_confidence.py (every disagreeing scan by confidence band, everything joined)
+#   6. amyloid_negative_read_positive.py (case series: what amyloid-negative Read + scans have in common)
 # The voxelwise maps are a separate job: submit_voxelwise-discordant.sh (see its usage for this model).
 #
 # Usage (from the Auto-rADiology root):
@@ -94,6 +95,9 @@ for S in "${SETS[@]}"; do
   step "5 by confidence $label" python results_plotting/discordant_by_confidence.py \
     --confidence "$fig/visual_read_confidence_groups.csv" --demo_csv "$demo" --votes "$votes" \
     --asymmetry "$asym/asymmetry_per_scan.csv" "${OCC_ARG[@]}" --label "$name" --out_dir "$fig/discordant_by_confidence"
+  step "6 amyloid-negative Read + $label" python results_plotting/amyloid_negative_read_positive.py \
+    --confidence "$fig/visual_read_confidence_groups.csv" --demo_csv "$demo" --votes "$votes" \
+    --asymmetry "$asym/asymmetry_per_scan.csv" "${OCC_ARG[@]}" --label "$name" --out_dir "$fig/amyloid_negative_read_positive"
 done
 
 echo -e "\n================ done ================" | tee -a "$LOG"
