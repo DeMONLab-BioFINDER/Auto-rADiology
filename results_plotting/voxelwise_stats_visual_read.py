@@ -46,7 +46,8 @@ Usage (Berzelius, a job: the permutations take a while, see sbatch_scripts/submi
         [--centaur_dir <folder with Meta_CenTauR.nii.gz, ...> (default: the --ref_mask folder)]
         [--atlas_dir <DK atlas folder>] [--n_perm 5000] [--n_jobs 16]
 Outputs (<run_dir>/figures/voxelwise_stats_<set>/, no IDs): per analysis <name>_t.nii.gz,
-<name>_logp_tfce.nii.gz, <name>_logp_maxt.nii.gz (-log10 FWE p), <name>.png; summary.csv (n, voxels
+<name>_logp_tfce.nii.gz, <name>_logp_maxt.nii.gz (-log10 FWE p), <name>.png (significant voxels),
+<name>_unthresholded.png (the t-map where |t| > 2, no correction: a look, not a test); summary.csv (n, voxels
 significant each way, peak and the CenTauR regions it lies in), centaur_regions.csv (per analysis and direction:
 significant voxels in each CenTauR region, the % of the region they cover and their share of all significant
 voxels), fda_region_overlap.csv (only with --regions: share per FDA region, an approximation, supplementary).
@@ -64,7 +65,7 @@ import pandas as pd
 from nilearn import image, plotting
 from nilearn.maskers import NiftiMasker
 from nilearn.mass_univariate import permuted_ols
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import binary_dilation, gaussian_filter
 
 from atlas_utils import DKCortex, centaur_masks
 from make_case_viewer import region_zones
@@ -101,6 +102,9 @@ def parse_args():
     p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (default: the --ref_mask folder).")
     p.add_argument("--atlas_dir", default=None, help="DK atlas folder, cortex outline only (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
     p.add_argument("--whole_brain", action="store_true", help="Whole brain instead of cortex only.")
+    p.add_argument("--rim_mm", type=float, default=0.0,
+                   help="With --whole_brain: also a rim this many mm outside the brain mask (meninges / skull, off-target "
+                        "signal). Only voxels covered in every scan are used, as always.")
     p.add_argument("--dataset", default="Gothenburg")
     p.add_argument("--ext_dataset", default="AVID_unseen")
     p.add_argument("--demo_csv", default=None, help="Demographics for the test set (default data/demo.csv).")
@@ -156,6 +160,8 @@ def load_images(table: pd.DataFrame, args):
         if affine is None:
             affine, brain = aff, brain_mask_on_grid(x.shape, aff)
             vox = np.sqrt((aff[:3, :3] ** 2).sum(0))
+            if args.whole_brain and args.rim_mm > 0:  # grow the brain mask outwards by the rim
+                brain = binary_dilation(brain, iterations=int(np.ceil(args.rim_mm / vox.min())))
             sigma = args.fwhm / np.sqrt(8 * np.log(2)) / vox if args.fwhm else None
         cover = x != 0
         if sigma is not None:
@@ -215,7 +221,7 @@ def centaur_label(ijk, regions: dict, cortex) -> str:
     return ", ".join(hits) if hits else (OUTSIDE if cortex[tuple(ijk)] else "Outside cortex")
 
 
-def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label: str = ""):
+def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label: str = "", thresholded: bool = True):
     """t-map shown only where significant (FWE p < 0.05); red = tau higher with the tested variable.
     Same style as the occlusion montage: white background, 1 mm template, label left, z under the slices, one L/R
     marker, one colour bar. No display smoothing (a statistics map); nearest resampling keeps the significant area."""
@@ -228,7 +234,8 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label:
     left, right = 0.15, 0.87
     ax = fig.add_axes([left, 0.16, right - left, 0.74])
     disp = plotting.plot_stat_map(shown, bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig,
-                                  cmap="RdBu_r", vmax=vmax, threshold=1e-6, symmetric_cbar=True,  # blue = t < 0
+                                  cmap="RdBu_r", vmax=vmax, threshold=1e-6 if thresholded else 2.0,  # unthresholded: |t| > 2 shown
+                                  symmetric_cbar=True,  # blue = t < 0
                                   colorbar=False, black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
                                   resampling_interpolation="nearest")
     if regions_img is not None:
@@ -247,7 +254,7 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label:
     cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
     cb.ax.set_yticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"], fontsize=13)
     cb.outline.set_visible(False)
-    cb.set_label(f"t (FWE p < {ALPHA})", fontsize=12, color="0.3")
+    cb.set_label(f"t (FWE p < {ALPHA})" if thresholded else "t (unthresholded)", fontsize=12, color="0.3")
     fig.text(left, 1.0, "Voxelwise tau differences" + (f", {set_label}" if set_label else ""), ha="left", va="bottom",
              fontsize=16)
     fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05)
@@ -294,7 +301,13 @@ def main():
 
     summary, overlap, region_rows = [], [], []
     reg_in = {name: m[keep] for name, m in centaur.items()}
-    reg_in[OUTSIDE] = dk.mask[keep] & ~np.logical_or.reduce(list(reg_in.values()))
+    any_centaur = np.logical_or.reduce(list(reg_in.values()))
+    reg_in[OUTSIDE] = dk.mask[keep] & ~any_centaur
+    core = brain_mask_on_grid(keep.shape, affine)  # the brain itself, without the rim
+    if args.whole_brain:
+        reg_in["Inside the brain, not cortex (deep grey, white matter, choroid plexus)"] = core[keep] & ~dk.mask[keep] & ~any_centaur
+        if args.rim_mm > 0:
+            reg_in["Outside the brain (meninges, skull)"] = ~core[keep]
     for name in args.analyses:
         rows, tested, conf = design(table, name)
         if name != "model_beyond_read" and min(tested.sum(), len(tested) - tested.sum()) < 5:
@@ -314,8 +327,12 @@ def main():
             nib.save(masker.inverse_transform(v.astype(np.float32)), out / f"{name}_{k}.nii.gz")
         t_img = masker.inverse_transform(t.astype(np.float32))
         sig_img = masker.inverse_transform(sig.astype(np.float32))
-        plot_map(t_img, sig_img, TITLES[name], out / f"{name}.png", regions_img,
-                 set_label="held-out test" if args.set == "test" else args.ext_dataset.removesuffix("_unseen"))
+        set_label = "held-out test" if args.set == "test" else args.ext_dataset.removesuffix("_unseen")
+        plot_map(t_img, sig_img, TITLES[name], out / f"{name}.png", regions_img, set_label=set_label)
+        # the same t-map without the significance threshold: where the groups differ, even where nothing survives
+        all_img = masker.inverse_transform(np.ones_like(t, dtype=np.float32))
+        plot_map(t_img, all_img, TITLES[name], out / f"{name}_unthresholded.png", regions_img, set_label=set_label,
+                 thresholded=False)
 
         peak = int(np.argmax(np.abs(t) * sig)) if sig.any() else int(np.argmax(np.abs(t)))
         ijk = np.argwhere(keep)[peak]
@@ -325,7 +342,8 @@ def main():
                         "voxels_sig_higher": int((sig & (t > 0)).sum()), "voxels_sig_lower": int((sig & (t < 0)).sum()),
                         "voxels_sig_maxt": int((res["logp_max_t"][0] > -np.log10(ALPHA)).sum()),
                         "peak_t": float(t[peak]), "peak_x": xyz[0], "peak_y": xyz[1], "peak_z": xyz[2],
-                        "peak_region": centaur_label(ijk, centaur, dk.mask),
+                        "peak_region": (centaur_label(ijk, centaur, dk.mask) if core[tuple(ijk)]
+                                        else "Outside the brain (meninges, skull)"),
                         "min_fwe_p": float(10 ** -logp.max()), "minutes": (time.time() - t0) / 60})
         for sign, mask in [("higher", sig & (t > 0)), ("lower", sig & (t < 0))]:
             if not mask.any():

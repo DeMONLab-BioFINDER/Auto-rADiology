@@ -48,17 +48,21 @@ PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
 N_PERM="${N_PERM:-5000}"
 N_JOBS="${SLURM_CPUS_PER_TASK:-16}"
 ANALYSES="${ANALYSES:-read_neg_above_cutoff read_pos_below_cutoff model_neg_read_pos_vs_neg}"   # e.g. ANALYSES=model_neg_read_pos_vs_neg
+# WHOLE_BRAIN=1: whole brain instead of cortex; RIM_MM=8: plus a rim outside the brain (meninges / skull, off-target).
+# Results then go to voxelwise_discordant_wholebrain_<set> so the cortex results are kept.
+EXTRA=(); TAG=""
+if [[ "${WHOLE_BRAIN:-0}" == 1 ]]; then EXTRA+=(--whole_brain --rim_mm "${RIM_MM:-0}"); TAG="_wholebrain"; fi
 COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$DATA/masks/voi_CerebGry_tau_2mm.nii"
         --atlas_dir "$DATA/atlases/lotter2025_mni_freesurfer" --demo_csv "$DEMO"
-        --n_perm "$N_PERM" --n_jobs "$N_JOBS" --analyses $ANALYSES)
+        --n_perm "$N_PERM" --n_jobs "$N_JOBS" --analyses $ANALYSES "${EXTRA[@]}")
 echo "Run: $RUN | test + $EXTS | $N_PERM permutations on $N_JOBS CPUs"
 
 echo -e "\n================ test ================"
 python results_plotting/voxelwise_stats_visual_read.py "$RUN" --set test "${COMMON[@]}" \
-  --out_dir "$RUN/figures/voxelwise_discordant_test"
+  --out_dir "$RUN/figures/voxelwise_discordant${TAG}_test"
 for EXT in $EXTS; do
   label=$(echo "${EXT%_unseen}" | tr '[:upper:]' '[:lower:]')
   echo -e "\n================ $EXT ================"
   python results_plotting/voxelwise_stats_visual_read.py "$RUN" --set avid --ext_dataset "$EXT" \
-    --ext_demo_csv "$DATA/demo_$EXT.csv" "${COMMON[@]}" --out_dir "$RUN/figures/voxelwise_discordant_$label"
+    --ext_demo_csv "$DATA/demo_$EXT.csv" "${COMMON[@]}" --out_dir "$RUN/figures/voxelwise_discordant${TAG}_$label"
 done
