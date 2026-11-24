@@ -94,17 +94,47 @@ def perm_test(a: np.ndarray, b: np.ndarray, n_perm: int, seed: int = 0) -> tuple
 
 def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Path,
             outline: str = "CenTauR meta-temporal"):
-    fig = plt.figure(figsize=(16, 2.3 * len(means) + 0.6), facecolor="black")
-    for i, (g, img) in enumerate(means.items()):
-        ax = fig.add_axes([0, 1 - (i + 1) / len(means) * 0.9 - 0.06, 1, 0.9 / len(means)])
+    """Axial slices, one row per group, in the style of ohbm_figure_occlusion.py: white background, red-blue map on
+    the 1 mm template, group label left of each row, z under the last row, one L/R marker, one colour bar.
+    All rows share one scale (the slides compare how much evidence each group has, not only where it lies)."""
+    from nilearn import datasets
+    bg = datasets.load_mni152_template(resolution=1)
+    outline_1mm = image.smooth_img(image.resample_to_img(regions_img, bg, interpolation="continuous",
+                                                         force_resample=True, copy_header=True), fwhm=2)
+    rows = list(means)
+    fig = plt.figure(figsize=(13, 1.75 * len(rows) + 0.7), facecolor="white")
+    left, right, top, bottom = 0.13, 0.88, 0.93, 0.08
+    h = (top - bottom) / len(rows)
+    axes = []
+    for i, g in enumerate(rows):
+        ax = fig.add_axes([left, top - (i + 1) * h, right - left, h * 0.96])
         name = dict((k, lab) for k, lab, _, _ in GROUPS)[g]
-        disp = plotting.plot_stat_map(img, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig, cmap="cold_hot",
-                                      vmax=vmax, threshold=vmax * 0.05, colorbar=(i == 0), black_bg=True,
-                                      annotate=(i == 0), title=f"{name} (n = {n[g]})", draw_cross=False)
-        disp.add_contours(regions_img, levels=[0.5], colors="white", linewidths=0.6)
-    fig.suptitle(f"{title}  ·  mean occlusion (log-odds of positive): red = supports positive, blue = supports "
-                 f"negative  ·  white outline: {outline}", color="white", fontsize=11, y=0.995)
-    fig.savefig(out, facecolor="black", dpi=110); plt.close(fig)
+        shown = image.resample_to_img(image.smooth_img(means[g], fwhm=3), bg, interpolation="continuous",
+                                      force_resample=True, copy_header=True)
+        disp = plotting.plot_stat_map(shown, bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig,
+                                      cmap="RdBu_r", vmax=vmax, symmetric_cbar=True, threshold=vmax * 0.08,
+                                      colorbar=False, black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
+                                      resampling_interpolation="continuous")
+        disp.add_contours(outline_1mm, levels=[0.5], colors="0.1", linewidths=0.8)
+        ax.text(-0.01, 0.5, f"{name}\nn = {n[g]}", transform=ax.transAxes, ha="right", va="center", fontsize=10)
+        axes.append(ax)
+    for j, z in enumerate(CUTS):
+        axes[-1].text((j + 0.5) / len(CUTS), -0.04, f"z = {z}", transform=axes[-1].transAxes, ha="center",
+                      va="top", fontsize=8.5, color="0.35")
+    for lab, dx in (("L", -0.045), ("R", 0.045)):
+        axes[0].text(0.5 / len(CUTS) + dx, 1.0, lab, transform=axes[0].transAxes, ha="center", va="bottom",
+                     fontsize=8.5, color="0.35")
+    cax = fig.add_axes([0.9, bottom + 0.25 * (top - bottom), 0.01, 0.5 * (top - bottom)])
+    sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-vmax, vmax))
+    cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
+    cb.ax.set_yticklabels([f"{-vmax:.2f}", "0", f"{vmax:.2f}"], fontsize=8.5)
+    cb.outline.set_visible(False)
+    cb.set_label("Change in log-odds when hidden\n(red = for positive, blue = for negative)", fontsize=8.5,
+                 color="0.3")
+    if title:
+        fig.text(left, 0.985, title, ha="left", va="top", fontsize=11)
+    fig.text(right, 0.985, f"Outline: {outline}", ha="right", va="top", fontsize=8.5, color="0.35")
+    fig.savefig(out, facecolor="white", dpi=200); plt.close(fig)
 
 
 def surfaces(means: dict, n: dict, vmax: float, out: Path):
