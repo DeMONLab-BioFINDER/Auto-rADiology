@@ -1189,16 +1189,14 @@ def make_subgroup_disagreement_panel(
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
         ax.set_ylabel(f"{confusion_display_label(category)} (%)", fontsize=LABEL_SIZE - 2)
         p = (p_fdr or {}).get(metric)
-        p_text = f"\ngroups differ: FDR-corrected p = {p:.2g}" if p is not None and np.isfinite(p) else ""
-        ax.set_title(f"{read_group}: how often the model says {'−' if metric == 'sensitivity' else '+'}{p_text}",
-                     fontsize=TITLE_SIZE - 5)
+        p_text = f" (FDR p = {p:.2g})" if p is not None and np.isfinite(p) else ""
+        ax.set_title(f"{read_group}{p_text}", fontsize=TITLE_SIZE - 5)
         ax.grid(axis="y", color="#DDDDDD", linewidth=0.8, zorder=0)
         ax.set_axisbelow(True)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
 
-    fig.suptitle(title or f"Disagreement with the visual read: {sub['variable'].iloc[0]}",
-                 fontsize=TITLE_SIZE - 2)
+    fig.suptitle(title or str(sub["variable"].iloc[0]), fontsize=TITLE_SIZE - 2)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
@@ -1926,8 +1924,7 @@ def make_disagreement_counts_by_value_panel(
         ax.set_ylim(0, max(1, (agree + disagree).max()) * 1.3)  # room for the count labels and legend
         ax.set_xticks(xs)
         ax.set_xticklabels(bin_labels, rotation=35, ha="right", fontsize=TICK_SIZE - 1)
-        ax.set_title(f"Visual read {_SIGN[read]} scans: model says {_SIGN[1 - read]} in "
-                     f"{int(disagree.sum())} of {len(sub)}", fontsize=TITLE_SIZE - 4)
+        ax.set_title(f"Visual read {_SIGN[read]} scans (n = {len(sub)})", fontsize=TITLE_SIZE - 4)
         ax.set_xlabel(label_x, fontsize=LABEL_SIZE - 2)
         ax.set_ylabel("Scans", fontsize=LABEL_SIZE - 2)
         ax.grid(False)
@@ -1935,7 +1932,6 @@ def make_disagreement_counts_by_value_panel(
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
         style_legend(ax, loc="best")  # bars live on this axes, so "best" keeps the legend off them
-    fig.suptitle(f"Where the model disagrees with the visual read, by {label_x}", fontsize=TITLE_SIZE - 1)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / (filename or f"visual_read_discordant_by_{value_col.lower()}.png"), dpi=300)
     plt.close(fig)

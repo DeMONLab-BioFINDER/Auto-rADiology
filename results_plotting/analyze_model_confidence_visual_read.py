@@ -193,7 +193,6 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
     handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLORS[g]) for g in GROUP_ORDER]
     fig.legend(handles, [GROUP_DISPLAY_LABELS[g] for g in GROUP_ORDER], loc="lower center", ncol=2,
                frameon=False, fontsize=TICK_SIZE - 1)
-    fig.suptitle("Model confidence", fontsize=TITLE_SIZE)
     finalize_figure(fig, rect=(0.0, 0.09, 1.0, 1.0))
     save_figure(fig, out_path, dpi=300)
     plt.close(fig)
@@ -226,7 +225,6 @@ def make_calibration_figure(table: pd.DataFrame, out_path: Path):
     ax.set_ylim(-0.02, 1.08)
     ax.set_xlabel("Model probability (mean in bin)", fontsize=LABEL_SIZE - 2)
     ax.set_ylabel("Share called positive by visual read", fontsize=LABEL_SIZE - 2)
-    ax.set_title("Calibration (dashed line = perfect)", fontsize=TITLE_SIZE - 3)
     ax.grid(alpha=0.25)
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
@@ -270,7 +268,6 @@ def make_probability_vs_suvr_figure(df: pd.DataFrame, cutoff: float, cutoffs: di
     ax.set_ylim(-0.03, 1.08)
     ax.set_xlabel("Meta-temporal SUVR", fontsize=LABEL_SIZE - 2)
     ax.set_ylabel("Model probability of tau positive", fontsize=LABEL_SIZE - 2)
-    ax.set_title("Model probability vs Meta-temporal SUVR", fontsize=TITLE_SIZE - 3, pad=22)
     ax.legend(loc="lower right", fontsize=TICK_SIZE - 2, frameon=False)
     ax.grid(alpha=0.25)
     for spine in ("top", "right"):
@@ -349,7 +346,6 @@ def make_suvr_cutoffs_figure(df: pd.DataFrame, cut: dict, ctrz2: float, out_path
     ax.set_ylim(-0.03, 1.08)
     ax.set_xlabel("Meta-temporal SUVR", fontsize=LABEL_SIZE - 2)
     ax.set_ylabel("Probability of being called positive", fontsize=LABEL_SIZE - 2)
-    ax.set_title("SUVR cut-off of the visual read and the model", fontsize=TITLE_SIZE - 3, pad=22)
     ax.legend(loc="lower right", fontsize=TICK_SIZE - 2, frameon=False, title="Cut-off [95% CI]",
               title_fontsize=TICK_SIZE - 2)
     ax.grid(alpha=0.25)

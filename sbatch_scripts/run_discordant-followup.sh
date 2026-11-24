@@ -4,9 +4,9 @@
 # Discordant-case follow-up for one final MNI visual-read model that already went through
 # run_visual-read-analysis.sh and occlusion (submit_vis-occlusion-all.sh + merge_occlusion_chunks.py).
 # Runs only the new / changed steps, on the held-out test set and AVID separately (never pooled):
-#   0. replots with read-based axis labels/titles (ROC axes "Agreement with Read +" / "Disagreement with Read -"):
-#      performance summary, Figure 1 (test, AVID), plot_visual_read_results.py (test; AVID when its figures are in
-#      validation/figures)
+#   0. replots with plain titles and read-based labels (same numbers; every test is seeded): performance summary,
+#      Figure 1, plot_visual_read_results.py, subgroup tests, confidence, discordant findings, asymmetry
+#      (test; AVID for the per-dataset scripts when their figures are in validation/figures)
 #   1. reader votes (adds 6_grade_at_same_suvr.csv: reader tau score at the same meta-temporal SUVR)
 #   2. occlusion group maps (CenTauR shares + the share of evidence outside the cortex)
 #   3. occlusion_vs_tau.py (evidence share per CenTauR region next to the Read + vs Read - SUVR difference)
@@ -24,7 +24,7 @@
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=8
-#SBATCH -t 02:00:00
+#SBATCH -t 03:00:00
 #SBATCH -J discordant-followup
 #SBATCH -o ../logs/discordant-followup-%j.out
 #SBATCH -e ../logs/discordant-followup-%j.err
@@ -71,8 +71,22 @@ step "0 performance summary (test + $EXT)" python results_plotting/performance_s
 step "0 Figure 1 test" python results_plotting/ohbm_figure1.py "$RUN" --demo_csv "$DATA/demo.csv"
 step "0 Figure 1 $EXT" python results_plotting/ohbm_figure1.py "$RUN" --sets avid --ext_dataset "$EXT" --ext_demo_csv "$EXT_DEMO"
 step "0 visual-read plots test" python results_plotting/plot_visual_read_results.py "$RUN" --dataset Gothenburg --demo_csv "$DATA/demo.csv"
+T0=(--dataset Gothenburg --demo_csv "$DATA/demo.csv")
+A0=(--dataset "$EXT" --demo_csv "$EXT_DEMO")
+PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
+step "0 subgroups test" python results_plotting/analyze_subgroup_performance_visual_read.py "$RUN" "${T0[@]}"
+step "0 confidence test" python results_plotting/analyze_model_confidence_visual_read.py "$RUN" "${T0[@]}"
+step "0 discordant findings test" python results_plotting/plot_discordant_findings.py "$RUN" "${T0[@]}"
+step "0 asymmetry test" python results_plotting/asymmetry_visual_read.py "$RUN" --set test --pkl_dir "$PKL_DIR" \
+  --ref_mask "$MASKS/voi_CerebGry_tau_2mm.nii" --centaur_dir "$MASKS" --demo_csv "$DATA/demo.csv"
+step "0 asymmetry $EXT" python results_plotting/asymmetry_visual_read.py "$RUN" --set avid --ext_dataset "$EXT" \
+  --ext_demo_csv "$EXT_DEMO" --pkl_dir "$PKL_DIR" --ref_mask "$MASKS/voi_CerebGry_tau_2mm.nii" --centaur_dir "$MASKS" \
+  --out_dir "$RUN/figures/asymmetry_$ext"
 if [[ "$EXT_FIG" == "$RUN/validation/figures" ]]; then
-  step "0 visual-read plots $EXT" python results_plotting/plot_visual_read_results.py "$RUN" --dataset "$EXT" --demo_csv "$EXT_DEMO"
+  step "0 visual-read plots $EXT" python results_plotting/plot_visual_read_results.py "$RUN" "${A0[@]}"
+  step "0 subgroups $EXT" python results_plotting/analyze_subgroup_performance_visual_read.py "$RUN" "${A0[@]}"
+  step "0 confidence $EXT" python results_plotting/analyze_model_confidence_visual_read.py "$RUN" "${A0[@]}"
+  step "0 discordant findings $EXT" python results_plotting/plot_discordant_findings.py "$RUN" "${A0[@]}"
 fi
 
 for S in "${SETS[@]}"; do

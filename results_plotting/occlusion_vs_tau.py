@@ -95,19 +95,15 @@ def main():
     ax1.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax1.set_xlim(0, max(0.05, float(np.nanmax(table.filter(like="median evidence").to_numpy()) * 1.15)))
     ax1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=8, frameon=False)
-    ax1.set_title("Where the model finds evidence", fontsize=11)
 
     ax2.barh(y, table["SUVR Cohen's d, Read + vs Read -"], height=0.5, color="0.55")
     ax2.set_xlabel("SUVR difference, Read + vs Read − (Cohen's d)")
     dvals = table["SUVR Cohen's d, Read + vs Read -"]
     ax2.set_xlim(min(0, float(np.nanmin(dvals)) * 1.15), max(0.5, float(np.nanmax(dvals)) * 1.15))
-    ax2.set_title("Where tau differs between reads", fontsize=11)
     for ax in (ax1, ax2):
         ax.grid(axis="x", color="0.9"); ax.set_axisbelow(True)
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
-    if args.label:
-        fig.suptitle(args.label, fontsize=12)
     fig.tight_layout()
     fig.savefig(folder / "occlusion_vs_tau.png", dpi=200)
     print(f"Saved occlusion_vs_tau.png / .csv to {folder}")

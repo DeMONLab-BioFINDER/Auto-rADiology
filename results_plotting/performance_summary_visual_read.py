@@ -148,7 +148,6 @@ def roc_figure(sets: dict, summary: pd.DataFrame, out: Path):
     ax.plot([0, 1], [0, 1], color="#bbbbbb", lw=0.8)
     ax.set_xlabel("Disagreement with Read −")
     ax.set_ylabel("Agreement with Read +")
-    ax.set_title("Model vs visual read (dots: cut-off 0.5)", fontsize=11)
     ax.set_xlim(-0.01, 1); ax.set_ylim(0, 1.01); ax.set_aspect("equal")
     ax.legend(loc="lower right", fontsize=7.5, frameon=True)
     ax.spines[["top", "right"]].set_visible(False)
