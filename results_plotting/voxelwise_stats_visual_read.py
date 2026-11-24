@@ -271,14 +271,18 @@ def main():
     X, cover, ids, affine, brain = load_images(table, args)
     table = table.set_index("ID").loc[ids].reset_index()  # same order as the images
 
-    # leave out scans that miss a lot of the brain, then keep voxels every remaining scan covers
-    frac = cover.mean(1)
+    # leave out scans that miss a lot of the brain (judged on the brain itself, never on the rim, so the rim does not
+    # cost scans), then keep voxels every remaining scan covers (rim voxels some scan misses are simply not analysed)
+    in_core = brain_mask_on_grid(brain.shape, affine)[brain]
+    frac = cover[:, in_core].mean(1)
     ok = frac >= args.min_scan_coverage
     if (~ok).any():
         print(f"[data] {int((~ok).sum())} scans left out: cover < {args.min_scan_coverage:.0%} of the brain "
               f"(field of view)")
     X, cover, table = X[ok], cover[ok], table[ok].reset_index(drop=True)
     vox = cover.all(0)
+    if args.whole_brain and args.rim_mm > 0:
+        print(f"[data] rim: {int((vox & ~in_core).sum())} of {int((~in_core).sum())} rim voxels covered in every scan and used")
     dk = DKCortex(brain.shape, affine, args.atlas_dir)
     if not args.whole_brain:
         vox &= dk.mask[brain]
