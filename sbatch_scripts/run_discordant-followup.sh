@@ -4,7 +4,7 @@
 # Discordant-case follow-up for one final MNI visual-read model that already went through
 # run_visual-read-analysis.sh and occlusion (submit_vis-occlusion-all.sh + merge_occlusion_chunks.py).
 # Runs only the new / changed steps, on the held-out test set and AVID separately (never pooled):
-#   0. replots with read-based axis labels/titles (ROC axes "Model + / Read +" and "Model + / Read -"):
+#   0. replots with read-based axis labels/titles (ROC axes "Agreement with Read +" / "Disagreement with Read -"):
 #      performance summary, Figure 1 (test, AVID), plot_visual_read_results.py (test; AVID when its figures are in
 #      validation/figures)
 #   1. reader votes (adds 6_grade_at_same_suvr.csv: reader tau score at the same meta-temporal SUVR)
