@@ -243,7 +243,7 @@ def main():
         ax.set_ylabel("Left–right asymmetry |AI|", fontsize=12)
         ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name), fontsize=12)
     set_name = "held-out test" if args.set == "test" else external_name(args.ext_dataset)
-    fig.suptitle("Left–right asymmetry", fontsize=14)
+    fig.suptitle(f"Left–right asymmetry, {set_name}", fontsize=14)
     fig.tight_layout()
     fig.savefig(out / "asymmetry.png", dpi=200)
     plt.close(fig)

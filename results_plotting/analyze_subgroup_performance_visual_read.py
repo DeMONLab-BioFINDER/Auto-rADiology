@@ -62,6 +62,7 @@ from scipy import stats
 
 from analyze_bias_significance import add_fdr_columns
 from list_discordant_cases import find_dataset_demo_csv
+from plot_utils import set_figure_set, with_set
 from plot_utils import (
     SUBGROUP_DESCRIBED_ONLY,
     SUBGROUP_MIN_LEVEL_N,
@@ -307,6 +308,7 @@ def main():
     tests_df.insert(tests_df.columns.get_loc("metric") + 1, "compares", tests_df["metric"].map(COMPARES))
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    set_figure_set(out_dir, args.dataset)
     overall = level_stats(df)
     stats_df.to_csv(out_dir / "visual_read_subgroup_performance.csv", index=False)
     tests_df.to_csv(out_dir / "visual_read_subgroup_tests.csv", index=False)

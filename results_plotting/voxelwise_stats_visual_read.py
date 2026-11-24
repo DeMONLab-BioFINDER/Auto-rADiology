@@ -215,7 +215,7 @@ def centaur_label(ijk, regions: dict, cortex) -> str:
     return ", ".join(hits) if hits else (OUTSIDE if cortex[tuple(ijk)] else "Outside cortex")
 
 
-def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None):
+def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label: str = ""):
     """t-map shown only where significant (FWE p < 0.05); red = tau higher with the tested variable.
     Same style as the occlusion montage: white background, 1 mm template, label left, z under the slices, one L/R
     marker, one colour bar. No display smoothing (a statistics map); nearest resampling keeps the significant area."""
@@ -248,7 +248,8 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None):
     cb.ax.set_yticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"], fontsize=13)
     cb.outline.set_visible(False)
     cb.set_label(f"t (FWE p < {ALPHA})", fontsize=12, color="0.3")
-    fig.text(left, 1.0, "Voxelwise tau differences", ha="left", va="bottom", fontsize=16)
+    fig.text(left, 1.0, "Voxelwise tau differences" + (f", {set_label}" if set_label else ""), ha="left", va="bottom",
+             fontsize=16)
     fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 
@@ -313,7 +314,8 @@ def main():
             nib.save(masker.inverse_transform(v.astype(np.float32)), out / f"{name}_{k}.nii.gz")
         t_img = masker.inverse_transform(t.astype(np.float32))
         sig_img = masker.inverse_transform(sig.astype(np.float32))
-        plot_map(t_img, sig_img, TITLES[name], out / f"{name}.png", regions_img)
+        plot_map(t_img, sig_img, TITLES[name], out / f"{name}.png", regions_img,
+                 set_label="held-out test" if args.set == "test" else args.ext_dataset.removesuffix("_unseen"))
 
         peak = int(np.argmax(np.abs(t) * sig)) if sig.any() else int(np.argmax(np.abs(t)))
         ijk = np.argwhere(keep)[peak]

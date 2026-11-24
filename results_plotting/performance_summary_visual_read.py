@@ -149,7 +149,7 @@ def roc_figure(sets: dict, summary: pd.DataFrame, out: Path):
     ax.set_xlabel("Disagreement with Read −")
     ax.set_ylabel("Agreement with Read +")
     ax.set_xlim(-0.01, 1); ax.set_ylim(0, 1.01); ax.set_aspect("equal")
-    ax.set_title("ROC curves", fontsize=12)
+    ax.set_title("ROC curves, model and meta-temporal SUVR", fontsize=12)
     ax.legend(loc="lower right", fontsize=7.5, frameon=True)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)

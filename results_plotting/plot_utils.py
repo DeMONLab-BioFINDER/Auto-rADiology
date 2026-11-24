@@ -37,6 +37,21 @@ PREFERRED_TARGET_ORDER = ["MetaTemporal", "MesialTemporal", "TemporoParietal", "
 # ------------------------------
 # Formatting helpers
 # ------------------------------
+FIGURE_SET_LABEL = ""  # data set named in figure titles ("held-out test" / "AVID"); set once per script
+
+
+def set_figure_set(out_dir, dataset: str) -> str:
+    """Name the data set for figure titles from where the figures go: <run>/validation/figures = external set."""
+    global FIGURE_SET_LABEL
+    FIGURE_SET_LABEL = external_name(dataset) if "validation" in Path(out_dir).parts else "held-out test"
+    return FIGURE_SET_LABEL
+
+
+def with_set(title: str) -> str:
+    """Figure title plus the data set, e.g. "Calibration, held-out test"."""
+    return f"{title}, {FIGURE_SET_LABEL}" if FIGURE_SET_LABEL else title
+
+
 def external_name(ext_dataset: str) -> str:
     """Display name of an external set from its run_val.py dataset name: AVID_unseen -> AVID, OASIS_unseen -> OASIS."""
     return ext_dataset.removesuffix("_unseen")
@@ -1196,7 +1211,7 @@ def make_subgroup_disagreement_panel(
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
 
-    fig.suptitle(title or str(sub["variable"].iloc[0]), fontsize=TITLE_SIZE - 2)
+    fig.suptitle(with_set(title or str(sub["variable"].iloc[0])), fontsize=TITLE_SIZE - 2)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
@@ -1932,7 +1947,7 @@ def make_disagreement_counts_by_value_panel(
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
         style_legend(ax, loc="best")  # bars live on this axes, so "best" keeps the legend off them
-    fig.suptitle(f"Disagreements by {label_x[:1].lower() + label_x[1:]}", fontsize=TITLE_SIZE - 2)
+    fig.suptitle(with_set(f"Disagreements by {label_x[:1].lower() + label_x[1:]}"), fontsize=TITLE_SIZE - 2)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / (filename or f"visual_read_discordant_by_{value_col.lower()}.png"), dpi=300)
     plt.close(fig)

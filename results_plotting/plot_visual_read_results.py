@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import seaborn as sns
 
+from plot_utils import set_figure_set, with_set
 from plot_utils import (
     CENTAUR_FTP_CTRZ2_SUVR,
     CENTILOID_BIN_EDGES,
@@ -147,6 +148,7 @@ def main():
         )
         out_dir = run_dir / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
+    set_figure_set(out_dir, args.dataset)
 
     demo_path = resolve_path(args.demo_csv, lambda: find_dataset_demo_csv(args.dataset) or find_demo_csv())
     df_demo = None
