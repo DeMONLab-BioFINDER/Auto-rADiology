@@ -3,9 +3,9 @@
 
 One descriptive figure, two panels with one row per CenTauR region (meta-temporal, temporoparietal, mesial
 temporal, frontal):
-  left   median share of each scan's cortical positive evidence in the region, per outcome group
+  left   median percentage of each scan's cortical positive evidence in the region, per outcome group
          (Model + / Read +, Model - / Read +, Model - / Read -), from occlusion_group_maps.py; a black tick
-         marks the region's share of the cortex volume (evidence spread evenly would land on the tick)
+         marks the region's percentage of the cortex volume (evidence spread evenly would land on the tick)
   right  how much higher the region's SUVR is in Read + than in Read - scans of the same set, as a
          standardised difference (Cohen's d: difference in means / pooled SD), from the demographics csv
 Reading it: if the regions with the largest tau difference also get the most evidence, the model looks where
@@ -25,6 +25,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from matplotlib.ticker import PercentFormatter
 
 from plot_utils import CUSTOM_PALETTE
 
@@ -87,9 +89,10 @@ def main():
         ax1.barh(y + 0.4 - h * (i + 0.5), table[f"median evidence share, {g}"], height=h * 0.9,
                  color=CUSTOM_PALETTE[i], label=f"{lab} (n = {n})")
     ax1.scatter(table["volume share of cortex"], y, marker="|", s=400, color="black", linewidths=2,
-                label="Region's share of the cortex", zorder=5)
+                label="Region's % of the cortex volume", zorder=5)
     ax1.set_yticks(y, [r for r, _ in REGIONS])
-    ax1.set_xlabel("Median share of the scan's positive evidence")
+    ax1.set_xlabel("% of the model's evidence in the region (median)")
+    ax1.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     ax1.set_xlim(0, max(0.05, float(np.nanmax(table.filter(like="median evidence").to_numpy()) * 1.15)))
     ax1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=8, frameon=False)
     ax1.set_title("Where the model finds evidence", fontsize=11)
