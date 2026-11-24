@@ -262,7 +262,7 @@ def main():
     img = Image.open(big)
     img = img.resize((WIDTH_PX, round(img.height * WIDTH_PX / img.width)), Image.LANCZOS)
     img.save(out / name, optimize=True)
-    big.unlink()
+    big.replace(out / f"{Path(name).stem}_hires.png")  # full 300 dpi copy for slides (the small one is the OHBM size)
 
     stem = Path(name).stem  # numbers saved next to their figure, so the test and AVID runs don't overwrite each other
     pd.concat(numbers).to_csv(out / f"{stem}_numbers.csv", index=False)
