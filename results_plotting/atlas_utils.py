@@ -1,4 +1,5 @@
-"""Desikan-Killiany (DK) cortex on the model's MNI grid: a cortex mask and region names for voxelwise peaks.
+"""Region masks on the model's MNI grid: the Desikan-Killiany (DK) cortex outline (which voxels count as cortex)
+and the published CenTauR tau masks (the regions every result is reported in).
 
 Atlas: FreeSurfer aparc+aseg run on the MNI152NLin2009cAsym template itself (Lotter LD 2025, G-Node,
 doi:10.12751/g-node.2mnxpm), the same file plot_fda_regions.py uses, downloaded on first use. Same template
@@ -20,6 +21,24 @@ from scipy.ndimage import distance_transform_edt
 from plot_fda_regions import DK_FILE, DK_TSV, fetch
 
 DEFAULT_ATLAS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "atlases" / "lotter2025_mni_freesurfer"
+
+
+# CenTauR masks (Villemagne 2023), the same masks as the SUVRs in the demographics csv. They overlap (meta-temporal
+# includes mesial temporal), so shares over them do not add up to 1.
+CENTAUR_FILES = {"Meta-temporal": "Meta_CenTauR.nii.gz", "Temporoparietal": "TP_CenTauR.nii.gz",
+                 "Mesial temporal": "Mesial_CenTauR.nii.gz", "Frontal": "Frontal_CenTauR.nii.gz"}
+
+
+def centaur_masks(shape, affine, centaur_dir) -> dict:
+    """{region name: boolean mask} on the given grid (nearest-neighbour; the files may be 4D (x, y, z, 1))."""
+    target = nib.Nifti1Image(np.zeros(shape, np.int8), affine)
+    out = {}
+    for name, fname in CENTAUR_FILES.items():
+        img = nib.load(Path(centaur_dir) / fname)
+        img = nib.Nifti1Image(np.squeeze(np.asarray(img.dataobj)), img.affine)
+        out[name] = image.resample_to_img(img, target, interpolation="nearest", force_resample=True,
+                                          copy_header=True).get_fdata() > 0
+    return out
 
 
 def pretty(name: str) -> str:

@@ -1,18 +1,25 @@
 #!/bin/bash
 # SLURM batch job script for Berzelius - submit from a login node.
 #
-# Voxelwise maps of discordant scans (results_plotting/voxelwise_stats_visual_read.py, extra analyses) for one
-# final MNI visual-read model, on the held-out test set and each external set, one after the other (never pooled):
+# Voxelwise maps of discordant scans (results_plotting/voxelwise_stats_visual_read.py) for one final MNI
+# visual-read model, on the held-out test set and each external set, one after the other (never pooled).
+# Default (the extra analyses):
 #   read_neg_above_cutoff      Read - scans: meta temporal SUVR above vs below the CenTauRz cut point (Read - / SUVR +)
 #   read_pos_below_cutoff      Read + scans: below vs above the cut point (Read + / SUVR -)
 #   model_neg_read_pos_vs_neg  Model - scans: Read + vs Read - (what readers see in the Model - / Read + scans)
+# Any analysis of the script can be chosen with ANALYSES= (e.g. read_pos_vs_neg, missed_vs_detected).
+# Cortex only (DK outline); results reported per CenTauR region (masks from $DATA/masks).
 # Groups with fewer than 5 scans are skipped. CPU work only (a GPU is requested because Berzelius jobs need one).
-# Outputs: <run>/figures/voxelwise_discordant_<set>/ (maps, summary.csv, dk_regions.csv)
+# Outputs: <run>/figures/voxelwise_discordant_<set>/ (maps, summary.csv, centaur_regions.csv)
 #
 # Usage (from the Auto-rADiology root):
 #   sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final_run_folder>
 #   ANALYSES=model_neg_read_pos_vs_neg sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final_run_folder>   # one map only
 #   EXTS="OASIS_unseen" N_PERM=1000 sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final_run_folder>   # quicker check
+# Original frozen MNI attention model (test + AVID, full training pool demographics), discordant-case set:
+#   DEMO=/proj/berzelius-2024-156/users/x_nadpi/data/demo.csv EXTS=AVID_unseen \
+#   ANALYSES="read_pos_vs_neg missed_vs_detected model_neg_read_pos_vs_neg" \
+#   sbatch sbatch_scripts/submit_voxelwise-discordant.sh <final-17-attention run folder>
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1

@@ -19,6 +19,9 @@ Outcome groups (cut-off 0.5): Model + / Read + (true positive), Model - / Read +
      white matter and deep off-target spots do not count. Big regions get big shares by size alone, so each
      share is also given as an enrichment: share / the region's share of the cortex volume (1 = no more than
      its size; 3 = three times more evidence than its size).
+     Off-target check: "Outside cortex" = the share of the scan's positive evidence in the whole brain that
+     falls outside the cortex (white matter, deep structures such as the striatum / choroid plexus, brainstem,
+     cerebellum). A different total from the CenTauR shares above (whole brain, not cortex).
   3. Test: meta-temporal (pre-specified, the comparator region) and temporoparietal share, true positives vs
      missed scans and true positives vs true negatives (permutation test on the difference in medians,
      10,000 shuffles; FDR over the four).
@@ -45,15 +48,14 @@ import pandas as pd
 from nilearn import image, plotting
 from statsmodels.stats.multitest import multipletests
 
-from atlas_utils import DKCortex
+from atlas_utils import CENTAUR_FILES as CENTAUR, DKCortex
 from make_case_viewer import MNI_2MM_RAS, MNI_SHAPE, brain_mask, on_mni_grid, region_zones
 
 ZONES = {1: "Posterolateral temporal", 2: "Occipital", 3: "Parietal / precuneus", 4: "Frontal",
          5: "Anterolateral temporal", 6: "Mesial temporal", 0: "Rest of brain"}
 FDA_POSITIVE = [1, 2, 3]
-CENTAUR = {"Meta-temporal": "Meta_CenTauR.nii.gz", "Temporoparietal": "TP_CenTauR.nii.gz",
-           "Mesial temporal": "Mesial_CenTauR.nii.gz", "Frontal": "Frontal_CenTauR.nii.gz"}
 OUTSIDE = "Outside CenTauR regions"
+OFF_CORTEX = "Outside cortex (share of whole-brain evidence)"
 TESTED = ["Meta-temporal", "Temporoparietal"]
 GROUPS = [("TP", "Model + / Read +", 1, 1), ("FN", "Model − / Read +", 1, 0),
           ("TN", "Model − / Read −", 0, 0), ("FP", "Model + / Read −", 0, 1)]
@@ -198,6 +200,8 @@ def main():
         for name, mask in regions.items():
             row[name] = pos[mask].sum() / total if total > 0 else np.nan
             row[f"{name} enrichment"] = row[name] / vol_share[name]
+        brain_total = pos[in_brain].sum()
+        row[OFF_CORTEX] = pos[in_brain & ~cortex].sum() / brain_total if brain_total > 0 else np.nan
         shares.append(row)
 
         if zones is not None:
@@ -227,9 +231,10 @@ def main():
 
     # CenTauR shares by group (+ each region's volume share for reference) and tests
     names = list(regions)
-    cols = names + [f"{k} enrichment" for k in names]
+    cols = names + [f"{k} enrichment" for k in names] + [OFF_CORTEX]
     table = by_group(shares, cols)
-    table.loc["volume share"] = {"n": np.nan, **vol_share, **{f"{k} enrichment": 1.0 for k in names}}
+    off_vol = (in_brain & ~cortex).sum() / in_brain.sum()
+    table.loc["volume share"] = {"n": np.nan, **vol_share, **{f"{k} enrichment": 1.0 for k in names}, OFF_CORTEX: off_vol}
     table.to_csv(out / "centaur_shares_by_group.csv")
     tests = share_tests(shares, TESTED, args.n_perm)
     tests.to_csv(out / "centaur_share_tests.csv", index=False)
@@ -242,6 +247,9 @@ def main():
         print(table[["n"] + names].rename(index=labels).to_string())
         print("\nEnrichment (share / volume share; 1 = no more than the region's size):")
         print(table[[f"{k} enrichment" for k in names]].rename(index=labels).drop(index="volume share").to_string())
+        print(f"\nOff-target check, median share of whole-brain positive evidence outside the cortex "
+              f"(last row: share of the brain volume):")
+        print(table[[OFF_CORTEX]].rename(index=labels).to_string())
     if len(tests):
         print("\nShare in CenTauR regions (permutation test, difference in medians, FDR over all four):")
         for _, t in tests.iterrows():

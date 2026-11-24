@@ -29,8 +29,11 @@ over the cortex, with threshold-free cluster enhancement (TFCE) as the main map 
 alongside. Significant = FWE p < 0.05. Model log-odds use probabilities clipped to [1e-4, 1 - 1e-4], as in
 regress_model_output_visual_read.py. Continuous covariates are z-scored.
 
-Voxels: cortex only (Desikan-Killiany cortical labels on the MNI152NLin2009cAsym template, atlas_utils.py;
---whole_brain for the whole MNI152 brain mask), and covered (non-zero) in every scan used. Images are smoothed
+Voxels: cortex only (the Desikan-Killiany cortical labels on the MNI152NLin2009cAsym template are used only as
+the cortex outline, atlas_utils.py; --whole_brain for the whole MNI152 brain mask), and covered (non-zero) in every
+scan used. Results are reported in the CenTauR regions (the published tau masks, same as the SUVRs): per region the
+significant voxels, the % of the region's analysed voxels they cover and their share of all significant voxels,
+plus the cortex outside every CenTauR region. Maps outline the CenTauR meta-temporal region. Images are smoothed
 before the cortex is taken. Tau pathology is cortical; white matter and deep structures carry mostly off-target
 signal. Scans covering less than
 --min_scan_coverage of the brain (scanner field of view cuts off the top of the head) are left out, so a few
@@ -40,12 +43,13 @@ Usage (Berzelius, a job: the permutations take a while, see sbatch_scripts/submi
     python results_plotting/voxelwise_stats_visual_read.py <final_run_dir> --set test \\
         --pkl_dir /proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI \\
         --ref_mask /proj/berzelius-2024-156/users/x_nadpi/data/masks/voi_CerebGry_tau_2mm.nii \\
+        [--centaur_dir <folder with Meta_CenTauR.nii.gz, ...> (default: the --ref_mask folder)]
         [--atlas_dir <DK atlas folder>] [--n_perm 5000] [--n_jobs 16]
 Outputs (<run_dir>/figures/voxelwise_stats_<set>/, no IDs): per analysis <name>_t.nii.gz,
 <name>_logp_tfce.nii.gz, <name>_logp_maxt.nii.gz (-log10 FWE p), <name>.png; summary.csv (n, voxels
-significant each way, peak and its DK region), dk_regions.csv (per analysis and direction: significant voxels
-in each DK region and the % of that region they cover, largest first), fda_region_overlap.csv (only with
---regions: share per FDA region, an approximation, supplementary).
+significant each way, peak and the CenTauR regions it lies in), centaur_regions.csv (per analysis and direction:
+significant voxels in each CenTauR region, the % of the region they cover and their share of all significant
+voxels), fda_region_overlap.csv (only with --regions: share per FDA region, an approximation, supplementary).
 """
 import argparse
 import time
@@ -62,7 +66,7 @@ from nilearn.maskers import NiftiMasker
 from nilearn.mass_univariate import permuted_ols
 from scipy.ndimage import gaussian_filter
 
-from atlas_utils import DKCortex
+from atlas_utils import DKCortex, centaur_masks
 from make_case_viewer import region_zones
 from plot_utils import CENTAUR_FTP_CTRZ2_SUVR, add_subgroup_columns, find_demo_csv, resolve_path
 from regress_model_output_visual_read import CLIP, find_ext_demo
@@ -75,7 +79,7 @@ ALPHA = 0.05
 TITLES = {
     "model_beyond_read": "Higher model output at the same read and meta-temporal SUVR",
     "read_beyond_model": "Read + at the same model output and meta-temporal SUVR",
-    "missed_vs_detected": "Missed (Model − / Read +) vs detected (Model + / Read +), same meta-temporal SUVR",
+    "missed_vs_detected": "Model − / Read + vs Model + / Read +, same meta-temporal SUVR",
     "read_pos_vs_neg": "Read + vs Read − (age, sex, site adjusted)",
 }
 CORE = list(TITLES)  # the default set (the Snakemake workflow runs these)
@@ -94,7 +98,8 @@ def parse_args():
     p.add_argument("--pkl_dir", required=True, help="Folder with the original MNI tau_batch_*.pkl.")
     p.add_argument("--ref_mask", required=True, help="Reference-region mask (NIfTI, MNI space).")
     p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): optional overlap table.")
-    p.add_argument("--atlas_dir", default=None, help="DK atlas folder (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
+    p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (default: the --ref_mask folder).")
+    p.add_argument("--atlas_dir", default=None, help="DK atlas folder, cortex outline only (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
     p.add_argument("--whole_brain", action="store_true", help="Whole brain instead of cortex only.")
     p.add_argument("--dataset", default="Gothenburg")
     p.add_argument("--ext_dataset", default="AVID_unseen")
@@ -201,6 +206,15 @@ def design(t: pd.DataFrame, analysis: str):
     return base.index.to_numpy(), tested.to_numpy()[:, None], pd.DataFrame(conf).to_numpy()
 
 
+OUTSIDE = "Cortex outside CenTauR regions"
+
+
+def centaur_label(ijk, regions: dict, cortex) -> str:
+    """CenTauR regions a voxel lies in ('Meta-temporal, Temporoparietal'), else cortex outside them / outside cortex."""
+    hits = [name for name, m in regions.items() if m[tuple(ijk)]]
+    return ", ".join(hits) if hits else (OUTSIDE if cortex[tuple(ijk)] else "Outside cortex")
+
+
 def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None):
     """t-map shown only where significant (FWE p < 0.05); red = tau higher with the tested variable."""
     t = t_img.get_fdata() * (sig_img.get_fdata() > 0)
@@ -246,17 +260,18 @@ def main():
     masker = NiftiMasker(nib.Nifti1Image(keep.astype(np.int8), affine)).fit()
     # the masker orders voxels like keep[...] boolean indexing, the same order as X's columns
 
-    regions_img, zones = None, None
+    centaur = centaur_masks(keep.shape, affine, Path(args.centaur_dir) if args.centaur_dir else Path(args.ref_mask).parent)
+    regions_img = nib.Nifti1Image(centaur["Meta-temporal"].astype(np.int8), affine)  # outline on the maps
+    zones = None
     if args.regions:
         zones_1mm, z_aff = region_zones(Path(args.regions))
         zones = image.resample_to_img(nib.Nifti1Image(zones_1mm.astype(np.int16), z_aff),
                                       nib.Nifti1Image(np.zeros(keep.shape, np.int16), affine),
                                       interpolation="nearest", force_resample=True, copy_header=True).get_fdata().astype(int)
-        regions_img = nib.Nifti1Image(np.isin(zones, [1, 2, 3]).astype(np.int8), affine)
 
-    summary, overlap, dk_rows = [], [], []
-    dk_in = dk.labels[keep]
-    dk_size = pd.Series(dk_in[dk_in > 0]).value_counts()
+    summary, overlap, region_rows = [], [], []
+    reg_in = {name: m[keep] for name, m in centaur.items()}
+    reg_in[OUTSIDE] = dk.mask[keep] & ~np.logical_or.reduce(list(reg_in.values()))
     for name in args.analyses:
         rows, tested, conf = design(table, name)
         if name != "model_beyond_read" and min(tested.sum(), len(tested) - tested.sum()) < 5:
@@ -286,13 +301,16 @@ def main():
                         "voxels_sig_higher": int((sig & (t > 0)).sum()), "voxels_sig_lower": int((sig & (t < 0)).sum()),
                         "voxels_sig_maxt": int((res["logp_max_t"][0] > -np.log10(ALPHA)).sum()),
                         "peak_t": float(t[peak]), "peak_x": xyz[0], "peak_y": xyz[1], "peak_z": xyz[2],
-                        "peak_region": dk.name_at(ijk),
+                        "peak_region": centaur_label(ijk, centaur, dk.mask),
                         "min_fwe_p": float(10 ** -logp.max()), "minutes": (time.time() - t0) / 60})
         for sign, mask in [("higher", sig & (t > 0)), ("lower", sig & (t < 0))]:
-            counts = pd.Series(dk_in[mask & (dk_in > 0)]).value_counts()
-            for lab, n in counts.items():
-                dk_rows.append({"analysis": name, "direction": sign, "region": dk.names[int(lab)],
-                                "n_voxels": int(n), "pct_of_region": 100 * n / dk_size[lab]})
+            if not mask.any():
+                continue
+            for region, m in reg_in.items():
+                n = int((mask & m).sum())
+                region_rows.append({"analysis": name, "direction": sign, "region": region, "n_voxels": n,
+                                    "pct_of_region": 100 * n / m.sum() if m.sum() else np.nan,
+                                    "share_of_significant": n / int(mask.sum())})
         if zones is not None:
             z_in = zones[keep]
             for sign, mask in [("higher", sig & (t > 0)), ("lower", sig & (t < 0))]:
@@ -301,17 +319,17 @@ def main():
                                     **{ZONES[k]: float((z_in[mask] == k).mean()) for k in ZONES}})
         s = summary[-1]
         print(f"[{name}] n = {s['n_scans']}: {s['voxels_sig_higher']} voxels tau higher, {s['voxels_sig_lower']} lower "
-              f"(TFCE FWE p < {ALPHA}); peak t = {s['peak_t']:+.2f} at ({xyz[0]:.0f}, {xyz[1]:.0f}, {xyz[2]:.0f}), "
+              f"({'max-t' if args.no_tfce else 'TFCE'} FWE p < {ALPHA}); peak t = {s['peak_t']:+.2f} at ({xyz[0]:.0f}, {xyz[1]:.0f}, {xyz[2]:.0f}), "
               f"{s['peak_region']}; "
               f"{s['minutes']:.1f} min")
 
     pd.DataFrame(summary).to_csv(out / "summary.csv", index=False)
-    if dk_rows:
-        dkt = pd.DataFrame(dk_rows).sort_values(["analysis", "direction", "n_voxels"], ascending=[True, True, False])
-        dkt.to_csv(out / "dk_regions.csv", index=False)
-        with pd.option_context("display.width", 200, "display.float_format", "{:.0f}".format):
-            print("\nLargest significant DK regions (voxels, % of the region):")
-            print(dkt.groupby(["analysis", "direction"]).head(5).to_string(index=False))
+    if region_rows:
+        rt = pd.DataFrame(region_rows)
+        rt.to_csv(out / "centaur_regions.csv", index=False)
+        with pd.option_context("display.width", 200, "display.float_format", "{:.2f}".format):
+            print("\nSignificant voxels per CenTauR region (regions overlap; % of the region; share of all significant voxels):")
+            print(rt.to_string(index=False))
     if overlap:
         ov = pd.DataFrame(overlap)
         ov.to_csv(out / "fda_region_overlap.csv", index=False)
