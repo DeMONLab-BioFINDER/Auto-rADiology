@@ -191,6 +191,30 @@ def figure(t: pd.DataFrame, title: str, out: Path):
     fig.suptitle(title, fontsize=11); fig.tight_layout(); fig.savefig(out); plt.close(fig)
 
 
+def figure_odds(t: pd.DataFrame, title: str, out: Path):
+    """Slide version: only the read-vs-model odds ratios (model 4), factor names on the left."""
+    m4 = t[t["model"].str.startswith("4") & t["estimate"].notna()]
+    m4 = m4[(m4["extra"] == "none") | (m4["term"] == m4["extra"].map(EXTRAS))]
+    if m4.empty:
+        return
+    terms = list(dict.fromkeys(m4["term"].tolist()))
+    fig, ax = plt.subplots(figsize=(6.4, 0.5 * len(terms) + 1.6), dpi=170)
+    y = {term: i for i, term in enumerate(terms[::-1])}
+    for (model, colour, dy, label) in [("4a", "#7f7f7f", 0.15, "Visual read"), ("4b", "#c0504d", -0.15, "Model")]:
+        for k, (_, r) in enumerate(m4[m4["model"].str.startswith(model)].iterrows()):
+            ax.errorbar(r["estimate"], y[r["term"]] + dy, xerr=[[r["estimate"] - r["lo"]], [r["hi"] - r["estimate"]]],
+                        fmt="o", color=colour, capsize=2.5, ms=5, label=label if k == 0 else None)
+    ax.axvline(1, color="#999", lw=0.8); ax.set_xscale("log")
+    ticks = [t for t in [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50] if ax.get_xlim()[0] <= t <= ax.get_xlim()[1]]
+    ax.set_xticks(ticks, [f"{t:g}" for t in ticks]); ax.minorticks_off()
+    ax.set_xlabel("Odds of being called positive (same meta-temporal SUVR)\n< 1 less likely · 1 = no effect · > 1 more likely")
+    ax.set_yticks(list(y.values())); ax.set_yticklabels(list(y.keys()), fontsize=9)
+    ax.legend(fontsize=8, loc="lower right", frameon=False)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_title(title, fontsize=11)
+    fig.tight_layout(); fig.savefig(out); plt.close(fig)
+
+
 def main():
     args = parse_args()
     run = Path(args.run_dir).resolve()
@@ -203,6 +227,7 @@ def main():
         stem = "test" if which == "test" else external_name(args.ext_dataset).lower()  # e.g. regressions_oasis
         t.to_csv(out / f"regressions_{stem}.csv", index=False)
         figure(t, f"{names[which]} (n = {len(d)})", out / f"regressions_{stem}.png")
+        figure_odds(t, f"{names[which]} (n = {len(d)})", out / f"regressions_{stem}_odds.png")
         print(f"\n===== {names[which]}: {len(d)} scans (CU / MCI / AD dementia) =====")
         for (model, extra), g in t.groupby(["model", "extra"], sort=False):
             g = g[g["term"] != "(not estimable)"]
