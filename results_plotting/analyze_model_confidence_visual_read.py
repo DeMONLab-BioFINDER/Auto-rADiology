@@ -173,28 +173,29 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
         cap = max(10, int(np.ceil(inner * 1.6)))
         if counts.max() <= cap * 1.5:
             cap = max(int(np.ceil(counts.max() * 1.15)), 1)
-        ax.bar(centres, np.minimum(counts, cap), width=0.05, color=[GROUP_COLORS[g] for g in bar_groups],
+        ax.bar(centres, np.minimum(counts, cap), width=0.034, color=[GROUP_COLORS[g] for g in bar_groups],
                edgecolor="white", linewidth=0.8, zorder=2)
         for x, c in zip(centres, counts):
             if c:
                 cut = c > cap
                 ax.text(x, min(c, cap), f"{c}" + (" ↑" if cut else ""), ha="center", va="bottom",
-                        fontsize=TICK_SIZE - 3, color="black" if cut else "#555555",
+                        fontsize=TICK_SIZE, color="black" if cut else "#555555",
                         fontweight="bold" if cut else "normal")
         ax.axvline(0.5, color="black", linestyle="--", linewidth=1.2, zorder=3)
         ax.set_ylim(0, cap * 1.12)
         ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        ax.set_title(f"Read {'+' if read else '−'} (n = {len(sub)})", fontsize=LABEL_SIZE)
-        ax.set_ylabel("Scans", fontsize=LABEL_SIZE - 2)
+        ax.set_title(f"Read {'+' if read else '−'} (n = {len(sub)})", fontsize=LABEL_SIZE + 1)
+        ax.set_ylabel("Scans", fontsize=LABEL_SIZE)
+        ax.tick_params(labelsize=TICK_SIZE + 1)
         ax.grid(axis="y", alpha=0.25)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-    axes[-1].set_xlabel("Model probability of tau positive (dashed line = 0.5 threshold)", fontsize=LABEL_SIZE - 2)
+    axes[-1].set_xlabel("Model probability of tau positive (dashed line = 0.5 cut-off)", fontsize=LABEL_SIZE)
     axes[-1].set_xlim(0, 1)
     handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLORS[g]) for g in GROUP_ORDER]
     fig.legend(handles, [GROUP_DISPLAY_LABELS[g] for g in GROUP_ORDER], loc="lower center", ncol=2,
-               frameon=False, fontsize=TICK_SIZE - 1)
-    fig.suptitle(with_set("Model probability, Read + and Read − scans"), fontsize=TITLE_SIZE - 3)
+               frameon=False, fontsize=TICK_SIZE + 1)
+    fig.suptitle(with_set("Model probability, Read + and Read − scans"), fontsize=TITLE_SIZE)
     finalize_figure(fig, rect=(0.0, 0.09, 1.0, 1.0))
     save_figure(fig, out_path, dpi=300)
     plt.close(fig)

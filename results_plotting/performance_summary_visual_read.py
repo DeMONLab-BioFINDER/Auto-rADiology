@@ -146,18 +146,19 @@ def roc_figure(sets: dict, summary: pd.DataFrame, out: Path):
             ax.plot(f2, t2, color=c, lw=1.2, ls="--", label=f"{SET_LABELS[which]}: MetaTemporal SUVR AUC {row['auc_suvr']:.3f}")
         ax.plot(1 - row["agreement read -"], row["agreement read +"], "o", color=c, ms=7, mec="white", mew=1.2)
     ax.plot([0, 1], [0, 1], color="#bbbbbb", lw=0.8)
-    ax.set_xlabel("Disagreement with Read −")
-    ax.set_ylabel("Agreement with Read +")
+    ax.set_xlabel("Disagreement with Read −", fontsize=12)
+    ax.set_ylabel("Agreement with Read +", fontsize=12)
+    ax.tick_params(labelsize=10.5)
     ax.set_xlim(-0.01, 1); ax.set_ylim(0, 1.01); ax.set_aspect("equal")
-    ax.set_title("ROC curves, model and meta-temporal SUVR", fontsize=12)
-    ax.legend(loc="lower right", fontsize=7.5, frameon=True)
+    ax.set_title("ROC curves, model and meta-temporal SUVR", fontsize=13)
+    ax.legend(loc="lower right", fontsize=9, frameon=True)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
 
 
 def forest_figure(pc: pd.DataFrame, out: Path):
     pc = pc.iloc[::-1].reset_index(drop=True)
-    fig, axes = plt.subplots(1, 2, figsize=(8, 0.42 * len(pc) + 1.3), dpi=180, sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(9, 0.5 * len(pc) + 1.6), dpi=180, sharey=True)
     for ax, name in zip(axes, ["agreement read +", "agreement read -"]):
         for i, r in pc.iterrows():
             c = SET_COLOURS[r["set"]]
@@ -165,12 +166,13 @@ def forest_figure(pc: pd.DataFrame, out: Path):
             lo, hi = max(r[name] - r[f"{name}_lo"], 0), max(r[f"{name}_hi"] - r[name], 0)
             ax.errorbar(100 * r[name], i, xerr=[[100 * lo], [100 * hi]],
                         fmt="o", color=c, ms=5, capsize=2.5, lw=1.2)
-        ax.set_title(f"Read {name.split()[-1].replace('-', '−')} scans", fontsize=10)
-        ax.set_xlabel("Agreement with the read (%)", fontsize=9)
+        ax.set_title(f"Read {name.split()[-1].replace('-', '−')} scans", fontsize=12)
+        ax.set_xlabel("Agreement with the read (%)", fontsize=11.5)
+        ax.tick_params(axis="x", labelsize=10.5)
         ax.set_xlim(0, 101); ax.grid(axis="x", color="#eeeeee"); ax.spines[["top", "right"]].set_visible(False)
     labels = [f"{r['cohort']} (n={r['n']}; {r['read +']} read +)" for _, r in pc.iterrows()]
-    axes[0].set_yticks(range(len(pc))); axes[0].set_yticklabels(labels, fontsize=8)
-    fig.suptitle("Agreement per cohort", fontsize=12)
+    axes[0].set_yticks(range(len(pc))); axes[0].set_yticklabels(labels, fontsize=10.5)
+    fig.suptitle("Agreement per cohort", fontsize=14)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
 
 

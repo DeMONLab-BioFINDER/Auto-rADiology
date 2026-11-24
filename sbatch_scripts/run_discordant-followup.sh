@@ -79,6 +79,8 @@ PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
 step "0 subgroups test" python results_plotting/analyze_subgroup_performance_visual_read.py "$RUN" "${T0[@]}"
 step "0 confidence test" python results_plotting/analyze_model_confidence_visual_read.py "$RUN" "${T0[@]}"
 step "0 discordant findings test" python results_plotting/plot_discordant_findings.py "$RUN" "${T0[@]}"
+step "0 patient characteristics test" python results_plotting/read_positive_factors_at_same_suvr.py "$RUN" "${T0[@]}"
+step "0 regional SUVR test" python results_plotting/regional_suvr_by_group.py "$RUN" "${T0[@]}"
 step "0 asymmetry test" python results_plotting/asymmetry_visual_read.py "$RUN" --set test --pkl_dir "$PKL_DIR" \
   --ref_mask "$MASKS/voi_CerebGry_tau_2mm.nii" --centaur_dir "$MASKS" --demo_csv "$DATA/demo.csv"
 step "0 asymmetry $EXT" python results_plotting/asymmetry_visual_read.py "$RUN" --set avid --ext_dataset "$EXT" \
@@ -89,6 +91,8 @@ if [[ "$EXT_FIG" == "$RUN/validation/figures" ]]; then
   step "0 subgroups $EXT" python results_plotting/analyze_subgroup_performance_visual_read.py "$RUN" "${A0[@]}"
   step "0 confidence $EXT" python results_plotting/analyze_model_confidence_visual_read.py "$RUN" "${A0[@]}"
   step "0 discordant findings $EXT" python results_plotting/plot_discordant_findings.py "$RUN" "${A0[@]}"
+  step "0 patient characteristics $EXT" python results_plotting/read_positive_factors_at_same_suvr.py "$RUN" "${A0[@]}"
+  step "0 regional SUVR $EXT" python results_plotting/regional_suvr_by_group.py "$RUN" "${A0[@]}"
 fi
 
 for S in "${SETS[@]}"; do

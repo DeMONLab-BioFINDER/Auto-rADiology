@@ -46,7 +46,7 @@ from nilearn import image
 from sklearn.metrics import roc_auc_score
 from statsmodels.stats.multitest import multipletests
 
-from plot_utils import add_subgroup_columns, external_name, find_demo_csv, resolve_path
+from plot_utils import CONFUSION_CATEGORY_PALETTE, add_subgroup_columns, external_name, find_demo_csv, resolve_path
 from regress_model_output_visual_read import CLIP, find_ext_demo
 from voxelwise_visual_read import suvr_images
 
@@ -230,20 +230,32 @@ def main():
     tests.to_csv(out / "asymmetry_tests.csv", index=False)
     aucs.to_csv(out / "auc_by_asymmetry.csv", index=False)
 
-    # figure: |AI| by outcome group, per region
-    order = [g for g in GROUPS.values() if (d["group"] == g).sum() > 0]
-    fig, axes = plt.subplots(1, len(REGIONS), figsize=(5.5 * len(REGIONS), 4))
+    # figure: |AI| by outcome group, per region (same group order and colours as the other discordance figures)
+    colour = {"Model + / Read +": CONFUSION_CATEGORY_PALETTE["True Positive"],
+              "Model − / Read −": CONFUSION_CATEGORY_PALETTE["True Negative"],
+              "Model − / Read +": CONFUSION_CATEGORY_PALETTE["False Negative"],
+              "Model + / Read −": CONFUSION_CATEGORY_PALETTE["False Positive"]}
+    order = [g for g in colour if (d["group"] == g).sum() > 0]
+    set_name = "held-out test" if args.set == "test" else external_name(args.ext_dataset)
+    fig, axes = plt.subplots(1, len(REGIONS), figsize=(6.2 * len(REGIONS), 5.2), sharey=True)
     for ax, name in zip(np.atleast_1d(axes), REGIONS):
         vals = [d.loc[d["group"] == g, f"{name}_absAI"].dropna() for g in order]
-        ax.boxplot(vals, showfliers=False)
-        for i, v in enumerate(vals, 1):
-            ax.scatter(np.random.default_rng(i).normal(i, 0.06, len(v)), v, s=6, alpha=0.4, color="k")
-        ax.set_xticks(range(1, len(order) + 1), [f"{g}\n(n = {len(v)})" for g, v in zip(order, vals)], fontsize=10)
-        ax.tick_params(axis="y", labelsize=10)
-        ax.set_ylabel("Left–right asymmetry |AI|", fontsize=12)
-        ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name), fontsize=12)
-    set_name = "held-out test" if args.set == "test" else external_name(args.ext_dataset)
-    fig.suptitle(f"Left–right asymmetry, {set_name}", fontsize=14)
+        bp = ax.boxplot(vals, widths=0.55, showfliers=False, patch_artist=True,
+                        medianprops={"color": "0.15", "linewidth": 2}, whiskerprops={"color": "0.45"},
+                        capprops={"color": "0.45"}, boxprops={"linewidth": 0})
+        for patch, g in zip(bp["boxes"], order):
+            patch.set_facecolor(colour[g]); patch.set_alpha(0.35)
+        for i, (v, g) in enumerate(zip(vals, order), 1):
+            ax.scatter(np.random.default_rng(i).normal(i, 0.07, len(v)), v, s=14, alpha=0.7, color=colour[g],
+                       edgecolor="white", linewidth=0.3, zorder=3)
+        ax.set_xticks(range(1, len(order) + 1), [f"{g.replace(' / ', ' /' + chr(10))}\n(n = {len(v)})"
+                                                 for g, v in zip(order, vals)], fontsize=12)
+        ax.tick_params(axis="y", labelsize=12)
+        ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name), fontsize=14)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(axis="y", color="0.92")
+    np.atleast_1d(axes)[0].set_ylabel("Left–right asymmetry |AI|", fontsize=14)
+    fig.suptitle(f"Left–right asymmetry, {set_name}", fontsize=16)
     fig.tight_layout()
     fig.savefig(out / "asymmetry.png", dpi=200)
     plt.close(fig)

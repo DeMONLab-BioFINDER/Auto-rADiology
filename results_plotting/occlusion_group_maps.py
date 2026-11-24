@@ -101,7 +101,7 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
     bg = datasets.load_mni152_template(resolution=1)
     outline_1mm = image.smooth_img(image.resample_to_img(regions_img, bg, interpolation="continuous",
                                                          force_resample=True, copy_header=True), fwhm=2)
-    rows = list(means)
+    rows = [g for g in ("TP", "TN", "FN", "FP") if g in means]  # concordant first, Model − / Read + last
     fig = plt.figure(figsize=(13, 1.75 * len(rows) + 0.7), facecolor="white")
     left, right, top, bottom = 0.15, 0.87, 0.89, 0.08
     h = (top - bottom) / len(rows)
