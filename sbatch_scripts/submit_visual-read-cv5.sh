@@ -28,6 +28,10 @@
 # Rotation augmentation: ROT_AUG="<pitch> <roll> <yaw>" (max degrees, training only); the run name
 # gets "-rot<pitch>-<roll>-<yaw>". Same folds as the run without it, e.g.
 #   ROT_AUG="15 3 3" sbatch submit_visual-read-cv5.sh tau_raw_2mm_pts
+# Class balancing: BALANCE=visual_read oversamples Read + scans in training (--balance_sampling_by, inverse class
+# frequency, with replacement); the run name gets "-classbal". Same folds, so it compares scan by scan with the
+# unbalanced run (compare_cv_runs_oof.py), e.g.
+#   POOL=attention BALANCE=visual_read sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
 # Leaving a cohort out as an external set: EXCLUDE=OASIS (run name gets "-noOASIS"); the split is made
 # without it, so the final run with the same EXCLUDE gets the same train/test split, e.g.
 #   POOL=attention EXCLUDE=OASIS sbatch submit_visual-read-cv5.sh tau_T1MNI_pts
@@ -78,7 +82,12 @@ if [[ -n "${EXCLUDE:-}" ]]; then  # e.g. EXCLUDE=OASIS: that cohort is left out 
   EXCLUDE_ARGS=(--exclude_sites "${EXCL[@]}")
   NAME_EXTRA="${NAME_EXTRA}-no$(IFS=-; echo "${EXCL[*]}")"
 fi
-echo "data_type: $DATA_TYPE, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}"
+BALANCE_ARGS=()
+if [[ -n "${BALANCE:-}" ]]; then  # e.g. BALANCE=visual_read: oversample the minority class in training
+  BALANCE_ARGS=(--balance_sampling_by "$BALANCE")
+  [[ "$BALANCE" == "visual_read" ]] && NAME_EXTRA="${NAME_EXTRA}-classbal" || NAME_EXTRA="${NAME_EXTRA}-bal${BALANCE}"
+fi
+echo "data_type: $DATA_TYPE, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}, balancing: ${BALANCE:-off}"
 
 RUN_LOG=$(mktemp)
 python "./run.py" \
@@ -101,6 +110,7 @@ python "./run.py" \
   "${MODEL_ARGS[@]}" \
   "${ROT_ARGS[@]}" \
   "${EXCLUDE_ARGS[@]}" \
+  "${BALANCE_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
