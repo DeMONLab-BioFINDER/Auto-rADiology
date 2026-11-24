@@ -167,10 +167,12 @@ def forest_figure(pc: pd.DataFrame, out: Path):
             lo, hi = max(r[name] - r[f"{name}_lo"], 0), max(r[f"{name}_hi"] - r[name], 0)
             ax.errorbar(100 * r[name], i, xerr=[[100 * lo], [100 * hi]],
                         fmt="o", color=c, ms=5, capsize=2.5, lw=1.2)
+            ax.annotate(f"{100 * r[name]:.0f}%", (100 * r[name], i), textcoords="offset points", xytext=(0, 6),
+                        ha="center", va="bottom", fontsize=9.5, color=c)
         ax.set_title(f"Read {name.split()[-1].replace('-', '−')} scans", fontsize=12)
         ax.set_xlabel("Agreement with the read (%)", fontsize=11.5)
         ax.tick_params(axis="x", labelsize=10.5)
-        ax.set_xlim(0, 101); ax.grid(axis="x", color="#eeeeee"); ax.spines[["top", "right"]].set_visible(False)
+        ax.set_xlim(0, 106); ax.set_ylim(-0.6, len(pc) - 0.2); ax.grid(axis="x", color="#eeeeee"); ax.spines[["top", "right"]].set_visible(False)
     labels = [f"{r['cohort']} (n={r['n']}; {r['read +']} read +)" for _, r in pc.iterrows()]
     axes[0].set_yticks(range(len(pc))); axes[0].set_yticklabels(labels, fontsize=10.5)
     fig.suptitle("Agreement per cohort", fontsize=14)
