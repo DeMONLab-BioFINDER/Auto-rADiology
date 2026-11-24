@@ -69,6 +69,8 @@ EXT_DEMO="$DATA/demo_${EXT}.csv"
 step "0 performance summary (test + $EXT)" python results_plotting/performance_summary_visual_read.py "$RUN" \
   --sets test avid --demo_csv "$DATA/demo.csv" --ext_dataset "$EXT" --ext_demo_csv "$EXT_DEMO"
 step "0 Figure 1 test" python results_plotting/ohbm_figure1.py "$RUN" --demo_csv "$DATA/demo.csv"
+step "0 regressions (test + $EXT)" python results_plotting/regress_model_output_visual_read.py "$RUN" \
+  --sets test avid --demo_csv "$DATA/demo.csv" --ext_dataset "$EXT" --ext_demo_csv "$EXT_DEMO"
 step "0 Figure 1 $EXT" python results_plotting/ohbm_figure1.py "$RUN" --sets avid --ext_dataset "$EXT" --ext_demo_csv "$EXT_DEMO"
 step "0 visual-read plots test" python results_plotting/plot_visual_read_results.py "$RUN" --dataset Gothenburg --demo_csv "$DATA/demo.csv"
 T0=(--dataset Gothenburg --demo_csv "$DATA/demo.csv")
