@@ -161,7 +161,7 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
     """One row per visual read, probability on x, every bar coloured by the level its scans are in
     (bin edges fall on every cut-off, so a bar never mixes levels). Most scans pile up near 0 and 1,
     which would flatten every other bar, so the y-axis is capped and a bar that runs past the cap is
-    cut off with its true count printed at the top. Counts are printed on every bar."""
+    cut off with its true count printed inside it (white, with an arrow). Counts are printed on every bar."""
     edges = np.linspace(0, 1, 21)
     centres = (edges[:-1] + edges[1:]) / 2
     fig, axes = plt.subplots(2, 1, figsize=(9, 6.6), sharex=True)
@@ -173,14 +173,15 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
         cap = max(10, int(np.ceil(inner * 1.6)))
         if counts.max() <= cap * 1.5:
             cap = max(int(np.ceil(counts.max() * 1.15)), 1)
-        ax.bar(centres, np.minimum(counts, cap), width=0.034, color=[GROUP_COLORS[g] for g in bar_groups],
-               edgecolor="white", linewidth=0.8, zorder=2)
+        ax.bar(centres, np.minimum(counts, cap), width=0.05, color=[GROUP_COLORS[g] for g in bar_groups],
+               edgecolor="white", linewidth=0.6, zorder=2)
         for x, c in zip(centres, counts):
             if c:
-                cut = c > cap
-                ax.text(x, min(c, cap), f"{c}" + (" ↑" if cut else ""), ha="center", va="bottom",
-                        fontsize=TICK_SIZE, color="black" if cut else "#555555",
-                        fontweight="bold" if cut else "normal")
+                if c > cap:  # bar cut at the cap: true count inside the bar (white), so it never runs into a neighbour
+                    ax.text(x, cap * 0.97, f"{c}\n↑", ha="center", va="top", fontsize=TICK_SIZE - 1, color="white",
+                            fontweight="bold", linespacing=0.9, zorder=4)
+                else:
+                    ax.text(x, c, f"{c}", ha="center", va="bottom", fontsize=TICK_SIZE, color="#555555")
         ax.axvline(0.5, color="black", linestyle="--", linewidth=1.2, zorder=3)
         ax.set_ylim(0, cap * 1.12)
         ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
@@ -191,7 +192,7 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
     axes[-1].set_xlabel("Model probability of tau positive (dashed line = 0.5 cut-off)", fontsize=LABEL_SIZE)
-    axes[-1].set_xlim(0, 1)
+    axes[-1].set_xlim(-0.035, 1.035)  # room for the count labels of the first and last bars
     handles = [plt.Rectangle((0, 0), 1, 1, color=GROUP_COLORS[g]) for g in GROUP_ORDER]
     fig.legend(handles, [GROUP_DISPLAY_LABELS[g] for g in GROUP_ORDER], loc="lower center", ncol=2,
                frameon=False, fontsize=TICK_SIZE + 1)
