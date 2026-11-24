@@ -137,7 +137,7 @@ def panel_roc(ax, data: dict):
         ax.plot(fpr, tpr, color=colour, linewidth=2.2, label=f"{name} (AUC = {roc_auc_score(d['y'], d[score]):.3f})")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
     ax.set(xlim=(-0.02, 1.02), ylim=(-0.02, 1.02))
-    style(ax, "ROC curves", "Read − scans called positive (fraction)", "Read + scans called positive (fraction)")
+    style(ax, "ROC curves", "Model + / Read −\n(fraction of Read − scans)", "Model + / Read +\n(fraction of Read + scans)")
     ax.legend(loc="lower right", fontsize=LEGEND, frameon=True, fancybox=True, framealpha=0.9, edgecolor="0.75")
 
 

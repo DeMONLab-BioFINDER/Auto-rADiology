@@ -837,7 +837,7 @@ def make_roc_confusion_panel(
     ax = axes[0][0]
     ax.plot(fpr, tpr, color=SEABORN_COLORS[0], linewidth=2.2, label=f"AUC = {auc:.3f}")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
-    style_axes(ax, "ROC curve: agreement with the visual read", "Read − scans called positive (fraction)", "Read + scans called positive (fraction)")
+    style_axes(ax, "ROC curve: agreement with the visual read", "Model + / Read − (fraction of Read − scans)", "Model + / Read + (fraction of Read + scans)")
     style_legend(ax, loc="lower right")
 
     ax = axes[0][1]
