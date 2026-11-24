@@ -44,25 +44,18 @@ Output (default <proj_path>/results/reader_votes/<run>[_oof]_<dataset>/, outside
     1_disagreement_by_group.csv, 1_tests.csv, 2_unanimous_rescoring.csv, 3_model_vs_reader.csv,
     4_prob_by_votes.csv, 4_tests.csv, 6_grade_at_same_suvr.csv (no IDs)
     5_disagreement_cases.csv (has IDs - keep off slides)
-    Figures (no IDs): fig_reader_grade.png (% Model - among read + scans, moderate vs frequent, Wilson 95% CI),
-    fig_reader_grade_same_suvr.png (probability of Model - against MetaTemporal SUVR, one fitted curve per tau score;
-    curves on top of each other = the grade adds nothing at the same tau level), fig_reader_agreement.png
-    (disagreement by unanimous / split 2-1 / single reader, read + and read - panels)
 """
 import argparse
 import warnings
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 from scipy.stats import chi2, fisher_exact, spearmanr
 from sklearn.metrics import roc_auc_score
 
-from plot_utils import CUSTOM_PALETTE, external_name, resolve_path, resolve_predictions_csv, wilson_interval
+from plot_utils import resolve_path, resolve_predictions_csv
 
 GROUP_ORDER = ["unanimous", "split 2-1", "single reader"]
 READ_COLS = ["read_1", "read_2", "read_3"]
@@ -259,101 +252,6 @@ def grade_at_same_suvr(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
-GRADE_COLOURS = {"frequent": CUSTOM_PALETTE[0], "moderate": CUSTOM_PALETTE[1]}
-
-
-def _clean(ax):
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="y", color="0.9")
-    ax.set_axisbelow(True)
-
-
-def _bars(ax, labels, ks, ns, colours, ylabel):
-    """Bars of k/n with Wilson 95% CI and the count written above each bar."""
-    rates = [k / n if n else np.nan for k, n in zip(ks, ns)]
-    cis = [wilson_interval(k, n) if n else (np.nan, np.nan) for k, n in zip(ks, ns)]
-    x = np.arange(len(labels))
-    ax.bar(x, [100 * r for r in rates], color=colours, width=0.6)
-    ax.errorbar(x, [100 * r for r in rates], yerr=[[100 * (r - lo) for r, (lo, _) in zip(rates, cis)],
-                                                  [100 * (hi - r) for r, (_, hi) in zip(rates, cis)]],
-                fmt="none", ecolor="0.25", capsize=4, lw=1)
-    for xi, k, n, (_, hi) in zip(x, ks, ns, cis):
-        if n:
-            ax.text(xi, 100 * hi + 2, f"{k}/{n}", ha="center", va="bottom", fontsize=9)
-    ax.set_xticks(x, labels)
-    ax.set_ylim(0, 112)
-    ax.set_ylabel(ylabel)
-    _clean(ax)
-
-
-def make_figures(df: pd.DataFrame, demo: pd.DataFrame | None, set_name: str, out_dir: Path):
-    rp = df[df["y"] == 1]
-    # 1. tau score: % Model - among read + scans
-    grades = ["frequent", "moderate"]
-    fig, ax = plt.subplots(figsize=(4.2, 4.0), dpi=180)
-    _bars(ax, [g.capitalize() for g in grades],
-          [int(rp.loc[rp["read category"] == g, "disagrees"].sum()) for g in grades],
-          [int((rp["read category"] == g).sum()) for g in grades],
-          [GRADE_COLOURS[g] for g in grades], "Read + scans called negative by the model (%)")
-    ax.set_xlabel("Readers' tau score")
-    ax.set_title(f"Model − / Read + by readers' tau score\n{set_name}", fontsize=10)
-    fig.tight_layout(); fig.savefig(out_dir / "fig_reader_grade.png"); plt.close(fig)
-
-    # 2. the same at equal meta-temporal SUVR: one logistic model, Model - ~ moderate + SUVR, drawn per tau score
-    if demo is not None and "MetaTemporal" in demo.columns:
-        d = rp.merge(demo[["ID", "MetaTemporal"]].rename(columns={"ID": "_id"}), left_on="ID_ind", right_on="_id", how="left")
-        d = d.assign(model_neg=d["disagrees"].astype(int), moderate=d["read category"].map({"moderate": 1.0, "frequent": 0.0}),
-                     meta=pd.to_numeric(d["MetaTemporal"], errors="coerce")).dropna(subset=["moderate", "meta"])
-        if d["model_neg"].sum() >= 2 and d["moderate"].nunique() == 2:
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    fit = smf.logit("model_neg ~ moderate + meta", data=d).fit(disp=0)
-            except Exception:
-                fit = None
-            fig, ax = plt.subplots(figsize=(5.4, 4.0), dpi=180)
-            rng = np.random.default_rng(0)
-            for g, code in [("frequent", 0.0), ("moderate", 1.0)]:
-                s = d[d["moderate"] == code]
-                y = s["model_neg"] + rng.uniform(-0.03, 0.03, len(s)) + (0.02 if code else -0.02)
-                ax.scatter(s["meta"], y, s=14, alpha=0.6, color=GRADE_COLOURS[g], edgecolor="white", lw=0.3)
-                if fit is not None:
-                    grid = np.linspace(s["meta"].min(), s["meta"].max(), 100)
-                    ax.plot(grid, fit.predict(pd.DataFrame({"moderate": code, "meta": grid})), color=GRADE_COLOURS[g],
-                            lw=2.2, label=f"{g.capitalize()} (n = {len(s)})")
-            ax.set_xlabel("Meta-temporal SUVR")
-            ax.set_ylabel("Probability the model calls the scan negative")
-            ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
-            ax.set_ylim(-0.08, 1.08)
-            ax.legend(title="Readers' tau score", fontsize=8, title_fontsize=8, frameon=False, loc="upper right")
-            grade = grade_at_same_suvr(df, demo)
-            row = grade[grade["adjusted_for"] == "MetaTemporal SUVR"]
-            if len(row) and "OR moderate vs frequent" in row and pd.notna(row.iloc[0].get("OR moderate vs frequent")):
-                r = row.iloc[0]
-                p = r["LR p"]
-                ax.text(0.98, 0.55, f"At the same SUVR: odds ratio moderate vs frequent\n"
-                        f"{r['OR moderate vs frequent']:.2f} [{r['OR lo']:.2f}, {r['OR hi']:.2f}], "
-                        f"p {'< .001' if p < 0.001 else '= ' + f'{p:.2f}'.lstrip('0')}",
-                        transform=ax.transAxes, ha="right", va="center", fontsize=7.5, color="0.25")
-            ax.set_title(f"Read + scans: does the tau score matter at the same SUVR?\n{set_name}", fontsize=10)
-            ax.spines[["top", "right"]].set_visible(False)
-            fig.tight_layout(); fig.savefig(out_dir / "fig_reader_grade_same_suvr.png"); plt.close(fig)
-
-    # 3. reader agreement: disagreement by unanimous / split 2-1 / single reader, per read
-    fig, axes = plt.subplots(1, 2, figsize=(7.6, 4.0), dpi=180, sharey=True)
-    for ax, read, title in [(axes[0], 1, "Read + scans called negative"), (axes[1], 0, "Read − scans called positive")]:
-        sub = df[df["y"] == read]
-        groups = [g for g in GROUP_ORDER if (sub["agreement"] == g).any()]
-        _bars(ax, [g.replace("split 2-1", "split 2–1").capitalize() for g in groups],
-              [int(sub.loc[sub["agreement"] == g, "disagrees"].sum()) for g in groups],
-              [int((sub["agreement"] == g).sum()) for g in groups],
-              [CUSTOM_PALETTE[3]] * len(groups), "Scans where the model disagrees (%)" if read == 1 else "")
-        ax.set_title(title, fontsize=10)
-        ax.set_xlabel("Readers")
-    fig.suptitle(f"Model disagreement by reader agreement — {set_name}", fontsize=10)
-    fig.tight_layout(); fig.savefig(out_dir / "fig_reader_agreement.png"); plt.close(fig)
-
-
 def main():
     args = parse_args()
     preds, votes = load_preds(args), load_votes(Path(args.votes).expanduser())
@@ -412,8 +310,6 @@ def main():
     for key, table in out.items():
         table.to_csv(out_dir / f"{key}.csv", index=False)
     cases.to_csv(out_dir / "5_disagreement_cases.csv", index=False)
-    set_name = "Held-out test" if args.dataset == "Gothenburg" else external_name(args.dataset)
-    make_figures(df, demo, set_name + (" (out-of-fold)" if args.oof else ""), out_dir)
     print(f"\nSaved to {out_dir} (5_disagreement_cases.csv has IDs - keep it off slides).")
 
 
