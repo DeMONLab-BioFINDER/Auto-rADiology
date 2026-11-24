@@ -25,6 +25,10 @@ Checks (all at the run's own `pred`, i.e. its 0.5 threshold):
   5. Case list: every scan the model disagrees with, with its votes, site, diagnosis, amyloid, CDR-SB and
      regional SUVRs from the demographics csv (has IDs - not for slides). Printed: counts per vote group
      with median MetaTemporal SUVR.
+  6. Reader tau score at the same tau level (read + only, needs the demographics csv): is "moderate" just
+     "less tau"? Logistic regression (statsmodels) of Model - on moderate vs frequent, alone and with
+     MetaTemporal SUVR, as odds ratio [95% CI] with a likelihood-ratio p. If the odds ratio stays high at the
+     same SUVR, the readers' "moderate" grade marks something the regional average misses.
 Groups are small: read the counts first and the p-values second.
 
 Usage:
@@ -38,15 +42,17 @@ Relative run dirs are looked up under <proj_path>/results.
 
 Output (default <proj_path>/results/reader_votes/<run>[_oof]_<dataset>/, outside the repo):
     1_disagreement_by_group.csv, 1_tests.csv, 2_unanimous_rescoring.csv, 3_model_vs_reader.csv,
-    4_prob_by_votes.csv, 4_tests.csv (no IDs)
+    4_prob_by_votes.csv, 4_tests.csv, 6_grade_at_same_suvr.csv (no IDs)
     5_disagreement_cases.csv (has IDs - keep off slides)
 """
 import argparse
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import fisher_exact, spearmanr
+import statsmodels.formula.api as smf
+from scipy.stats import chi2, fisher_exact, spearmanr
 from sklearn.metrics import roc_auc_score
 
 from plot_utils import resolve_path, resolve_predictions_csv
@@ -210,6 +216,42 @@ def disagreement_cases(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFr
     return cases.sort_values(["direction", "agreement", "read category", "prob"])
 
 
+def grade_at_same_suvr(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFrame:
+    """Read + scans: odds of Model - for moderate vs frequent tau score, alone and at the same MetaTemporal SUVR."""
+    if demo is None or "MetaTemporal" not in demo.columns:
+        return pd.DataFrame([{"adjusted_for": "-", "note": "no demographics csv with MetaTemporal"}])
+    d = df[df["y"] == 1].merge(demo[["ID", "MetaTemporal"]].rename(columns={"ID": "_id"}),
+                               left_on="ID_ind", right_on="_id", how="left")
+    d = d.assign(model_neg=d["disagrees"].astype(int),
+                 moderate=d["read category"].map({"moderate": 1.0, "frequent": 0.0}),
+                 meta=pd.to_numeric(d["MetaTemporal"], errors="coerce")).dropna(subset=["moderate", "meta"])
+    rows = []
+    for label, adjust in [("None", []), ("MetaTemporal SUVR", ["meta"])]:
+        row = {"adjusted_for": label, "n read +": len(d), "n moderate": int(d["moderate"].sum()),
+               "Model - / Read +": int(d["model_neg"].sum()),
+               "median MetaTemporal frequent / moderate":
+                   f"{d.loc[d['moderate'] == 0, 'meta'].median():.2f} / {d.loc[d['moderate'] == 1, 'meta'].median():.2f}"}
+        if d["model_neg"].sum() < 2 or d["moderate"].nunique() < 2:
+            rows.append({**row, "note": "too few disagreements / one group only"})
+            continue
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                full = smf.logit("model_neg ~ " + " + ".join(["moderate", *adjust]), data=d).fit(disp=0)
+                reduced = smf.logit("model_neg ~ " + (" + ".join(adjust) or "1"), data=d).fit(disp=0)
+        except Exception as err:  # e.g. perfect separation
+            rows.append({**row, "note": f"could not fit ({type(err).__name__})"})
+            continue
+        lo, hi = full.conf_int().loc["moderate"]
+        if not np.isfinite(np.exp(hi)) or abs(full.params["moderate"]) > np.log(1000):  # quasi-separation
+            rows.append({**row, "note": "could not fit (one group (almost) never disagrees)"})
+            continue
+        rows.append({**row, "OR moderate vs frequent": round(np.exp(full.params["moderate"]), 2),
+                     "OR lo": round(np.exp(lo), 2), "OR hi": round(np.exp(hi), 2),
+                     "LR p": round(chi2.sf(2 * (full.llf - reduced.llf), 1), 4)})
+    return pd.DataFrame(rows)
+
+
 def main():
     args = parse_args()
     preds, votes = load_preds(args), load_votes(Path(args.votes).expanduser())
@@ -236,7 +278,9 @@ def main():
         print("[WARNING] no demographics csv found - case list without site / SUVR (pass --demo_csv).")
     else:
         print(f"Demographics: {demo_path}")
-    cases = disagreement_cases(df, pd.read_csv(demo_path) if demo_path else None)
+    demo = pd.read_csv(demo_path) if demo_path else None
+    cases = disagreement_cases(df, demo)
+    out["6_grade_at_same_suvr"] = grade_at_same_suvr(df, demo)
 
     titles = {
         "1_disagreement_by_group": "1. Disagreement with the read, by reader agreement and tau score",
@@ -245,6 +289,7 @@ def main():
         "3_model_vs_reader": "3. Agreement with the other two readers' consensus: one reader vs the model",
         "4_prob_by_votes": f"4. Model probability by number of positive votes (3-reader scans; uncertain = {UNCERTAIN[0]}-{UNCERTAIN[1]})",
         "4_tests": "4. Tests",
+        "6_grade_at_same_suvr": "6. Read + only: Model - for moderate vs frequent tau score, alone and at the same MetaTemporal SUVR",
     }
     print(f"\n{args.dataset}{' (out-of-fold)' if args.oof else ''}: {len(df)} scans")
     with pd.option_context("display.width", 200, "display.max_columns", None):
