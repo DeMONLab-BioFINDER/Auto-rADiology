@@ -248,6 +248,7 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None):
     cb.ax.set_yticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"], fontsize=13)
     cb.outline.set_visible(False)
     cb.set_label(f"t (FWE p < {ALPHA})", fontsize=12, color="0.3")
+    fig.text(left, 1.0, "Voxelwise tau differences", ha="left", va="bottom", fontsize=16)
     fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 

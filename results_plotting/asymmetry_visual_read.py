@@ -238,12 +238,14 @@ def main():
         ax.boxplot(vals, showfliers=False)
         for i, v in enumerate(vals, 1):
             ax.scatter(np.random.default_rng(i).normal(i, 0.06, len(v)), v, s=6, alpha=0.4, color="k")
-        ax.set_xticks(range(1, len(order) + 1), [f"{g}\n(n = {len(v)})" for g, v in zip(order, vals)], fontsize=8)
-        ax.set_ylabel("|asymmetry index|")
-        ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name))
+        ax.set_xticks(range(1, len(order) + 1), [f"{g}\n(n = {len(v)})" for g, v in zip(order, vals)], fontsize=10)
+        ax.tick_params(axis="y", labelsize=10)
+        ax.set_ylabel("Left–right asymmetry |AI|", fontsize=12)
+        ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name), fontsize=12)
     set_name = "held-out test" if args.set == "test" else external_name(args.ext_dataset)
+    fig.suptitle("Left–right asymmetry", fontsize=14)
     fig.tight_layout()
-    fig.savefig(out / "asymmetry.png", dpi=130)
+    fig.savefig(out / "asymmetry.png", dpi=200)
     plt.close(fig)
 
     with pd.option_context("display.width", 200, "display.float_format", "{:.3g}".format):

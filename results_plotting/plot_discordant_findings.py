@@ -224,6 +224,7 @@ def make_dot_plot(axes, df: pd.DataFrame, indicators):
 def make_findings_figure(df: pd.DataFrame, indicators, out_dir: Path, filename: str):
     fig, axes = plt.subplots(1, 2, figsize=(15, 2.6 + 0.85 * len(indicators)))
     make_dot_plot(axes, df, indicators)
+    fig.suptitle("Characteristics of the disagreement groups", fontsize=TITLE_SIZE - 2, y=0.98)
     fig.subplots_adjust(left=0.17, right=0.95, top=0.82, bottom=0.2, wspace=0.28)
     save_figure(fig, out_dir / filename, dpi=300)
     plt.close(fig)
@@ -594,7 +595,8 @@ def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path,
         kappa_text = ("κ undefined (one answer only)" if pd.isna(row["kappa"]) else
                       f"κ = {row['kappa']:.2f} [{row['ci_low']:.2f}, {row['ci_high']:.2f}]")
         ax.set_title(f"{label}\n{kappa_text}, agree {row['agree_pct']:.0f}%", fontsize=TITLE_SIZE - 5)
-    fig.text(0.5, 0.96, f"n = {len(votes)}; SUVR + = meta-temporal ≥ {CENTAUR_FTP_CTRZ2_SUVR['MetaTemporal']:.2f}; "
+    fig.suptitle(f"Agreement between model, visual read and SUVR{scope}", fontsize=TITLE_SIZE - 3, y=0.995)
+    fig.text(0.5, 0.94, f"n = {len(votes)}; SUVR + = meta-temporal ≥ {CENTAUR_FTP_CTRZ2_SUVR['MetaTemporal']:.2f}; "
              f"red = disagreement", ha="center", fontsize=TITLE_SIZE - 6, color="0.35")
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 0.9))
     save_figure(fig, out_dir / filename, dpi=300)
@@ -713,8 +715,7 @@ def main():
         lo, hi = borderline_suvr_range()
         make_kappa_grid_figure(df, kappa, out_dir, "visual_read_kappa_grids_borderline.png",
                                stratum="Borderline SUVR",
-                               scope=f"\nonly scans near the cutoff: Meta-temporal SUVR {lo:.2f}–{hi:.2f} "
-                                     f"(CTRz {BORDERLINE_CTRZ[0]:g}–{BORDERLINE_CTRZ[1]:g})")
+                               scope=f" in borderline scans (meta-temporal SUVR {lo:.2f}–{hi:.2f})")
 
     counts = df["category"].value_counts()
     print("[done] " + ", ".join(f"{int(counts.get(c, 0))} x [{confusion_display_label(c)}]" for c in GROUP_ORDER)

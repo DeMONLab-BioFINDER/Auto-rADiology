@@ -226,8 +226,10 @@ def main():
         t = run_set(d)
         stem = "test" if which == "test" else external_name(args.ext_dataset).lower()  # e.g. regressions_oasis
         t.to_csv(out / f"regressions_{stem}.csv", index=False)
-        figure(t, f"{names[which]} (n = {len(d)})", out / f"regressions_{stem}.png")
-        figure_odds(t, f"{names[which]} (n = {len(d)})", out / f"regressions_{stem}_odds.png")
+        figure(t, f"Model output at the same read and meta-temporal SUVR\n{names[which]} (n = {len(d)})",
+               out / f"regressions_{stem}.png")
+        figure_odds(t, f"Clinical factors at the same meta-temporal SUVR\n{names[which]} (n = {len(d)})",
+                    out / f"regressions_{stem}_odds.png")
         print(f"\n===== {names[which]}: {len(d)} scans (CU / MCI / AD dementia) =====")
         for (model, extra), g in t.groupby(["model", "extra"], sort=False):
             g = g[g["term"] != "(not estimable)"]

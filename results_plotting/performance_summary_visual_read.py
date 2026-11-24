@@ -149,6 +149,7 @@ def roc_figure(sets: dict, summary: pd.DataFrame, out: Path):
     ax.set_xlabel("Disagreement with Read −")
     ax.set_ylabel("Agreement with Read +")
     ax.set_xlim(-0.01, 1); ax.set_ylim(0, 1.01); ax.set_aspect("equal")
+    ax.set_title("ROC curves", fontsize=12)
     ax.legend(loc="lower right", fontsize=7.5, frameon=True)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
@@ -164,10 +165,12 @@ def forest_figure(pc: pd.DataFrame, out: Path):
             lo, hi = max(r[name] - r[f"{name}_lo"], 0), max(r[f"{name}_hi"] - r[name], 0)
             ax.errorbar(100 * r[name], i, xerr=[[100 * lo], [100 * hi]],
                         fmt="o", color=c, ms=5, capsize=2.5, lw=1.2)
-        ax.set_title(f"Agreement with read {name.split()[-1].replace('-', '−')} scans (%)", fontsize=10)
+        ax.set_title(f"Read {name.split()[-1].replace('-', '−')} scans", fontsize=10)
+        ax.set_xlabel("Agreement with the read (%)", fontsize=9)
         ax.set_xlim(0, 101); ax.grid(axis="x", color="#eeeeee"); ax.spines[["top", "right"]].set_visible(False)
     labels = [f"{r['cohort']} (n={r['n']}; {r['read +']} read +)" for _, r in pc.iterrows()]
     axes[0].set_yticks(range(len(pc))); axes[0].set_yticklabels(labels, fontsize=8)
+    fig.suptitle("Agreement per cohort", fontsize=12)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
 
 

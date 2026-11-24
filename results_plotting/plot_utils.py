@@ -1932,6 +1932,7 @@ def make_disagreement_counts_by_value_panel(
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
         style_legend(ax, loc="best")  # bars live on this axes, so "best" keeps the legend off them
+    fig.suptitle(f"Disagreements by {label_x[:1].lower() + label_x[1:]}", fontsize=TITLE_SIZE - 2)
     finalize_figure(fig, rect=(0.0, 0.0, 1.0, 1.0))
     save_figure(fig, out_dir / (filename or f"visual_read_discordant_by_{value_col.lower()}.png"), dpi=300)
     plt.close(fig)

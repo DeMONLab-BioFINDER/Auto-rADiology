@@ -103,7 +103,7 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
                                                          force_resample=True, copy_header=True), fwhm=2)
     rows = list(means)
     fig = plt.figure(figsize=(13, 1.75 * len(rows) + 0.7), facecolor="white")
-    left, right, top, bottom = 0.15, 0.87, 0.93, 0.08
+    left, right, top, bottom = 0.15, 0.87, 0.89, 0.08
     h = (top - bottom) / len(rows)
     axes = []
     for i, g in enumerate(rows):
@@ -131,8 +131,8 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
     cb.outline.set_visible(False)
     cb.set_label("Change in log-odds when hidden\n(red = for positive, blue = for negative)", fontsize=12,
                  color="0.3")
-    if title:
-        fig.text(left, 0.985, title, ha="left", va="top", fontsize=11)
+    fig.text(left, 0.985, "Group-average occlusion maps" + (f", {title}" if title else ""), ha="left", va="top",
+             fontsize=16)
     fig.text(right, 0.985, f"Outline: {outline}", ha="right", va="top", fontsize=13, color="0.35")
     fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05); plt.close(fig)
 
