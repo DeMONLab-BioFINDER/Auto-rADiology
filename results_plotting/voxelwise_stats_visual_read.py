@@ -216,18 +216,39 @@ def centaur_label(ijk, regions: dict, cortex) -> str:
 
 
 def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None):
-    """t-map shown only where significant (FWE p < 0.05); red = tau higher with the tested variable."""
+    """t-map shown only where significant (FWE p < 0.05); red = tau higher with the tested variable.
+    Same style as the occlusion montage: white background, 1 mm template, label left, z under the slices, one L/R
+    marker, one colour bar. No display smoothing (a statistics map); nearest resampling keeps the significant area."""
+    from nilearn import datasets
+    bg = datasets.load_mni152_template(resolution=1)
     t = t_img.get_fdata() * (sig_img.get_fdata() > 0)
     shown = nib.Nifti1Image(t.astype(np.float32), t_img.affine)
     vmax = float(np.abs(t_img.get_fdata()).max()) or 1.0
-    fig = plt.figure(figsize=(16, 2.6), facecolor="black")
-    disp = plotting.plot_stat_map(shown, display_mode="z", cut_coords=CUTS, figure=fig, cmap="cold_hot", vmax=vmax,
-                                  threshold=1e-6, symmetric_cbar=True,  # blue always means t < 0
-                                  colorbar=True, black_bg=True, draw_cross=False, annotate=True,
-                                  title=f"{title}  (t, FWE p < {ALPHA})")
+    fig = plt.figure(figsize=(13, 2.5), facecolor="white")
+    left, right = 0.15, 0.87
+    ax = fig.add_axes([left, 0.16, right - left, 0.74])
+    disp = plotting.plot_stat_map(shown, bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig,
+                                  cmap="RdBu_r", vmax=vmax, threshold=1e-6, symmetric_cbar=True,  # blue = t < 0
+                                  colorbar=False, black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
+                                  resampling_interpolation="nearest")
     if regions_img is not None:
-        disp.add_contours(regions_img, levels=[0.5], colors="white", linewidths=0.6)
-    fig.savefig(out, facecolor="black", dpi=110)
+        outline = image.smooth_img(image.resample_to_img(regions_img, bg, interpolation="continuous",
+                                                         force_resample=True, copy_header=True), fwhm=2)
+        disp.add_contours(outline, levels=[0.5], colors="0.1", linewidths=0.8)
+    ax.text(-0.01, 0.5, title.replace(": ", ":\n"), transform=ax.transAxes, ha="right", va="center", fontsize=15)
+    for j, z in enumerate(CUTS):
+        ax.text((j + 0.5) / len(CUTS), -0.04, f"z = {z}", transform=ax.transAxes, ha="center", va="top",
+                fontsize=13, color="0.35")
+    for lab, dx in (("L", -0.045), ("R", 0.045)):
+        ax.text(0.5 / len(CUTS) + dx, 1.0, lab, transform=ax.transAxes, ha="center", va="bottom", fontsize=13,
+                color="0.35")
+    cax = fig.add_axes([0.9, 0.25, 0.01, 0.55])
+    sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-vmax, vmax))
+    cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
+    cb.ax.set_yticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"], fontsize=13)
+    cb.outline.set_visible(False)
+    cb.set_label(f"t (FWE p < {ALPHA})", fontsize=12, color="0.3")
+    fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 
 
