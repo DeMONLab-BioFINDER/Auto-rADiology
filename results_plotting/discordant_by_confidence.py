@@ -84,7 +84,8 @@ def load_cases(args) -> pd.DataFrame:
     if args.occlusion:
         o = pd.read_csv(args.occlusion)
         keep = {c: f"evidence share {c}" for c in o.columns
-                if c in ("Meta-temporal", "Temporoparietal", "Mesial temporal", "Frontal", "Outside CenTauR regions")
+                if c in ("Meta-temporal", "Temporoparietal", "Mesial temporal", "Frontal", "Outside CenTauR regions",
+                         "Meta-temporal amount")
                 or c.startswith("Outside cortex")}
         d = d.merge(o[["ID", *keep]].rename(columns=keep), on="ID", how="left")
     missing = int(d[cols].isna().all(axis=1).sum()) if cols else 0
@@ -127,6 +128,8 @@ def profile(d: pd.DataFrame) -> pd.DataFrame:
                 row["median |asymmetry| meta-temporal"] = med(s["MetaTemporal_absAI"], "{:.3f}")
             if "evidence share Meta-temporal" in s:
                 row["median evidence share meta-temporal"] = med(s["evidence share Meta-temporal"])
+            if "evidence share Meta-temporal amount" in s:
+                row["median evidence amount meta-temporal"] = med(s["evidence share Meta-temporal amount"], "{:.0f}")
             off = [c for c in s.columns if c.startswith("evidence share Outside cortex")]
             if off:
                 row["median evidence share outside cortex"] = med(s[off[0]])

@@ -25,6 +25,10 @@ Outcome groups (cut-off 0.5): Model + / Read + (true positive), Model - / Read +
   3. Test: meta-temporal (pre-specified, the comparator region) and temporoparietal share, true positives vs
      missed scans and true positives vs true negatives (permutation test on the difference in medians,
      10,000 shuffles; FDR over the four).
+  3b. Amount, not share: the same comparisons on the AMOUNT of positive evidence inside each region (sum of the
+     map above 0, in log-odds drop x voxels; same occlusion settings in every scan, so comparable across scans).
+     A share can look the same when the total is small; the amount shows whether a group puts less evidence on
+     the region. Own FDR family (the four share tests above are unchanged).
   4. FDA regions (optional, --regions; supplementary): the old shares in the atlas-based approximation of the
      TAUVID reading regions (whole brain, each region grown 6 mm), region_shares_fda_*.csv.
 
@@ -33,7 +37,8 @@ Usage:
         [--atlas_dir <DK atlas folder>] [--regions <fda_regions_MNI152NLin2009cAsym.nii.gz>] [--label "Held-out test"]
 Outputs (<folder>/group_maps/, no IDs): group_mean_<group>.nii.gz, group_montage.png, group_surface.png,
 centaur_shares_by_group.csv (median share and enrichment per group, plus each region's volume share),
-centaur_share_tests.csv (and centaur_shares_per_scan.csv, which has IDs); with --regions also
+centaur_share_tests.csv, centaur_amount_by_group.csv, centaur_amount_tests.csv (and centaur_shares_per_scan.csv,
+which has IDs); with --regions also
 region_shares_fda_by_group.csv, region_share_fda_tests.csv, region_shares_fda_per_scan.csv.
 """
 import argparse
@@ -198,7 +203,8 @@ def main():
         total = pos[cortex].sum()
         row = {**base, "cortical_positive_evidence": total}
         for name, mask in regions.items():
-            row[name] = pos[mask].sum() / total if total > 0 else np.nan
+            row[f"{name} amount"] = pos[mask].sum()
+            row[name] = row[f"{name} amount"] / total if total > 0 else np.nan
             row[f"{name} enrichment"] = row[name] / vol_share[name]
         brain_total = pos[in_brain].sum()
         row[OFF_CORTEX] = pos[in_brain & ~cortex].sum() / brain_total if brain_total > 0 else np.nan
@@ -238,6 +244,10 @@ def main():
     table.to_csv(out / "centaur_shares_by_group.csv")
     tests = share_tests(shares, TESTED, args.n_perm)
     tests.to_csv(out / "centaur_share_tests.csv", index=False)
+    amount_cols = ["cortical_positive_evidence"] + [f"{k} amount" for k in TESTED]
+    by_group(shares, amount_cols).to_csv(out / "centaur_amount_by_group.csv")
+    amount_tests = share_tests(shares, amount_cols, args.n_perm)
+    amount_tests.to_csv(out / "centaur_amount_tests.csv", index=False)
 
     labels = dict((k, lab) for k, lab, _, _ in GROUPS)
     print(f"{args.label or vis.name}: {len(shares)} scans with maps "
@@ -254,6 +264,15 @@ def main():
         print("\nShare in CenTauR regions (permutation test, difference in medians, FDR over all four):")
         for _, t in tests.iterrows():
             print(f"  {t['region']}, {t['comparison']} (n {t['n']}): {t['median_diff']:+.3f}, p = {t['p']:.3g}, "
+                  f"FDR {t['p_fdr']:.3g}")
+
+    if len(amount_tests):
+        print("\nAmount of positive evidence (sum of log-odds drop; median per group):")
+        with pd.option_context("display.width", 220, "display.float_format", "{:.1f}".format):
+            print(by_group(shares, amount_cols).rename(index=labels).to_string())
+        print("Amount, permutation test (difference in medians, own FDR family):")
+        for _, t in amount_tests.iterrows():
+            print(f"  {t['region']}, {t['comparison']} (n {t['n']}): {t['median_diff']:+.1f}, p = {t['p']:.3g}, "
                   f"FDR {t['p_fdr']:.3g}")
 
     if fda_shares:  # supplementary: the FDA-region approximation, as before
