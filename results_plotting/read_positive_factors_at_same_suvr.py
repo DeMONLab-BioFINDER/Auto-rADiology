@@ -16,6 +16,8 @@ Outputs (no IDs; next to the run's other figures, validation/figures for an exte
     read_positive_factors_at_same_suvr.csv   factor, n, n Model −; plain_or / plain_p / plain_p_fdr (without tau);
                                              or / or_lo / or_hi / p / p_fdr (same meta-temporal SUVR)
     read_positive_factors_at_same_suvr.png   forest plot, two dots per factor (open = without tau, filled = same tau)
+    read_positive_regions_at_same_meta.csv   other CenTauR regions (temporoparietal, mesial temporal, frontal): odds ratio of
+                                             Model − per 0.1 SUVR at the same meta-temporal SUVR, FDR across the three
 """
 import argparse
 import warnings
@@ -100,6 +102,30 @@ def test_factors(sub: pd.DataFrame) -> pd.DataFrame:
     return t
 
 
+REGION_TERMS = [("tp", "Temporoparietal"), ("mesial", "Mesial temporal"), ("frontal", "Frontal")]
+
+
+def test_regions(sub: pd.DataFrame) -> pd.DataFrame:
+    """At the same meta-temporal SUVR, does more tau in another CenTauR region change the odds of Model −?
+    Model − ~ region SUVR (per 0.1) + meta-temporal SUVR, within Read + scans; FDR across the three regions."""
+    rows = []
+    for col, label in REGION_TERMS:
+        d = sub.dropna(subset=[col, "wrong", "meta"]).copy()
+        d[col + "_01"] = d[col] * 10  # odds ratio per 0.1 SUVR
+        row = {"region": label, "n": len(d), "n_model_neg": int(d["wrong"].sum()),
+               "median_model_neg": d.loc[d["wrong"] == 1, col].median(), "median_model_pos": d.loc[d["wrong"] == 0, col].median()}
+        try:
+            o_, lo, hi, pv = _fit_one(d, col + "_01", ["meta"])
+            row.update({"or_per_0.1": o_, "or_lo": lo, "or_hi": hi, "p": pv})
+        except Exception as err:
+            row["note"] = f"could not fit ({err})"
+        rows.append(row)
+    t = pd.DataFrame(rows)
+    if "p" in t:
+        ok = t["p"].notna(); t.loc[ok, "p_fdr"] = fdr_bh(t.loc[ok, "p"])
+    return t
+
+
 def _p(v):
     if not np.isfinite(v):
         return "–"
@@ -153,8 +179,12 @@ def main():
     t = test_factors(sub)
     t.round(4).to_csv(out_dir / "read_positive_factors_at_same_suvr.csv", index=False)
     forest(t, len(sub), out_dir / "read_positive_factors_at_same_suvr.png")
+    r = test_regions(sub)
+    r.round(4).to_csv(out_dir / "read_positive_regions_at_same_meta.csv", index=False)
     with pd.option_context("display.width", 200):
         print(t.round(3).to_string(index=False))
+        print("\nOther CenTauR regions at the same meta-temporal SUVR (odds ratio of Model − per 0.1 SUVR):")
+        print(r.round(3).to_string(index=False))
     print(f"\nSaved read_positive_factors_at_same_suvr.csv / .png to {out_dir}")
 
 
