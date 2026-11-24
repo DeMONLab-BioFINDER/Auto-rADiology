@@ -47,7 +47,8 @@ Usage (Berzelius, a job: the permutations take a while, see sbatch_scripts/submi
         [--atlas_dir <DK atlas folder>] [--n_perm 5000] [--n_jobs 16]
 Outputs (<run_dir>/figures/voxelwise_stats_<set>/, no IDs): per analysis <name>_t.nii.gz,
 <name>_logp_tfce.nii.gz, <name>_logp_maxt.nii.gz (-log10 FWE p), <name>.png (significant voxels),
-<name>_unthresholded.png (the t-map where |t| > 2, no correction: a look, not a test); summary.csv (n, voxels
+<name>_unthresholded.png (the t-map where |t| > 2, no correction: a look, not a test), <name>_mean_difference.png
+(+ .nii.gz: mean SUVR of the tested group minus the other, nothing held equal, no test); summary.csv (n, voxels
 significant each way, peak and the CenTauR regions it lies in), centaur_regions.csv (per analysis and direction:
 significant voxels in each CenTauR region, the % of the region they cover and their share of all significant
 voxels), fda_region_overlap.csv (only with --regions: share per FDA region, an approximation, supplementary).
@@ -89,6 +90,7 @@ TITLES.update({
     "read_neg_above_cutoff": "Read − scans: meta-temporal SUVR above vs below the cut point",
     "read_pos_below_cutoff": "Read + scans: meta-temporal SUVR below vs above the cut point",
     "model_neg_read_pos_vs_neg": "Model − scans: Read + vs Read −",
+    "missed_vs_detected_plain": "Model − / Read + vs Model + / Read +, tau not held equal",
 })
 
 
@@ -183,7 +185,7 @@ def design(t: pd.DataFrame, analysis: str):
     """(rows used, tested variable, confounds) for one analysis."""
     base = t
     cut = CENTAUR_FTP_CTRZ2_SUVR["MetaTemporal"]
-    if analysis in ("missed_vs_detected", "read_pos_below_cutoff"):
+    if analysis in ("missed_vs_detected", "missed_vs_detected_plain", "read_pos_below_cutoff"):
         base = t[t["read"] == 1]
     elif analysis == "read_neg_above_cutoff":
         base = t[t["read"] == 0]
@@ -203,6 +205,8 @@ def design(t: pd.DataFrame, analysis: str):
     elif analysis == "missed_vs_detected":
         tested = (base["call"] == 0).astype(float)
         conf.update(meta=z(base["MetaTemporal"]))
+    elif analysis == "missed_vs_detected_plain":  # same groups, meta-temporal SUVR not adjusted for
+        tested = (base["call"] == 0).astype(float)
     elif analysis == "read_neg_above_cutoff":
         tested = (base["MetaTemporal"] >= cut).astype(float)
     elif analysis == "read_pos_below_cutoff":
@@ -221,7 +225,8 @@ def centaur_label(ijk, regions: dict, cortex) -> str:
     return ", ".join(hits) if hits else (OUTSIDE if cortex[tuple(ijk)] else "Outside cortex")
 
 
-def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label: str = "", thresholded: bool = True):
+def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label: str = "", thresholded: bool = True,
+             cbar_label: str = None, show_above: float = 2.0):
     """t-map shown only where significant (FWE p < 0.05); red = tau higher with the tested variable.
     Same style as the occlusion montage: white background, 1 mm template, label left, z under the slices, one L/R
     marker, one colour bar. No display smoothing (a statistics map); nearest resampling keeps the significant area."""
@@ -234,7 +239,7 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label:
     left, right = 0.15, 0.87
     ax = fig.add_axes([left, 0.16, right - left, 0.74])
     disp = plotting.plot_stat_map(shown, bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig,
-                                  cmap="RdBu_r", vmax=vmax, threshold=1e-6 if thresholded else 2.0,  # unthresholded: |t| > 2 shown
+                                  cmap="RdBu_r", vmax=vmax, threshold=1e-6 if thresholded else show_above,
                                   symmetric_cbar=True,  # blue = t < 0
                                   colorbar=False, black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
                                   resampling_interpolation="nearest")
@@ -254,7 +259,7 @@ def plot_map(t_img, sig_img, title: str, out: Path, regions_img=None, set_label:
     cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
     cb.ax.set_yticklabels([f"{-vmax:.1f}", "0", f"{vmax:.1f}"], fontsize=13)
     cb.outline.set_visible(False)
-    cb.set_label(f"t (FWE p < {ALPHA})" if thresholded else "t (unthresholded)", fontsize=12, color="0.3")
+    cb.set_label(cbar_label or (f"t (FWE p < {ALPHA})" if thresholded else "t (unthresholded)"), fontsize=12, color="0.3")
     fig.text(left, 1.0, "Voxelwise tau differences" + (f", {set_label}" if set_label else ""), ha="left", va="bottom",
              fontsize=16)
     fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05)
@@ -337,6 +342,14 @@ def main():
         all_img = masker.inverse_transform(np.ones_like(t, dtype=np.float32))
         plot_map(t_img, all_img, TITLES[name], out / f"{name}_unthresholded.png", regions_img, set_label=set_label,
                  thresholded=False)
+        # plain difference of group averages, nothing held equal and no test (red = the tested group has more signal)
+        if set(np.unique(tested)) <= {0, 1}:
+            Xr = X[rows]
+            diff = Xr[tested == 1].mean(0) - Xr[tested == 0].mean(0)
+            nib.save(masker.inverse_transform(diff.astype(np.float32)), out / f"{name}_mean_difference.nii.gz")
+            plot_map(masker.inverse_transform(diff.astype(np.float32)), all_img, TITLES[name] + " (group averages)",
+                     out / f"{name}_mean_difference.png", regions_img, set_label=set_label, thresholded=False,
+                     cbar_label="Difference in mean SUVR\n(nothing held equal)", show_above=0.02)
 
         peak = int(np.argmax(np.abs(t) * sig)) if sig.any() else int(np.argmax(np.abs(t)))
         ijk = np.argwhere(keep)[peak]
