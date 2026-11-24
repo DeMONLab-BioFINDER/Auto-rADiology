@@ -12,7 +12,8 @@
          colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
   click  the values under the cursor, and (with --regions) which FDA visual-read region it is in (not drawn).
 
-Axial view by default; buttons switch both brains to coronal, sagittal or all three planes (readers look at more
+A "Whole scan" checkbox shows the image without the brain mask (the readers saw the whole head: off-target signal
+in meninges / skull / sinuses is then visible as such). Axial view by default; buttons switch both brains to coronal, sagittal or all three planes (readers look at more
 than the axial plane); the two brains move together. Voxels are drawn as they are (nearest
 neighbour, no smoothing between voxels), so the page is as sharp as the occlusion PNGs. Open the .html by double-clicking; NiiVue is loaded from the web, the images are inside the page.
 
@@ -276,7 +277,8 @@ def main():
     in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 2)
 
     for scan_id in ids:
-        x = on_mni_grid(vis_dir / f"{scan_id}_input.nii.gz") * in_brain  # shown inside the brain only
+        x_full = on_mni_grid(vis_dir / f"{scan_id}_input.nii.gz")  # whole scan, for the "whole scan" checkbox
+        x = x_full * in_brain  # default view: inside the brain only
         maps = {vt: on_mni_grid(vis_dir / f"{scan_id}_occlusion_{vt}.nii.gz")
                 for vt in ("pos_vs_neg", "class") if (vis_dir / f"{scan_id}_occlusion_{vt}.nii.gz").exists()}
         head = x[x > 0]
@@ -286,6 +288,7 @@ def main():
         left, left_note, left_bar = [], "", ""
         if scan_id in suvr:
             s, s_aff, cov = suvr[scan_id]
+            s_full = s
             s = s * brain_mask(s.shape, s_aff, 2)
             # same scan? the SUVR (in RAS) should follow the model input closely
             s_ras = np.asarray(nib.as_closest_canonical(nib.Nifti1Image(s, s_aff)).dataobj)
@@ -296,6 +299,8 @@ def main():
                   + ("  <-- WARNING: cerebellum mostly outside the scan" if cov < 0.5 else ""))
             left.append({"b64": nifti_b64(s.astype(np.float32), s_aff), "name": "suvr.nii.gz", "colormap": "reader",
                          "cal_min": 0.0, "cal_max": SUVR_TOP, "opacity": 1.0})
+            left.append({"b64": nifti_b64(s_full.astype(np.float32), s_aff), "name": "suvr_full.nii.gz", "colormap": "reader",
+                         "cal_min": 0.0, "cal_max": SUVR_TOP, "opacity": 1.0, "toggle": "whole", "start_hidden": True})
             left_title = "What the reader saw: SUVR (÷ whole cerebellum), readers' colour scale"
             ticks = [(0, "0")] + [(round(e * 100, 1), f"{e * SUVR_TOP:.2f}") for e in BAND_EDGES]
             left_bar = ("<div class='vbar'><div class='vgrad' style='background:" + reader_gradient_css() + "'></div>"
@@ -306,12 +311,16 @@ def main():
         else:
             left.append({"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input_heat.nii.gz", "colormap": "inferno",
                          "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0})
+            left.append({"b64": nifti_b64(x_full, MNI_2MM_RAS), "name": "input_heat_full.nii.gz", "colormap": "inferno",
+                         "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0, "toggle": "whole", "start_hidden": True})
             left_title = "Tau (model input, 0–1 per scan; not SUVR — no reader scale without --pkl_dir)"
         left += zones_layer
 
         # right brain
         right = [{"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input.nii.gz", "colormap": "gray",
-                  "cal_min": 0.0, "cal_max": grey_top, "opacity": 1.0}]
+                  "cal_min": 0.0, "cal_max": grey_top, "opacity": 1.0},
+                 {"b64": nifti_b64(x_full, MNI_2MM_RAS), "name": "input_full.nii.gz", "colormap": "gray",  # whole scan
+                  "cal_min": 0.0, "cal_max": grey_top, "opacity": 1.0, "toggle": "whole", "start_hidden": True}]
         legend_right, bars = "", ""
         for vt, m in maps.items():
             signed = vt == "pos_vs_neg"
@@ -343,7 +352,8 @@ def main():
                 title += f" · model P(positive) = {row['P_positive']:.2f}"
         toggles = "".join(
             f"<label><input type='checkbox' data-toggle='{vt}' {'' if (vt == 'class' and 'pos_vs_neg' in maps) else 'checked'}>"
-            f" Occlusion: {'pos vs neg' if vt == 'pos_vs_neg' else 'class'}</label>" for vt in maps)
+            f" Occlusion: {'pos vs neg' if vt == 'pos_vs_neg' else 'class'}</label>" for vt in maps) + \
+            "<label><input type='checkbox' data-toggle='whole'> Whole scan (no brain mask)</label>"
 
         page = (TEMPLATE.replace("__NIIVUE__", NIIVUE).replace("__TITLE__", title)
                 .replace("__LEFT_TITLE__", left_title).replace("__LEFT_LEGEND__", left_note)
@@ -443,7 +453,7 @@ const readout = () => {  // values at the crosshair, from both brains
   const parts = [];
   const val = (nv, name) => { const i = nv.volumes.findIndex(v => v.name === name); if (i < 0) return null;
     const v = nv.volumes[i], vox = v.mm2vox(nv.frac2mm(nv.scene.crosshairPos)); return v.getValue(...vox, v.frame4D); };
-  const s = val(nvs.L, "suvr.nii.gz"); if (s !== null) parts.push(`SUVR ${s.toFixed(2)} × cerebellum`);
+  const s = val(nvs.L, "suvr_full.nii.gz") ?? val(nvs.L, "suvr.nii.gz"); if (s !== null) parts.push(`SUVR ${s.toFixed(2)} × cerebellum`);
   const pn = val(nvs.R, "pos_vs_neg.nii.gz"); if (pn !== null) parts.push(`occlusion pos vs neg ${fmt(pn)}`);
   const c = val(nvs.R, "class.nii.gz"); if (c !== null) parts.push(`occlusion class ${fmt(c)}`);
   const z = val(nvs.L, "zones.nii.gz");
