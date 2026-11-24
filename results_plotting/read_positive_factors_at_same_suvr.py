@@ -101,7 +101,9 @@ def test_factors(sub: pd.DataFrame) -> pd.DataFrame:
 
 
 def _p(v):
-    return "–" if not np.isfinite(v) else ("< .001" if v < 0.001 else f"{v:.2f}".replace("0.", "."))
+    if not np.isfinite(v):
+        return "–"
+    return "< .001" if v < 0.001 else (f"{v:.3f}" if v < 0.01 else f"{v:.2f}").replace("0.", ".", 1)
 
 
 def forest(t: pd.DataFrame, n_read_pos: int, out: Path):
