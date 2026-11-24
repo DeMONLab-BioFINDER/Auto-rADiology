@@ -23,6 +23,9 @@
 # the run name gets "-rot...". Training only, so the AVID / occlusion scripts need nothing extra.
 #   ROT_AUG="15 3 3" sbatch submit_visual-read-final.sh tau_raw_2mm_pts <epochs>
 # EXCLUDE=OASIS leaves that cohort out (as in the CV run with the same EXCLUDE; run name gets "-noOASIS").
+# BALANCE=visual_read: class-balanced sampling as in the CV run with the same BALANCE (run name gets "-classbal"),
+# with the epochs from that CV run, e.g.
+#   POOL=attention BALANCE=visual_read sbatch submit_visual-read-final.sh tau_T1MNI_pts <epochs>
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -80,7 +83,12 @@ if [[ -n "$TRAIN_SEED" ]]; then
   SEED_ARGS=(--train_seed "$TRAIN_SEED")
   NAME_EXTRA="${NAME_EXTRA}-seed${TRAIN_SEED}"
 fi
-echo "data_type: $DATA_TYPE, epochs: $EPOCHS, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}"
+BALANCE_ARGS=()
+if [[ -n "${BALANCE:-}" ]]; then  # e.g. BALANCE=visual_read: oversample the minority class in training
+  BALANCE_ARGS=(--balance_sampling_by "$BALANCE")
+  [[ "$BALANCE" == "visual_read" ]] && NAME_EXTRA="${NAME_EXTRA}-classbal" || NAME_EXTRA="${NAME_EXTRA}-bal${BALANCE}"
+fi
+echo "data_type: $DATA_TYPE, epochs: $EPOCHS, train_seed: ${TRAIN_SEED:-same as split seed}, pool: $POOL, rotation augmentation: ${ROT_AUG:-off}, balancing: ${BALANCE:-off}"
 
 RUN_LOG=$(mktemp)
 python ./run.py \
@@ -100,6 +108,7 @@ python ./run.py \
   "${MODEL_ARGS[@]}" \
   "${ROT_ARGS[@]}" \
   "${EXCLUDE_ARGS[@]}" \
+  "${BALANCE_ARGS[@]}" \
   2>&1 | tee "$RUN_LOG"
 RUN_STATUS=${PIPESTATUS[0]}
 
