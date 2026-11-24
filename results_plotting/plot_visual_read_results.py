@@ -53,11 +53,11 @@ from plot_utils import (
 # different off-target binding profiles (CenTauR paper, same point; Moscoso paper limits
 # itself to flortaucipir for the same reason).
 REGIONAL_SUVR_BY_OUTCOME = [
-    ("Universal", "Universal tau SUVR"),
-    ("TemporoParietal", "TemporoParietal tau SUVR"),
-    ("MetaTemporal", "MetaTemporal tau SUVR"),
-    ("MesialTemporal", "MesialTemporal tau SUVR"),
-    ("Frontal", "Frontal tau SUVR"),
+    ("Universal", "Universal SUVR"),
+    ("TemporoParietal", "Temporoparietal SUVR"),
+    ("MetaTemporal", "Meta-temporal SUVR"),
+    ("MesialTemporal", "Mesial temporal SUVR"),
+    ("Frontal", "Frontal SUVR"),
 ]
 
 

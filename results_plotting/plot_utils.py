@@ -981,8 +981,8 @@ _SIGN = {0: "−", 1: "+"}  # minus sign (U+2212), not a hyphen - renders as a p
 
 def confusion_display_label(category: str, multiline: bool = False) -> str:
     model_val, human_val = CONFUSION_CATEGORY_MODEL_HUMAN[category]
-    sep = ",\n" if multiline else ", "
-    return f"Model {_SIGN[model_val]}{sep}Visual read {_SIGN[human_val]}"
+    sep = " /\n" if multiline else " / "
+    return f"Model {_SIGN[model_val]}{sep}Read {_SIGN[human_val]}"
 
 
 def make_confusion_category_distribution_panel(
@@ -1120,8 +1120,8 @@ def make_confusion_category_categorical_panel(
 # reads more directly than "sensitivity 48%". metric -> (disagreeing category, the read group
 # it is counted in). Same numbers: disagreement = 1 − sensitivity (or 1 − specificity).
 SUBGROUP_DISAGREEMENT = {
-    "sensitivity": ("False Negative", "Visual read + scans"),
-    "specificity": ("False Positive", "Visual read − scans"),
+    "sensitivity": ("False Negative", "Read + scans"),
+    "specificity": ("False Positive", "Read − scans"),
 }
 
 
@@ -1924,7 +1924,7 @@ def make_disagreement_counts_by_value_panel(
         ax.set_ylim(0, max(1, (agree + disagree).max()) * 1.3)  # room for the count labels and legend
         ax.set_xticks(xs)
         ax.set_xticklabels(bin_labels, rotation=35, ha="right", fontsize=TICK_SIZE - 1)
-        ax.set_title(f"Visual read {_SIGN[read]} scans (n = {len(sub)})", fontsize=TITLE_SIZE - 4)
+        ax.set_title(f"Read {_SIGN[read]} scans (n = {len(sub)})", fontsize=TITLE_SIZE - 4)
         ax.set_xlabel(label_x, fontsize=LABEL_SIZE - 2)
         ax.set_ylabel("Scans", fontsize=LABEL_SIZE - 2)
         ax.grid(False)

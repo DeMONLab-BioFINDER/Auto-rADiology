@@ -567,7 +567,7 @@ def make_kappa_grid_figure(df: pd.DataFrame, kappa: pd.DataFrame, out_dir: Path,
     if votes.empty:
         print(f"[skip] {filename}: no scans in group '{stratum}'.")
         return
-    names = {"model": "Model", "human": "Visual read", "suvr": "SUVR"}
+    names = {"model": "Model", "human": "Read", "suvr": "SUVR"}
     # Same orientation as the ROC/confusion-matrix panel: the reference on the rows, the model on the
     # columns (visual read outranks SUVR as the reference).
     reference_rank = {"human": 0, "suvr": 1, "model": 2}

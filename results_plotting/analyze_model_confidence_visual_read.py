@@ -183,7 +183,7 @@ def make_histogram(df: pd.DataFrame, cutoffs: dict, out_path: Path):
         ax.axvline(0.5, color="black", linestyle="--", linewidth=1.2, zorder=3)
         ax.set_ylim(0, cap * 1.12)
         ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        ax.set_title(f"Visual read {'+' if read else '−'} (n={len(sub)})", fontsize=LABEL_SIZE)
+        ax.set_title(f"Read {'+' if read else '−'} (n = {len(sub)})", fontsize=LABEL_SIZE)
         ax.set_ylabel("Scans", fontsize=LABEL_SIZE - 2)
         ax.grid(axis="y", alpha=0.25)
         for spine in ("top", "right"):
@@ -262,7 +262,7 @@ def make_probability_vs_suvr_figure(df: pd.DataFrame, cutoff: float, cutoffs: di
     for read in (0, 1):
         r = sub[sub["y"] == read]
         ax.scatter(r["_suvr"], r["prob"], s=20, alpha=0.65, color=READ_COLORS[read], edgecolor="white",
-                   linewidth=0.3, zorder=3, label=f"Visual read {'+' if read else '−'} (n={len(r)})")
+                   linewidth=0.3, zorder=3, label=f"Read {'+' if read else '−'} (n = {len(r)})")
     ax.annotate(f"CTRz 2 ({cutoff:.2f})", (cutoff, 1.03), textcoords="offset points", xytext=(5, 0),
                 ha="left", va="bottom", fontsize=TICK_SIZE - 2)
     ax.set_ylim(-0.03, 1.08)

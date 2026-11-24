@@ -256,7 +256,7 @@ def make_age_figure(df: pd.DataFrame, metrics: list[str], out_dir: Path):
         read = METRIC_READ[metric]
         sub = df[df["y"] == read]
         age = pd.to_numeric(sub["age"], errors="coerce")
-        panels.append((f"Visual read {'+' if read else '−'}", {
+        panels.append((f"Read {'+' if read else '−'}", {
             confusion_display_label("True Positive" if read else "True Negative", multiline=True):
                 age[sub["_correct"] == 1].dropna().to_numpy(),
             confusion_display_label("False Negative" if read else "False Positive", multiline=True):
