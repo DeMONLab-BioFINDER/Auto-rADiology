@@ -15,7 +15,7 @@ Joined per scan (each optional except the confidence and demographics files):
     site, diagnosis, amyloid, Centiloid,   demographics csv
     regional SUVRs
     reader votes and tau score             per-reader vote csv (IDs_reads.csv / AVIDIDs_reads.csv)
-    left-right asymmetry |AI|              asymmetry_per_scan.csv (asymmetry_visual_read.py)
+    left-right asymmetry |LI| (%)          asymmetry_per_scan.csv (asymmetry_visual_read.py)
     where the model found its evidence     centaur_shares_per_scan.csv (occlusion_group_maps.py)
 
 Usage:
@@ -125,7 +125,7 @@ def profile(d: pd.DataFrame) -> pd.DataFrame:
                     row["graded moderate (vs frequent)"] = pct(
                         s["read category"].map({"moderate": 1.0, "frequent": 0.0}))
             if "MetaTemporal_absAI" in s:
-                row["median |asymmetry| meta-temporal"] = med(s["MetaTemporal_absAI"], "{:.3f}")
+                row["median |LI| (%) meta-temporal"] = med(s["MetaTemporal_absAI"], "{:.1f}")
             if "evidence share Meta-temporal" in s:
                 row["median evidence share meta-temporal"] = med(s["evidence share Meta-temporal"])
             if "evidence share Meta-temporal amount" in s:

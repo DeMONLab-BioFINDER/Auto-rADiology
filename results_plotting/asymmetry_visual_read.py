@@ -6,22 +6,23 @@ call asymmetric scans positive more often than their bilateral SUVR would predic
 
 Per scan (MNI images, SUVR = image / its own mean in the reference region, as in voxelwise_visual_read.py):
 left and right mean SUVR in each CenTauR region (masks split at the midline, x = 0 excluded), and the
-asymmetry index AI = (left - right) / mean(left, right), the usual definition (e.g. Lu et al. 2023,
-Lin et al. 2025). |AI| = how one-sided, regardless of side. The meta-temporal region is the main measure
+laterality index LI (%) = 100 x (right - left) / (right + left), as in Anijärv et al. 2025 (Nat Commun 16:8232).
+|LI| = how one-sided, regardless of side. (Columns keep the old names <region>_AI / <region>_absAI; until
+26 Nov 2026 they held (left - right) / mean(left, right) = -LI / 50, i.e. the same ranking and per-SD results.) The meta-temporal region is the main measure
 (decided before looking: it is the region the rest of the analysis adjusts for); temporoparietal is secondary.
 
 Analyses (one set at a time, test and AVID never pooled):
   1. Sanity: the bilateral SUVR computed here vs the MetaTemporal SUVR in the demographics (Pearson r).
   2. Who calls asymmetric scans positive, at the same bilateral meta-temporal SUVR?
-       read:   logistic  read ~ |AI| (z) + cr(MetaTemporal, df=3) + age + sex [+ site]
+       read:   logistic  read ~ |LI| (z) + cr(MetaTemporal, df=3) + age + sex [+ site]
        model:  logistic  model call ~ the same
        output: OLS (HC3) model log-odds ~ read + the same
-     -> odds ratios per SD of |AI| for read and model side by side (as in regress_model_output_visual_read.py).
-  3. Read + scans only: |AI| in detected (Model + / Read +) vs missed (Model - / Read +) scans (Mann-Whitney),
-     and logistic  model call ~ |AI| + spline + age + sex [+ site].
+     -> odds ratios per SD of |LI| for read and model side by side (as in regress_model_output_visual_read.py).
+  3. Read + scans only: |LI| in detected (Model + / Read +) vs missed (Model - / Read +) scans (Mann-Whitney),
+     and logistic  model call ~ |LI| + spline + age + sex [+ site].
   4. Does the model's advantage over meta-temporal SUVR grow with asymmetry? AUC of model and of SUVR in scans
-     below / above the median |AI| (paired bootstrap of the AUC difference in each half).
-FDR (Benjamini-Hochberg) over the |AI| tests of analyses 2-3, per region. Exploratory.
+     below / above the median |LI| (paired bootstrap of the AUC difference in each half).
+FDR (Benjamini-Hochberg) over the |LI| tests of analyses 2-3, per region. Exploratory.
 
 Usage:
     python results_plotting/asymmetry_visual_read.py <final_run_dir> --set test \\
@@ -126,7 +127,7 @@ def asymmetry(table: pd.DataFrame, args) -> pd.DataFrame:
                 continue
             L, R = left.mean(), right.mean()
             row.update({f"{name}_L": L, f"{name}_R": R, f"{name}_bilateral": x[(lm | rm) & (x != 0)].mean(),
-                        f"{name}_AI": (L - R) / ((L + R) / 2)})
+                        f"{name}_AI": 100 * (R - L) / (R + L)})  # laterality index LI (%), Anijärv et al. 2025
         rows.append(row)
     if skipped:
         print(f"[data] {len(skipped)} scans left out: reference region not covered")
@@ -201,13 +202,13 @@ def main():
         for label, kind, f, data in specs:
             res = fit(kind, f, data, "z_ai")
             if res:
-                rows.append({"region": name, "outcome": label, "effect": "odds ratio per SD |AI|" if kind == "logit"
-                             else "log-odds per SD |AI|", **res})
+                rows.append({"region": name, "outcome": label, "effect": "odds ratio per SD |LI|" if kind == "logit"
+                             else "log-odds per SD |LI|", **res})
         det, mis = rp.loc[rp["call"] == 1, ai], rp.loc[rp["call"] == 0, ai]
         if len(det) >= 5 and len(mis) >= 5:
             u = stats.mannwhitneyu(det, mis)
-            rows.append({"region": name, "outcome": "|AI| detected vs missed (read +)",
-                         "effect": "median |AI| detected − missed", "estimate": det.median() - mis.median(),
+            rows.append({"region": name, "outcome": "|LI| detected vs missed (read +)",
+                         "effect": "median |LI| detected − missed", "estimate": det.median() - mis.median(),
                          "lo": np.nan, "hi": np.nan, "p": u.pvalue, "n": len(det) + len(mis)})
         if rows:
             q = multipletests([x["p"] for x in rows], method="fdr_bh")[1]
@@ -216,7 +217,7 @@ def main():
         tests += rows
 
         med = e[ai].median()
-        for half, s in [("symmetric (below median |AI|)", e[e[ai] <= med]), ("asymmetric (above median)", e[e[ai] > med])]:
+        for half, s in [("symmetric (below median |LI|)", e[e[ai] <= med]), ("asymmetric (above median)", e[e[ai] > med])]:
             y = s["read"].to_numpy()
             if y.min() == y.max():
                 continue
@@ -230,7 +231,7 @@ def main():
     tests.to_csv(out / "asymmetry_tests.csv", index=False)
     aucs.to_csv(out / "auc_by_asymmetry.csv", index=False)
 
-    # figure: |AI| by outcome group, per region (same group order and colours as the other discordance figures)
+    # figure: |LI| by outcome group, per region (same group order and colours as the other discordance figures)
     colour = {"Model + / Read +": CONFUSION_CATEGORY_PALETTE["True Positive"],
               "Model − / Read −": CONFUSION_CATEGORY_PALETTE["True Negative"],
               "Model − / Read +": CONFUSION_CATEGORY_PALETTE["False Negative"],
@@ -254,14 +255,14 @@ def main():
         ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name), fontsize=14)
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="y", color="0.92")
-    np.atleast_1d(axes)[0].set_ylabel("Left–right asymmetry |AI|", fontsize=14)
+    np.atleast_1d(axes)[0].set_ylabel("Left–right asymmetry |LI| (%)", fontsize=14)
     fig.suptitle(f"Left–right asymmetry, {set_name}", fontsize=16)
     fig.tight_layout()
     fig.savefig(out / "asymmetry.png", dpi=200)
     plt.close(fig)
 
     with pd.option_context("display.width", 200, "display.float_format", "{:.3g}".format):
-        print("\nMedian |AI| by group:")
+        print("\nMedian |LI| by group:")
         print(d.groupby("group")[[f"{n}_absAI" for n in REGIONS]].median().reindex(order).to_string())
         print("\nAsymmetry tests (FDR within region):")
         print(tests.to_string(index=False))

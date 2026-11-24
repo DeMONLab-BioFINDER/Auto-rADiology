@@ -11,8 +11,8 @@ Rows (read + scans only; Model + / Read - scans are too few for tests and are de
     CDR-SB beyond diagnosis     within-diagnosis permutation (subgroup analysis, secondary family)
     -> same tau level           odds ratio of Model - [95% CI], likelihood-ratio p (visual_read_errors_at_same_suvr.csv,
                                 "Meta-temporal (main)"; only run for variables significant in the plain test)
-    Left-right asymmetry        plain: median |AI| Model + minus Model - (Mann-Whitney); same tau level: odds ratio per
-                                SD of |AI| at the same bilateral meta-temporal SUVR (+ age, sex, site), inverted here
+    Left-right asymmetry        plain: median |LI| Model + minus Model - (Mann-Whitney); same tau level: odds ratio per
+                                SD of |LI| at the same bilateral meta-temporal SUVR (+ age, sex, site), inverted here
                                 to the odds of Model - so every row reads the same way (asymmetry_tests.csv)
     Reader tau score            plain: % Model - moderate vs frequent, Fisher (reader votes 1_*); same tau level:
                                 6_grade_at_same_suvr.csv
@@ -110,15 +110,15 @@ def asymmetry_row(path: Path | None) -> dict | None:
     if a is None:
         return None
     a = a[a["region"] == "MetaTemporal"]
-    plain = a[a["outcome"].str.startswith("|AI| detected vs missed")]
+    plain = a[a["outcome"].str.contains(r"^\|(?:AI|LI)\| detected vs missed", regex=True)]
     adj = a[a["outcome"] == "model call, read + only"]
-    row = {"characteristic": "Left-right asymmetry, meta-temporal |AI|",
+    row = {"characteristic": "Left-right asymmetry, meta-temporal |LI| (%)",
            "Model − / Read + vs Model + / Read +": "", "plain p": "", "plain FDR": "",
            "same tau: OR of Model − [95% CI]": "", "same tau p": "",
            "source": "asymmetry_tests.csv (OR inverted from Model + to Model −)"}
     if len(plain):
         r = plain.iloc[0]
-        row.update({"Model − / Read + vs Model + / Read +": f"median |AI| lower in Model − by {r['estimate']:.3f}",
+        row.update({"Model − / Read + vs Model + / Read +": f"median |LI| lower in Model − by {r['estimate']:.1f} %-points",
                     "plain p": fmt_p(r["p"]), "plain FDR": fmt_p(r["p_fdr"])})
     if len(adj):
         r = adj.iloc[0]

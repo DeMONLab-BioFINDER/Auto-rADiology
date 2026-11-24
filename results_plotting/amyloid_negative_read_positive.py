@@ -10,7 +10,7 @@ Candidate explanations and the column that speaks to each:
     borderline amyloid          Centiloid just below the 24 CL cut-off (i.e. early Alzheimer's after all)
     non-Alzheimer's tau          regional SUVR profile: mesial-predominant, little posterior spread; older age
     off-target signal            % of the model's evidence outside the cortex (occlusion), images
-    unusual spatial pattern      left-right asymmetry |AI|, CenTauR evidence % (occlusion)
+    unusual spatial pattern      left-right asymmetry |LI|, CenTauR evidence % (occlusion)
     uncertain read               reader votes (unanimous / split / single) and tau score (moderate / frequent)
 
 Groups (Read + scans only): amyloid-negative called negative, amyloid-negative called positive, and amyloid-positive
@@ -118,7 +118,7 @@ def summary(d: pd.DataFrame) -> pd.DataFrame:
             row["unanimous (3-reader scans)"] = pct((s.loc[s["n_readers"] == 3, "agreement"] == "unanimous").astype(float))
             row["graded moderate"] = pct(s["tau score"].map({"moderate": 1.0, "frequent": 0.0}))
         if "MetaTemporal_absAI" in s:
-            row["median |AI| meta-temporal"] = med(s["MetaTemporal_absAI"], "{:.3f}")
+            row["median |LI| (%) meta-temporal"] = med(s["MetaTemporal_absAI"], "{:.1f}")
         off = [c for c in s.columns if c.startswith("evidence % Outside cortex")]
         if off:
             row["median % evidence outside cortex"] = med(100 * s[off[0]], "{:.0f}")
