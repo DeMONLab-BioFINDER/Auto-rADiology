@@ -12,7 +12,8 @@
          colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
   click  the values under the cursor, and (with --regions) which FDA visual-read region it is in (not drawn).
 
-Axial slices only (the readers' view); the two brains move together. Voxels are drawn as they are (nearest
+Axial view by default; buttons switch both brains to coronal, sagittal or all three planes (readers look at more
+than the axial plane); the two brains move together. Voxels are drawn as they are (nearest
 neighbour, no smoothing between voxels), so the page is as sharp as the occlusion PNGs. Open the .html by double-clicking; NiiVue is loaded from the web, the images are inside the page.
 
 MNI model only: the FDA regions are in MNI space, and only MNI-model inputs (91 x 109 x 91, 2 mm) sit on that grid.
@@ -380,12 +381,16 @@ TEMPLATE = """<!doctype html>
   .legend { padding: 6px 12px 10px; background: #111; height: 64px; box-sizing: border-box; overflow-y: auto; }
   .note { color: #999; font-size: 12px; }
   #status { color: #999; }
+  .views button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 9px; cursor: pointer; font: inherit; }
+  .views button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
   #here { padding: 4px 12px; background: #0b0b0b; color: #ccc; font-size: 13px; min-height: 18px; }
 </style></head>
 <body><div id="wrap">
   <div id="bar">
     <b>__TITLE__</b>
     __TOGGLES__
+    <span class="views">View: <button data-view="0" class="on">Axial</button> <button data-view="1">Coronal</button>
+      <button data-view="2">Sagittal</button> <button data-view="3">All three</button></span>
     <span id="status">loading…</span>
   </div>
   <div id="here">click a spot to see its values</div>
@@ -395,7 +400,7 @@ TEMPLATE = """<!doctype html>
     <div class="pane"><div class="head">What the model saw + occlusion map</div>
       <div class="box"><canvas id="glR" tabindex="0" width="350" height="440"></canvas><div class="side">__RIGHT_BARS__</div></div><div class="legend">__RIGHT_LEGEND__</div></div>
   </div>
-  <div class="note" style="padding:4px 12px;background:#111">scroll = move through slices · click = see the values there · the two brains move together</div>
+  <div class="note" style="padding:4px 12px;background:#111">View buttons = axial / coronal / sagittal / all three · scroll = move through slices · click = see the values there · the two brains move together</div>
 </div>
 <script type="module">
 import { Niivue } from "__NIIVUE__";
@@ -428,6 +433,10 @@ for (const [k, layers] of Object.entries(sides)) {
 nvs.L.syncWith(nvs.R, { "2d": true }); nvs.R.syncWith(nvs.L, { "2d": true });
 document.getElementById("status").textContent = "";
 const both = (fn) => { fn(nvs.L); fn(nvs.R); };
+document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {  // same plane in both brains
+  both(nv => nv.setSliceType(+b.dataset.view));
+  document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("on", x === b));
+});
 const regionNames = __REGION_NAMES__;
 const fmt = (v) => (Math.abs(v) >= 0.1 ? v.toFixed(2) : v.toPrecision(2));
 const readout = () => {  // values at the crosshair, from both brains
