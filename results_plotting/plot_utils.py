@@ -837,7 +837,7 @@ def make_roc_confusion_panel(
     ax = axes[0][0]
     ax.plot(fpr, tpr, color=SEABORN_COLORS[0], linewidth=2.2, label=f"AUC = {auc:.3f}")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, alpha=0.6)
-    style_axes(ax, "ROC curve: agreement with clinical read", "False positive rate", "True positive rate")
+    style_axes(ax, "ROC curve: agreement with the visual read", "Read − scans called positive (fraction)", "Read + scans called positive (fraction)")
     style_legend(ax, loc="lower right")
 
     ax = axes[0][1]
@@ -939,7 +939,7 @@ def make_probability_by_class_panel(
     ax.axvline(threshold, color="black", linestyle="--", linewidth=1.6,
                label=f"Decision threshold = {threshold:.3f}")
     ax.set_xlim(-0.02, 1.02)
-    style_axes(ax, "Predicted probability by true class", "Predicted probability", "Density")
+    style_axes(ax, "Model probability by visual read", "Model probability", "Density")
     style_legend(ax, loc="best")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
@@ -1041,7 +1041,7 @@ def make_confusion_category_distribution_panel(
         ax.set_xlim(lo - pad, hi + pad)
 
     label = value_label or value_col
-    style_axes(ax, f"{label} by classification outcome", label, "Density")
+    style_axes(ax, f"{label} by model and visual read", label, "Density")
     style_legend(ax, loc="best")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
@@ -1107,7 +1107,7 @@ def make_confusion_category_categorical_panel(
     xticklabels = [f"{confusion_display_label(c, multiline=True)}\n(n={counts.get(c, 0)})" for c in order]
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels(xticklabels)
-    style_axes(ax, f"{label} by classification outcome", "", "Proportion within outcome")
+    style_axes(ax, f"{label} by model and visual read", "", "Proportion within group")
     style_legend(ax, title=label, loc="best")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
@@ -1751,7 +1751,7 @@ def make_agreement_by_centiloid_panel(
         _add_legend_avoidance_proxies(ax, CENTILOID_BIN_LABELS, pct_of_scans)
         style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ylabel = "Accuracy"
-        title = f"Classification outcome vs. {value_label}"
+        title = f"Model and visual read vs. {value_label}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
         n_total = _plot_cutoff_agreement(ax, df, CENTILOID_BIN_LABELS, min_bin_n, value_col, cutoff)
@@ -1766,7 +1766,7 @@ def make_agreement_by_centiloid_panel(
         _add_legend_avoidance_proxies(ax, CENTILOID_BIN_LABELS, pct_of_scans)
         style_legend(ax, loc="best", boxed=True)
         ylabel = "Percentage (%)"
-        title = f"Classification outcome vs. {value_label}"
+        title = f"Model and visual read vs. {value_label}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
 
     ax.set_zorder(ax2.get_zorder() + 1)
@@ -2025,7 +2025,7 @@ def make_agreement_by_value_panel(
         _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans)
         style_legend(ax, title=group_label or group_col, loc="best", boxed=True)
         ylabel = "Accuracy"
-        title = f"Classification outcome vs. {label_x}"
+        title = f"Model and visual read vs. {label_x}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
     elif cutoff is not None:
         n_total = _plot_cutoff_agreement(ax, df, bin_labels, min_bin_n, value_col, cutoff)
@@ -2040,7 +2040,7 @@ def make_agreement_by_value_panel(
         _add_legend_avoidance_proxies(ax, bin_labels, pct_of_scans)
         style_legend(ax, loc="best", boxed=True)
         ylabel = "Percentage (%)"
-        title = f"Classification outcome vs. {label_x}"
+        title = f"Model and visual read vs. {label_x}"
         default_filename = f"visual_read_agreement_by_{value_col.lower()}.png"
 
     ax.set_zorder(ax2.get_zorder() + 1)
@@ -2172,7 +2172,7 @@ def make_classification_breakdown_panel(
         )
 
     ax.set_ylim(0, max(float(pct.max()) * 1.25, 10))
-    style_axes(ax, f"Classification outcome (n={n_total})", "", "Percentage (%)", xrotation=0)
+    style_axes(ax, f"Model and visual read (n={n_total})", "", "Percentage (%)", xrotation=0)
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / filename, dpi=300)
@@ -2228,7 +2228,7 @@ def make_classification_breakdown_violin_panel(
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels(xticklabels)
     ax.set_ylim(-0.02, 1.02)
-    style_axes(ax, "Predicted probability by classification outcome", "", "Predicted probability")
+    style_axes(ax, "Model probability by model and visual read", "", "Model probability")
 
     finalize_figure(fig, rect=(0.0, 0.0, 0.99, 0.99))
     save_figure(fig, out_dir / filename, dpi=300)

@@ -4,6 +4,9 @@
 # Discordant-case follow-up for one final MNI visual-read model that already went through
 # run_visual-read-analysis.sh and occlusion (submit_vis-occlusion-all.sh + merge_occlusion_chunks.py).
 # Runs only the new / changed steps, on the held-out test set and AVID separately (never pooled):
+#   0. replots with read-based axis labels/titles (ROC axes "Read + / Read - scans called positive"):
+#      performance summary, Figure 1 (test, AVID), plot_visual_read_results.py (test; AVID when its figures are in
+#      validation/figures)
 #   1. reader votes (adds 6_grade_at_same_suvr.csv: reader tau score at the same meta-temporal SUVR)
 #   2. occlusion group maps (CenTauR shares + the share of evidence outside the cortex)
 #   3. occlusion_vs_tau.py (evidence share per CenTauR region next to the Read + vs Read - SUVR difference)
@@ -59,6 +62,17 @@ SETS=(
   "$ext|$DATA/demo_${EXT}.csv|$DATA/AVIDIDs_reads.csv|$EXT|$EXT_FIG|$RUN/figures/asymmetry_$ext|$VIS/occlusion_all_${EXT}_logit_median_brain_mask4_ov0.5"
 )
 [[ "$EXT" == *AVID* ]] || SETS[1]="${SETS[1]/AVIDIDs_reads.csv/IDs_reads.csv}"  # a left-out cohort is in the pool file
+
+# ---- 0. relabelled replots (same data, read-based wording)
+EXT_DEMO="$DATA/demo_${EXT}.csv"
+step "0 performance summary (test + $EXT)" python results_plotting/performance_summary_visual_read.py "$RUN" \
+  --sets test avid --demo_csv "$DATA/demo.csv" --ext_dataset "$EXT" --ext_demo_csv "$EXT_DEMO"
+step "0 Figure 1 test" python results_plotting/ohbm_figure1.py "$RUN" --demo_csv "$DATA/demo.csv"
+step "0 Figure 1 $EXT" python results_plotting/ohbm_figure1.py "$RUN" --sets avid --ext_dataset "$EXT" --ext_demo_csv "$EXT_DEMO"
+step "0 visual-read plots test" python results_plotting/plot_visual_read_results.py "$RUN" --dataset Gothenburg --demo_csv "$DATA/demo.csv"
+if [[ "$EXT_FIG" == "$RUN/validation/figures" ]]; then
+  step "0 visual-read plots $EXT" python results_plotting/plot_visual_read_results.py "$RUN" --dataset "$EXT" --demo_csv "$EXT_DEMO"
+fi
 
 for S in "${SETS[@]}"; do
   IFS="|" read -r label demo votes dataset fig asym occ <<< "$S"
