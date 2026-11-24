@@ -139,11 +139,12 @@ def roc_figure(sets: dict, summary: pd.DataFrame, out: Path):
     for which, d in sets.items():
         c, row = SET_COLOURS[which], summary.loc[which]
         fpr, tpr, _ = roc_curve(d["y"], d["prob"])
-        ax.plot(fpr, tpr, color=c, lw=2, label=f"{SET_LABELS[which]}: model AUC {row['auc']:.3f}")
+        short = "Test" if which == "test" else SET_LABELS[which].replace("External (", "").rstrip(")")
+        ax.plot(fpr, tpr, color=c, lw=2, label=f"Model, {short}   {row['auc']:.3f}")
         s = d.dropna(subset=[SUVR_COL])
         if "auc_suvr" in row and not pd.isna(row["auc_suvr"]):
             f2, t2, _ = roc_curve(s["y"], s[SUVR_COL])
-            ax.plot(f2, t2, color=c, lw=1.2, ls="--", label=f"{SET_LABELS[which]}: MetaTemporal SUVR AUC {row['auc_suvr']:.3f}")
+            ax.plot(f2, t2, color=c, lw=1.2, ls="--", label=f"Meta-temporal SUVR, {short}   {row['auc_suvr']:.3f}")
         ax.plot(1 - row["agreement read -"], row["agreement read +"], "o", color=c, ms=7, mec="white", mew=1.2)
     ax.plot([0, 1], [0, 1], color="#bbbbbb", lw=0.8)
     ax.set_xlabel("Disagreement with Read −", fontsize=12)
@@ -151,7 +152,7 @@ def roc_figure(sets: dict, summary: pd.DataFrame, out: Path):
     ax.tick_params(labelsize=10.5)
     ax.set_xlim(-0.01, 1); ax.set_ylim(0, 1.01); ax.set_aspect("equal")
     ax.set_title("ROC curves, model and meta-temporal SUVR", fontsize=13)
-    ax.legend(loc="lower right", fontsize=9, frameon=True)
+    ax.legend(loc="lower right", fontsize=9.5, frameon=True, title="AUC", title_fontsize=10, alignment="left")
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig(out); plt.close(fig)
 
