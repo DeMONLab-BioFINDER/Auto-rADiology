@@ -3,7 +3,8 @@
 #
 # What kind of tau does the model miss? (results_plotting/focality_by_group.py) for one final MNI visual-read model,
 # on the held-out test set and AVID, one after the other. Per scan, SUVR on the readers' scale (whole cerebellum),
-# cortex only: peak (hottest 2 ml), extent above 1.65 x cerebellum, and the share of the model's positive occlusion
+# cortex only: peak (2 ml spot around the hottest point) and where it is, extent above 1.65 x cerebellum, striatum +
+# thalamus signal, the reference difference (cerebellar grey vs whole), and the share of the model's positive occlusion
 # evidence on the hot spot; per-group map of where scans are above 1.65. A few minutes of CPU work (a GPU is requested
 # because Berzelius jobs need one).
 # Outputs: <run>/figures/focality_test/ and <run>/validation/figures/focality_avid/
@@ -41,7 +42,7 @@ PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
 V="$RUN/validation/visualization"
 OCC_TEST="${OCC_TEST:-$V/occlusion_all_logit_median_brain_mask4_ov0.5}"
 OCC_AVID="${OCC_AVID:-$V/occlusion_all_AVID_unseen_logit_median_brain_mask4_ov0.5}"
-COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$DATA/masks/voi_WhlCbl_2mm.nii" --centaur_dir "$DATA/masks"
+COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$DATA/masks/voi_WhlCbl_2mm.nii" --grey_ref "$DATA/masks/voi_CerebGry_tau_2mm.nii" --centaur_dir "$DATA/masks"
         --atlas_dir "$DATA/atlases/lotter2025_mni_freesurfer")
 for d in "$OCC_TEST" "$OCC_AVID"; do [[ -d "$d" ]] || echo "WARNING: no occlusion folder $d (step 2 skipped for that set)"; done
 
