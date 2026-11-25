@@ -38,7 +38,8 @@ TICK = {"Meta-temporal": "Meta-\ntemporal", "Temporoparietal": "Temporo-\npariet
 BOXES = ["Model − / Read −", "Model − / Read +", "Model + / Read +"]  # low -> high tau; Model + / Read − = points only
 
 
-def plot(sets: list, out: Path, ymax: float = None, title: str = "Tau in each CenTauR region", panel_w: float = 6.4):
+def plot(sets: list, out: Path, ymax: float = None, title: str = "Tau in each CenTauR region", panel_w: float = 6.4,
+         dots: bool = True, note: bool = True):
     """sets = [(title, data frame with 'group' + region columns)]: one panel per set, boxes per region and group."""
     labs = [lab for _, lab in REGIONS]
     fig, axes = plt.subplots(1, len(sets), figsize=(panel_w * len(sets), 5.2 * panel_w / 6.4 + 0.4), sharey=True, squeeze=False)
@@ -53,11 +54,11 @@ def plot(sets: list, out: Path, ymax: float = None, title: str = "Tau in each Ce
                     continue
                 x = i + (j - 1) * w
                 c = COLOUR[g]
-                ax.boxplot(v, positions=[x], widths=w * 0.8, showfliers=g != "Model − / Read +", patch_artist=True,
+                ax.boxplot(v, positions=[x], widths=w * 0.8, showfliers=not (dots and g == "Model − / Read +"), patch_artist=True,
                            boxprops=dict(facecolor=c, alpha=0.35, edgecolor=c), medianprops=dict(color=c, lw=2.2),
                            whiskerprops=dict(color=c), capprops=dict(color=c),
                            flierprops=dict(marker="o", ms=2.5, mfc=c, mec="none", alpha=0.5))
-                if g == "Model − / Read +":
+                if dots and g == "Model − / Read +":
                     ax.scatter(x + rng.uniform(-w * 0.25, w * 0.25, len(v)), v, s=14, color=c, edgecolor="white",
                                linewidth=0.4, zorder=3)
             fp = pd.to_numeric(d.loc[d["group"] == "Model + / Read −", lab], errors="coerce").dropna()
@@ -85,7 +86,7 @@ def plot(sets: list, out: Path, ymax: float = None, title: str = "Tau in each Ce
     if title:
         fig.suptitle(title, fontsize=15)
     bottom = 0.07 * (1 if panel_w >= 6 else 1.9)
-    if hidden:
+    if hidden and note:
         fig.text(0.5, 0.005, f"Above {ymax:g}, not shown: " + "; ".join(hidden), ha="center", va="bottom", fontsize=9.5,
                  color="#555555")
         fig.legends[0].set_bbox_to_anchor((0.5, 0.04 if panel_w >= 6 else 0.035))
@@ -103,10 +104,12 @@ def main():
     p.add_argument("--out", default="regional_suvr_by_group_sets.png")
     p.add_argument("--title", default="Tau in each CenTauR region", help="Figure title ('' for none, e.g. on a slide).")
     p.add_argument("--panel_width", type=float, default=6.4, help="Inches per panel (smaller = larger text).")
+    p.add_argument("--no_dots", action="store_true", help="Boxes only (no per-scan dots for Model − / Read +).")
+    p.add_argument("--no_note", action="store_true", help="No 'not shown above ymax' line.")
     p.add_argument("--ymax", type=float, default=None, help="Stop the y-axis here (boxes still use all scans).")
     args = p.parse_args()
     if args.plot_from:
-        plot([(t, pd.read_csv(f)) for t, f in (x.split("=", 1) for x in args.plot_from)], Path(args.out), args.ymax, args.title, args.panel_width)
+        plot([(t, pd.read_csv(f)) for t, f in (x.split("=", 1) for x in args.plot_from)], Path(args.out), args.ymax, args.title, args.panel_width, not args.no_dots, not args.no_note)
         return
     if not args.run_dir:
         p.error("run_dir is required unless --plot_from is given")
