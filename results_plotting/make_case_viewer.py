@@ -10,7 +10,10 @@
          (src/vis.py): 'pos vs neg' red -> yellow = supports positive, blue -> light cyan = supports negative;
          'class' dark red -> yellow; opacity follows strength (0 = see-through, solid 0.9 at the top and above);
          colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
-  click  the values under the cursor, and (with --regions) which FDA visual-read region it is in (not drawn).
+  click  the values under the cursor, and (with --regions) which FDA visual-read region it is in.
+  third  (with --regions) the FDA visual-read regions in colour on the MNI template, as a 3D brain you can turn, with
+         the crosshair of the other two brains on it (so you see which region a spot is in); "Slices" shows it in the
+         same plane as the other two instead.
 
 A "Whole scan" checkbox shows the image without the brain mask (the readers saw the whole head: off-target signal
 in meninges / skull / sinuses is then visible as such). Axial view by default; buttons switch both brains to coronal, sagittal or all three planes (readers look at more
@@ -49,7 +52,7 @@ import pandas as pd
 from matplotlib import colors as mcolors
 from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
 
-from make_niivue_viewer import NIIVUE, REGION_NAMES
+from make_niivue_viewer import NIIVUE, REGION_COLOURS, REGION_NAMES, region_colormap
 
 # MNI model input grid (tau_T1MNI_pts, RAS), the same as voxelwise_visual_read.py
 MNI_2MM_RAS = np.array([[2.0, 0, 0, -90], [0, 2.0, 0, -126], [0, 0, 2.0, -72], [0, 0, 0, 1]])
@@ -84,7 +87,7 @@ def parse_args():
     p.add_argument("--pkl_dir", default=None, help="Original MNI images (tau_batch_*.pkl) for the SUVR / reader view.")
     p.add_argument("--cbl_mask", default=None, help="Whole-cerebellum mask (Centiloid voi_WhlCbl_2mm.nii).")
     p.add_argument("--mask_erode", type=int, default=1, help="Voxels to shrink the cerebellum mask by (as before: 1).")
-    p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): the click readout names the region (not drawn).")
+    p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): click readout names the region; third brain shows the regions in 3D.")
     p.add_argument("--color_max", type=float, default=None,
                    help="Top of the occlusion colour scale (default: each map's 99th percentile, like the PNGs).")
     p.add_argument("--out_dir", default=None, help="Default <vis_dir>/viewers.")
@@ -275,6 +278,19 @@ def main():
         zones_layer = [{"b64": nifti_b64(zones, z_aff), "name": "zones.nii.gz", "colormap": "gray",
                         "cal_min": 0.0, "cal_max": 6.0, "opacity": 0.0}]
     in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 2)
+    fda_layers, fda_legend = [], ""
+    if args.regions:
+        from nilearn import datasets
+        tpl = datasets.load_mni152_template(resolution=1)
+        t = np.asarray(tpl.dataobj, dtype=np.float32)
+        t8 = np.clip(255 * t / np.percentile(t[t > 0], 99.5), 0, 255).astype(np.uint8)  # uint8: keeps the page small
+        reg = nib.load(args.regions)
+        fda_layers = [{"b64": nifti_b64(t8, tpl.affine), "name": "template.nii.gz", "colormap": "gray",
+                       "cal_min": 0.0, "cal_max": 255.0, "opacity": 1.0},
+                      {"b64": nifti_b64(np.asarray(reg.dataobj).astype(np.uint8), reg.affine), "name": "fda.nii.gz",
+                       "colormap": "fda_regions", "cal_min": 0.0, "cal_max": 6.0, "opacity": 1.0}]
+        fda_legend = "".join(f"<span><i style='background:{c}'></i>{n.split(' (')[0]}</span>"  # short names: the pane is narrow
+                             for c, n in zip(REGION_COLOURS, REGION_NAMES))
 
     for scan_id in ids:
         x_full = on_mni_grid(vis_dir / f"{scan_id}_input.nii.gz")  # whole scan, for the "whole scan" checkbox
@@ -359,8 +375,12 @@ def main():
                 .replace("__LEFT_TITLE__", left_title).replace("__LEFT_LEGEND__", left_note)
                 .replace("__RIGHT_LEGEND__", legend_right).replace("__TOGGLES__", toggles)
                 .replace("__REGION_NAMES__", json.dumps(REGION_NAMES)).replace("__LEFT__", json.dumps(left)).replace("__RIGHT__", json.dumps(right))
+                .replace("__FDA__", json.dumps(fda_layers)).replace("__FDA_LEGEND__", fda_legend)
+                .replace("__FDA_DISPLAY__", "flex" if fda_layers else "none")
+                .replace("__WRAP_W__", "1364" if fda_layers else "1004")
                 .replace("__CMAPS__", json.dumps({
-                    "reader": reader_colormap(), })).replace("__RIGHT_BARS__", bars).replace("__LEFT_BARS__", left_bar))
+                    "reader": reader_colormap(), "fda_regions": region_colormap()}))
+                .replace("__RIGHT_BARS__", bars).replace("__LEFT_BARS__", left_bar))
         out = out_dir / f"{scan_id}_viewer.html"
         out.write_text(page, encoding="utf-8")
         print(f"[save] {out} ({out.stat().st_size / 1e6:.1f} MB)")
@@ -373,16 +393,16 @@ TEMPLATE = """<!doctype html>
   html, body { margin: 0; background: #000; color: #ddd; font: 14px system-ui, sans-serif; }
   /* Fixed sizes everywhere: both brains are exactly the same size and stay put when a map is switched off
      (its colour bar is hidden, the column keeps its width) or a legend has more text. */
-  #wrap { display: flex; flex-direction: column; width: 1084px; }
+  #wrap { display: flex; flex-direction: column; width: __WRAP_W__px; }
   #bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
   #bar label { white-space: nowrap; }
   #panes { display: flex; gap: 4px; }
-  .pane { width: 540px; flex: none; display: flex; flex-direction: column; background: #000; }
+  .pane { width: 500px; flex: none; display: flex; flex-direction: column; background: #000; }
   .head { padding: 5px 10px; background: #181818; font-weight: 600; height: 38px; box-sizing: border-box;
           overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .box { display: flex; height: 440px; }
   canvas { width: 350px !important; height: 440px !important; flex: none; display: block; outline: none; }
-  .side { width: 190px; flex: none; display: flex; justify-content: flex-start; }
+  .side { width: 150px; flex: none; display: flex; justify-content: flex-start; }
   .vbar { position: relative; width: 80px; flex: none; margin: 30px 0 30px 10px; }
   .vgrad { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; }
   .vticks span { position: absolute; left: 18px; transform: translateY(50%); font-size: 11px; color: #bbb; }
@@ -393,6 +413,15 @@ TEMPLATE = """<!doctype html>
   #status { color: #999; }
   .views button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 9px; cursor: pointer; font: inherit; }
   .views button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
+  #fdapane { width: 352px; }
+  #fdapane .head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  #fdapane .head button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 1px 7px;
+                          cursor: pointer; font: 12px system-ui, sans-serif; }
+  #fdapane .head button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
+  #fdapane .legend { padding: 4px 8px; overflow: hidden; line-height: 17px; display: grid; grid-template-columns: 1fr 1fr;
+                     column-gap: 6px; align-content: start; }
+  .regions span { white-space: nowrap; font-size: 11px; color: #bbb; overflow: hidden; text-overflow: ellipsis; }
+  .regions i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }
   #here { padding: 4px 12px; background: #0b0b0b; color: #ccc; font-size: 13px; min-height: 18px; }
 </style></head>
 <body><div id="wrap">
@@ -409,8 +438,12 @@ TEMPLATE = """<!doctype html>
       <div class="legend">__LEFT_LEGEND__</div></div>
     <div class="pane"><div class="head">What the model saw + occlusion map</div>
       <div class="box"><canvas id="glR" tabindex="0" width="350" height="440"></canvas><div class="side">__RIGHT_BARS__</div></div><div class="legend">__RIGHT_LEGEND__</div></div>
+    <div class="pane" id="fdapane" style="display:__FDA_DISPLAY__"><div class="head"><span>FDA read regions</span>
+      <span><button data-fda="4" class="on">3D</button> <button data-fda="slices">Slices</button></span></div>
+      <div class="box"><canvas id="glF" tabindex="0" width="350" height="440"></canvas></div>
+      <div class="legend regions">__FDA_LEGEND__</div></div>
   </div>
-  <div class="note" style="padding:4px 12px;background:#111">View buttons = axial / coronal / sagittal / all three · scroll = move through slices · click = see the values there · the two brains move together</div>
+  <div class="note" style="padding:4px 12px;background:#111">View buttons = axial / coronal / sagittal / all three · scroll = move through slices · click = see the values there · the brains move together · FDA brain: drag to turn, the green cross = the spot you clicked</div>
 </div>
 <script type="module">
 import { Niivue } from "__NIIVUE__";
@@ -444,7 +477,8 @@ nvs.L.syncWith(nvs.R, { "2d": true }); nvs.R.syncWith(nvs.L, { "2d": true });
 document.getElementById("status").textContent = "";
 const both = (fn) => { fn(nvs.L); fn(nvs.R); };
 document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {  // same plane in both brains
-  both(nv => nv.setSliceType(+b.dataset.view));
+  view = +b.dataset.view; both(nv => nv.setSliceType(view));
+  if (nvF && fdaMode !== "4") nvF.setSliceType(view);
   document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("on", x === b));
 });
 const regionNames = __REGION_NAMES__;
@@ -460,7 +494,29 @@ const readout = () => {  // values at the crosshair, from both brains
   if (z !== null) parts.push(z > 0.5 ? `FDA region: ${regionNames[Math.round(z) - 1]}` : "outside the FDA regions");
   document.getElementById("here").textContent = parts.join("  ·  ");
 };
-nvs.L.onLocationChange = readout; nvs.R.onLocationChange = readout;
+// third brain: FDA regions on the template (own 1 mm grid, so the crosshair is passed on in mm, not synced directly)
+const fdaLayers = __FDA__;
+let nvF = null, fdaMode = "4", view = 0, pushing = false;
+const moveTo = (src, dst) => { const mm = src.frac2mm(src.scene.crosshairPos);
+  dst.scene.crosshairPos = dst.mm2frac(mm); dst.drawScene(); };
+if (fdaLayers.length) {
+  nvF = new Niivue({ backColor: [0, 0, 0, 1], isColorbar: false, isOrientCube: true, show3Dcrosshair: true,
+                     crosshairColor: [0.2, 0.9, 0.2, 1], dragAndDropEnabled: false });
+  await nvF.attachTo("glF");
+  nvF.addColormap("fda_regions", cmaps.fda_regions);
+  await nvF.loadVolumes(fdaLayers.map(l => ({ url: toUrl(l.b64), name: l.name, colormap: l.colormap, opacity: l.opacity })));
+  fdaLayers.forEach((l, i) => { nvF.volumes[i].cal_min = l.cal_min; nvF.volumes[i].cal_max = l.cal_max; });
+  nvF.updateGLVolume();
+  nvF.setSliceType(4); nvF.setRenderAzimuthElevation(120, 15);
+  moveTo(nvs.L, nvF);
+  nvF.onLocationChange = () => { if (pushing) return; pushing = true; moveTo(nvF, nvs.L); moveTo(nvF, nvs.R); readout(); pushing = false; };
+  document.querySelectorAll("[data-fda]").forEach(b => b.onclick = () => {
+    fdaMode = b.dataset.fda; nvF.setSliceType(fdaMode === "4" ? 4 : view);
+    document.querySelectorAll("[data-fda]").forEach(x => x.classList.toggle("on", x === b));
+  });
+}
+const onMove = (src) => () => { readout(); if (nvF && !pushing) { pushing = true; moveTo(src, nvF); pushing = false; } };
+nvs.L.onLocationChange = onMove(nvs.L); nvs.R.onLocationChange = onMove(nvs.R);
 
 const checked = (t) => { const c = document.querySelector(`[data-toggle="${t}"]`); return !c || c.checked; };
 const applyLayers = () => {  // a layer shows if its checkbox is ticked
@@ -471,7 +527,9 @@ document.querySelectorAll("[data-toggle]").forEach(c => c.onchange = applyLayers
 applyLayers();
 // open at a given slice from the address (for testing), e.g. viewer.html#z10
 const z = location.hash.match(/z(-?\\d+)/);
-if (z) { both(nv => { nv.scene.crosshairPos = nv.mm2frac([-50, -55, +z[1]]); nv.drawScene(); }); readout(); }
+if (z) { both(nv => { nv.scene.crosshairPos = nv.mm2frac([-50, -55, +z[1]]); nv.drawScene(); }); readout(); if (nvF) moveTo(nvs.L, nvF); }
+if (location.hash.includes("fdaslices")) document.querySelector('[data-fda="slices"]').click();
+if (location.hash.includes("coronal")) document.querySelector('[data-view="1"]').click();
 </script></body></html>
 """
 
