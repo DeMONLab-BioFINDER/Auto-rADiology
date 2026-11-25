@@ -65,7 +65,13 @@ TESTED = ["Meta-temporal", "Temporoparietal"]
 GROUPS = [("TP", "Model + / Read +", 1, 1), ("FN", "Model − / Read +", 1, 0),
           ("TN", "Model − / Read −", 0, 0), ("FP", "Model + / Read −", 0, 1)]
 MIN_GROUP = 5
-CUTS = [-30, -18, -6, 6, 18, 30, 42, 54]  # axial slices (MNI z, mm)
+CUTS = [-30, -18, -6, 6, 18, 30, 42, 54]
+# the per-scan occlusion maps' colours (src/vis.py WARM_COOL): red -> yellow = for positive, blue -> light cyan = for
+# negative. Red-blue (RdBu) stays reserved for difference maps (voxelwise mean differences).
+FADE = 0.5  # opacity rises linearly from 0 at zero to solid at FADE x the top of the scale
+OCC_CMAP = matplotlib.colors.LinearSegmentedColormap.from_list(
+    "cool_warm_bright", [(0.0, "#a0ffff"), (0.25, "#2aa0ff"), (0.499, "#1040ff"),
+                         (0.501, "#c00000"), (0.75, "#ff9900"), (1.0, "#ffff66")])  # axial slices (MNI z, mm)
 
 
 def parse_args():
@@ -116,10 +122,15 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
         name = dict((k, lab) for k, lab, _, _ in GROUPS)[g]
         shown = image.resample_to_img(image.smooth_img(means[g], fwhm=3), bg, interpolation="continuous",
                                       force_resample=True, copy_header=True)
-        disp = plotting.plot_stat_map(shown, bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig,
-                                      cmap="RdBu_r", vmax=vmax, symmetric_cbar=True, threshold=vmax * 0.08,
-                                      colorbar=False, black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
-                                      resampling_interpolation="continuous")
+        kw = dict(bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig, cmap=OCC_CMAP, vmax=vmax,
+                  symmetric_cbar=True, threshold=vmax * 0.08, colorbar=False, black_bg=False, draw_cross=False,
+                  annotate=False, dim=-0.3, resampling_interpolation="continuous")
+        # weak values fade out, as in the per-scan maps (opacity follows strength, solid at the top of the scale)
+        fade = nib.Nifti1Image(np.nan_to_num(np.abs(shown.get_fdata())).astype(np.float32), shown.affine)
+        try:
+            disp = plotting.plot_stat_map(shown, transparency=fade, transparency_range=[0.0, FADE * vmax], **kw)
+        except TypeError:  # nilearn < 0.11: no transparency, plain colours
+            disp = plotting.plot_stat_map(shown, **kw)
         if outline_1mm is not None:
             disp.add_contours(outline_1mm, levels=[0.5], colors="0.1", linewidths=0.8)
         ax.text(-0.01, 0.5, f"{name}\nn = {n[g]}", transform=ax.transAxes, ha="right", va="center", fontsize=15)
@@ -131,11 +142,16 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
         axes[0].text(0.5 / len(CUTS) + dx, 1.0, lab, transform=axes[0].transAxes, ha="center", va="bottom",
                      fontsize=13, color="0.35")
     cax = fig.add_axes([0.9, bottom + 0.25 * (top - bottom), 0.01, 0.5 * (top - bottom)])
-    sm = matplotlib.cm.ScalarMappable(cmap="RdBu_r", norm=matplotlib.colors.Normalize(-vmax, vmax))
+    sm = matplotlib.cm.ScalarMappable(cmap=OCC_CMAP, norm=matplotlib.colors.Normalize(-vmax, vmax))
     cb = fig.colorbar(sm, cax=cax, ticks=[-vmax, 0, vmax])
     cb.ax.set_yticklabels([f"{-vmax:.2f}", "0", f"{vmax:.2f}"], fontsize=13)
     cb.outline.set_visible(False)
-    cb.set_label("Change in log-odds when hidden\n(red = for positive, blue = for negative)", fontsize=12,
+    vals = np.linspace(-vmax, vmax, 256)[:, None]  # the bar fades the same way as the maps, on the template's grey
+    rgba = OCC_CMAP(matplotlib.colors.Normalize(-vmax, vmax)(vals))
+    rgba[..., 3] = np.clip(np.abs(vals) / (FADE * vmax), 0, 1)
+    cax.imshow(np.full((256, 1, 3), 0.75), aspect="auto", origin="lower", extent=[0, 1, -vmax, vmax], zorder=2)
+    cax.imshow(rgba, aspect="auto", origin="lower", extent=[0, 1, -vmax, vmax], zorder=3)
+    cb.set_label("Change in log-odds when hidden\n(red-yellow = for positive, blue = for negative)", fontsize=12,
                  color="0.3")
     fig.text(left, 0.985, "Group-average occlusion maps" + (f", {title.replace('Held-out', 'held-out')}" if title else ""), ha="left", va="top",
              fontsize=16)
