@@ -237,11 +237,11 @@ def fig_prob_by_votes(df: pd.DataFrame, out: Path, set_label: str) -> None:
     ax.tick_params(axis="y", labelsize=14)
     ax.set_xlabel("Readers who said positive", fontsize=15)
     ax.set_ylabel("Model probability", fontsize=15)
-    ax.set_title(f"Reader votes and model confidence,\n{set_label}", fontsize=16, loc="left", pad=36)
-    ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[0], label="Read −"),
-                       Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[1], label="Read +"),
+    ax.set_title(f"Reader votes and model confidence,\n{set_label}", fontsize=16, loc="left", pad=64)
+    ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[0], label="Consensus Read −"),
+                       Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[1], label="Consensus Read +"),
                        Patch(color="0.88", label="Model uncertain")],
-              loc="lower left", bbox_to_anchor=(-0.02, 1.0), ncol=3, frameon=False, fontsize=13,
+              loc="lower left", bbox_to_anchor=(-0.02, 1.0), ncol=2, frameon=False, fontsize=13,
               handletextpad=0.3, columnspacing=1.0)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
