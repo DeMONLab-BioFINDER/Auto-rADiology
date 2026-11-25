@@ -344,8 +344,8 @@ def main():
                  thresholded=False)
         # plain difference of group averages, nothing held equal and no test (red = the tested group has more signal)
         if set(np.unique(tested)) <= {0, 1}:
-            Xr = X[rows]
-            diff = Xr[tested == 1].mean(0) - Xr[tested == 0].mean(0)
+            Xr, grp = X[rows], tested[:, 0]  # tested is a column (n, 1)
+            diff = Xr[grp == 1].mean(0) - Xr[grp == 0].mean(0)
             nib.save(masker.inverse_transform(diff.astype(np.float32)), out / f"{name}_mean_difference.nii.gz")
             plot_map(masker.inverse_transform(diff.astype(np.float32)), all_img, TITLES[name] + " (group averages)",
                      out / f"{name}_mean_difference.png", regions_img, set_label=set_label, thresholded=False,
