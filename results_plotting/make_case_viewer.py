@@ -11,9 +11,9 @@
          'class' dark red -> yellow; opacity follows strength (0 = see-through, solid 0.9 at the top and above);
          colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
   click  the values under the cursor, and (with --regions) which FDA visual-read region it is in.
-  third  (with --regions, below the two scans) the FDA regions that make a read positive (posterolateral temporal,
-         occipital, parietal / precuneus; frontal only together with these) in colour on the MNI template; mesial and
-         anterolateral temporal are left out (tau there alone does not make a scan positive). A 3D brain you can turn, with
+  third  (with --regions) the FDA regions that make a read positive (posterolateral temporal, occipital, parietal /
+         precuneus) in colour on the MNI template; mesial and anterolateral temporal (tau there alone does not count) and
+         frontal (counts only together with the others) are left out. A 3D brain you can turn, with
          the crosshair of the other two brains on it (so you see which region a spot is in); "Slices" shows it in the
          same plane as the other two instead.
 
@@ -56,7 +56,9 @@ from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_ed
 
 from make_niivue_viewer import NIIVUE, REGION_COLOURS, REGION_NAMES, region_colormap
 
-NOT_COUNTED = (5, 6)  # anterolateral temporal, mesial temporal: tau there alone does not make a read positive (FDA label)
+NOT_SHOWN = (4, 5, 6)  # frontal (counts only together with the others), anterolateral + mesial temporal (do not count)
+READOUT_NOTE = {4: " (counts only together with the others)", 5: " (does not count for the read)",
+                6: " (does not count for the read)"}
 
 # MNI model input grid (tau_T1MNI_pts, RAS), the same as voxelwise_visual_read.py
 MNI_2MM_RAS = np.array([[2.0, 0, 0, -90], [0, 2.0, 0, -126], [0, 0, 2.0, -72], [0, 0, 0, 1]])
@@ -291,15 +293,12 @@ def main():
         reg = nib.load(args.regions)
         fda_layers = [{"b64": nifti_b64(t8, tpl.affine), "name": "template.nii.gz", "colormap": "gray",
                        "cal_min": 0.0, "cal_max": 255.0, "opacity": 1.0},
-                      {"b64": nifti_b64(np.where(np.isin(np.asarray(reg.dataobj).astype(np.uint8), NOT_COUNTED), 0,
+                      {"b64": nifti_b64(np.where(np.isin(np.asarray(reg.dataobj).astype(np.uint8), NOT_SHOWN), 0,
                                                  np.asarray(reg.dataobj).astype(np.uint8)).astype(np.uint8), reg.affine),
                        "name": "fda.nii.gz",
                        "colormap": "fda_regions", "cal_min": 0.0, "cal_max": 6.0, "opacity": 1.0}]
-        fda_legend = "".join(f"<span><i style='background:{c}'></i>{n}{' (only together with the others)' if k == 4 else ''}"
-                             "</span>" for k, (c, n) in enumerate(zip(REGION_COLOURS, REGION_NAMES), 1)
-                             if k not in NOT_COUNTED) + \
-            ("<div class='fdanote'>A read is positive when tau is in these regions. Mesial and anterolateral temporal are "
-             "not shown: tau there alone does not make a scan positive.</div>")
+        fda_legend = "".join(f"<span><i style='background:{c}'></i>{n.split(' (')[0]}</span>"  # short names: the pane is narrow
+                             for k, (c, n) in enumerate(zip(REGION_COLOURS, REGION_NAMES), 1) if k not in NOT_SHOWN)
 
     for scan_id in ids:
         x_full = on_mni_grid(vis_dir / f"{scan_id}_input.nii.gz")  # whole scan, for the "whole scan" checkbox
@@ -383,11 +382,10 @@ def main():
         page = (TEMPLATE.replace("__NIIVUE__", NIIVUE).replace("__TITLE__", title)
                 .replace("__LEFT_TITLE__", left_title).replace("__LEFT_LEGEND__", left_note)
                 .replace("__RIGHT_LEGEND__", legend_right).replace("__TOGGLES__", toggles)
-                .replace("__REGION_NAMES__", json.dumps([n + (" (does not count for the read)" if k in NOT_COUNTED else "")
-                                                         for k, n in enumerate(REGION_NAMES, 1)])).replace("__LEFT__", json.dumps(left)).replace("__RIGHT__", json.dumps(right))
+                .replace("__REGION_NAMES__", json.dumps([n + READOUT_NOTE.get(k, "") for k, n in enumerate(REGION_NAMES, 1)])).replace("__LEFT__", json.dumps(left)).replace("__RIGHT__", json.dumps(right))
                 .replace("__FDA__", json.dumps(fda_layers)).replace("__FDA_LEGEND__", fda_legend)
                 .replace("__FDA_DISPLAY__", "flex" if fda_layers else "none")
-                .replace("__WRAP_W__", "1004")
+                .replace("__WRAP_W__", "1364" if fda_layers else "1004")
                 .replace("__CMAPS__", json.dumps({
                     "reader": reader_colormap(), "fda_regions": region_colormap()}))
                 .replace("__RIGHT_BARS__", bars).replace("__LEFT_BARS__", left_bar))
@@ -406,7 +404,7 @@ TEMPLATE = """<!doctype html>
   #wrap { display: flex; flex-direction: column; width: __WRAP_W__px; }
   #bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
   #bar label { white-space: nowrap; }
-  #panes { display: flex; flex-wrap: wrap; gap: 4px; }
+  #panes { display: flex; gap: 4px; }
   .pane { width: 500px; flex: none; display: flex; flex-direction: column; background: #000; }
   .head { padding: 5px 10px; background: #181818; font-weight: 600; height: 38px; box-sizing: border-box;
           overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -423,16 +421,13 @@ TEMPLATE = """<!doctype html>
   #status { color: #999; }
   .views button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 9px; cursor: pointer; font: inherit; }
   .views button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
-  #fdapane { width: 1004px; }
-  #fdapane .frow { display: flex; }
-  #fdapane .frow .legend { flex: 1; height: auto; display: flex; flex-direction: column; gap: 8px; padding: 18px 16px; }
-  #fdapane .regions span { font-size: 13px; color: #ccc; }
-  #fdapane .regions i { width: 12px; height: 12px; }
-  .fdanote { margin-top: 10px; font-size: 12px; color: #999; white-space: normal; }
+  #fdapane { width: 352px; }
   #fdapane .head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
   #fdapane .head button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 1px 7px;
                           cursor: pointer; font: 12px system-ui, sans-serif; }
   #fdapane .head button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
+  #fdapane .legend { padding: 4px 8px; overflow: hidden; line-height: 17px; display: grid; grid-template-columns: 1fr;
+                     column-gap: 6px; align-content: start; }
   .regions span { white-space: nowrap; font-size: 11px; color: #bbb; overflow: hidden; text-overflow: ellipsis; }
   .regions i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }
   #here { padding: 4px 12px; background: #0b0b0b; color: #ccc; font-size: 13px; min-height: 18px; }
@@ -451,10 +446,10 @@ TEMPLATE = """<!doctype html>
       <div class="legend">__LEFT_LEGEND__</div></div>
     <div class="pane"><div class="head">What the model saw + occlusion map</div>
       <div class="box"><canvas id="glR" tabindex="0" width="350" height="440"></canvas><div class="side">__RIGHT_BARS__</div></div><div class="legend">__RIGHT_LEGEND__</div></div>
-    <div class="pane" id="fdapane" style="display:__FDA_DISPLAY__"><div class="head"><span>FDA read regions that count</span>
+    <div class="pane" id="fdapane" style="display:__FDA_DISPLAY__"><div class="head"><span>FDA regions that count</span>
       <span><button data-fda="4" class="on">3D</button> <button data-fda="slices">Slices</button></span></div>
-      <div class="frow"><div class="box"><canvas id="glF" tabindex="0" width="350" height="440"></canvas></div>
-      <div class="legend regions">__FDA_LEGEND__</div></div></div>
+      <div class="box"><canvas id="glF" tabindex="0" width="350" height="440"></canvas></div>
+      <div class="legend regions">__FDA_LEGEND__</div></div>
   </div>
   <div class="note" style="padding:4px 12px;background:#111">View buttons = axial / coronal / sagittal / all three · scroll = move through slices · click = see the values there · the brains move together · FDA brain: drag to turn, the green cross = the spot you clicked</div>
 </div>
