@@ -34,17 +34,18 @@ COLOUR = {"Model − / Read −": CONFUSION_CATEGORY_PALETTE["True Negative"],
           "Model − / Read +": CONFUSION_CATEGORY_PALETTE["False Negative"],
           "Model + / Read +": CONFUSION_CATEGORY_PALETTE["True Positive"],
           "Model + / Read −": CONFUSION_CATEGORY_PALETTE["False Positive"]}
-TICK = {"Temporoparietal": "Temporo-\nparietal", "Mesial temporal": "Mesial\ntemporal"}
+TICK = {"Meta-temporal": "Meta-\ntemporal", "Temporoparietal": "Temporo-\nparietal", "Mesial temporal": "Mesial\ntemporal"}
 BOXES = ["Model − / Read −", "Model − / Read +", "Model + / Read +"]  # low -> high tau; Model + / Read − = points only
 
 
-def plot(sets: list, out: Path, ymax: float = None):
+def plot(sets: list, out: Path, ymax: float = None, title: str = "Tau in each CenTauR region", panel_w: float = 6.4):
     """sets = [(title, data frame with 'group' + region columns)]: one panel per set, boxes per region and group."""
     labs = [lab for _, lab in REGIONS]
-    fig, axes = plt.subplots(1, len(sets), figsize=(6.4 * len(sets), 5.2), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(1, len(sets), figsize=(panel_w * len(sets), 5.2 * panel_w / 6.4 + 0.4), sharey=True, squeeze=False)
     rng = np.random.default_rng(0)
     w = 0.24
-    for ax, (title, d) in zip(axes[0], sets):
+    hidden = []
+    for ax, (panel, d) in zip(axes[0], sets):
         for i, lab in enumerate(labs):
             for j, g in enumerate(BOXES):
                 v = pd.to_numeric(d.loc[d["group"] == g, lab], errors="coerce").dropna()
@@ -64,15 +65,13 @@ def plot(sets: list, out: Path, ymax: float = None):
                        edgecolor="white", linewidth=0.5, zorder=4)
         ax.set_xticks(range(len(labs)), [TICK.get(l, l) for l in labs], fontsize=11.5)
         ax.set_xlim(-0.55, len(labs) - 0.35)
-        ax.set_title(title, fontsize=13.5)
+        ax.set_title(panel, fontsize=13.5)
         if ymax:  # boxes use all scans; the axis stops at ymax so the low range stays readable
             ax.set_ylim(top=ymax)
             over = d.groupby("group")[labs].apply(lambda x: int((x > ymax).any(axis=1).sum()))
             over = {g: k for g, k in over.items() if k}
             if over:
-                ax.text(0.0, -0.2, f"Not shown (above {ymax:g} in a region): "
-                        + ", ".join(f"{k} {g}" for g, k in over.items()), transform=ax.transAxes, fontsize=9.5,
-                        color="#555555", va="top")
+                hidden.append(f"{panel}: " + ", ".join(f"{k} {g}" for g, k in over.items()))
         ax.yaxis.grid(True, color="#E5E5E5", lw=0.8)
         ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
@@ -80,10 +79,18 @@ def plot(sets: list, out: Path, ymax: float = None):
     first = sets[0][1]
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOUR[g], alpha=0.6, edgecolor=COLOUR[g]) for g in BOXES]
     handles.append(plt.Line2D([], [], marker="D", ls="", color=COLOUR["Model + / Read −"], ms=6))
-    fig.legend(handles, BOXES + ["Model + / Read − (single scans)"], loc="lower center", ncol=4, frameon=False,
+    fig.legend(handles, BOXES + ["Model + / Read − (single scans)"], loc="lower center", ncol=4 if panel_w >= 6 else 2,
+               frameon=False,
                fontsize=11, bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle("Tau in each CenTauR region", fontsize=15)
-    fig.tight_layout(rect=(0, 0.08 if ymax else 0.07, 1, 0.97))
+    if title:
+        fig.suptitle(title, fontsize=15)
+    bottom = 0.07 * (1 if panel_w >= 6 else 1.9)
+    if hidden:
+        fig.text(0.5, 0.005, f"Above {ymax:g}, not shown: " + "; ".join(hidden), ha="center", va="bottom", fontsize=9.5,
+                 color="#555555")
+        fig.legends[0].set_bbox_to_anchor((0.5, 0.04 if panel_w >= 6 else 0.035))
+        bottom += 0.05
+    fig.tight_layout(rect=(0, bottom, 1, 0.97 if title else 1))
     fig.savefig(out, dpi=200, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {out}")
@@ -94,10 +101,12 @@ def main():
     p.add_argument("run_dir", nargs="?"); p.add_argument("--dataset", default="Gothenburg"); p.add_argument("--demo_csv", default=None)
     p.add_argument("--plot_from", nargs="+", default=None, help='"title=data.csv" per panel (regional_suvr_by_group_data.csv)')
     p.add_argument("--out", default="regional_suvr_by_group_sets.png")
+    p.add_argument("--title", default="Tau in each CenTauR region", help="Figure title ('' for none, e.g. on a slide).")
+    p.add_argument("--panel_width", type=float, default=6.4, help="Inches per panel (smaller = larger text).")
     p.add_argument("--ymax", type=float, default=None, help="Stop the y-axis here (boxes still use all scans).")
     args = p.parse_args()
     if args.plot_from:
-        plot([(t, pd.read_csv(f)) for t, f in (x.split("=", 1) for x in args.plot_from)], Path(args.out), args.ymax)
+        plot([(t, pd.read_csv(f)) for t, f in (x.split("=", 1) for x in args.plot_from)], Path(args.out), args.ymax, args.title, args.panel_width)
         return
     if not args.run_dir:
         p.error("run_dir is required unless --plot_from is given")
