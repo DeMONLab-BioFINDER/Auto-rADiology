@@ -81,6 +81,8 @@ def parse_args():
                    "(group averages, no per-scan maps needed); give the group sizes with --counts.")
     p.add_argument("--counts", default=None, help="With --replot: e.g. TP=86,TN=339,FN=29")
     p.add_argument("--vmax", type=float, default=None, help="With --replot: colour range (default: 99.5th percentile).")
+    p.add_argument("--map_min_group", type=int, default=MIN_GROUP, help="Smallest group shown in the montage (tests "
+                   "still need 5 scans); e.g. 1 to show the Model + / Read − scans too.")
     p.add_argument("--no_outline", action="store_true", help="Montage without the CenTauR meta-temporal outline.")
     p.add_argument("--universal", default="CenTauR.nii.gz", help="Universal CenTauR mask in --centaur_dir (the overlap of "
                    "six tracer-specific AD masks; the four regional masks lie inside it). Added if the file exists.")
@@ -300,12 +302,12 @@ def main():
     # group means (groups with at least MIN_GROUP scans)
     means = {}
     for g, _, _, _ in GROUPS:
-        if counts.get(g, 0) >= MIN_GROUP:
+        if counts.get(g, 0) >= args.map_min_group:
             img = nib.Nifti1Image((sums[g] / counts[g]).astype(np.float32), MNI_2MM_RAS)
             nib.save(img, out / f"group_mean_{g}.nii.gz")
             means[g] = img
     if means:
-        vmax = float(np.percentile(np.abs(np.concatenate([i.get_fdata()[in_brain] for i in means.values()])), 99.5))
+        vmax = args.vmax or float(np.percentile(np.abs(np.concatenate([i.get_fdata()[in_brain] for i in means.values()])), 99.5))
         montage(means, counts, None if args.no_outline else outline_img, vmax, args.label, out / "group_montage.png")
         surfaces(means, counts, vmax, out / "group_surface.png")
 
