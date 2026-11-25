@@ -52,7 +52,6 @@ ANALYSES="${ANALYSES:-read_neg_above_cutoff read_pos_below_cutoff model_neg_read
 # Results then go to voxelwise_discordant_wholebrain_<set> so the cortex results are kept.
 EXTRA=(); TAG=""
 if [[ "${WHOLE_BRAIN:-0}" == 1 ]]; then EXTRA+=(--whole_brain --rim_mm "${RIM_MM:-0}"); TAG="_wholebrain"; fi
-TAG+="${SUFFIX:-}"   # e.g. SUFFIX=_confident: a separate folder, so an earlier run's summary.csv is not overwritten
 COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$DATA/masks/voi_CerebGry_tau_2mm.nii"
         --atlas_dir "$DATA/atlases/lotter2025_mni_freesurfer" --demo_csv "$DEMO"
         --n_perm "$N_PERM" --n_jobs "$N_JOBS" --analyses $ANALYSES "${EXTRA[@]}")
