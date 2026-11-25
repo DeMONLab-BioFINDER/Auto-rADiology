@@ -70,8 +70,13 @@ CUTS = [-30, -18, -6, 6, 18, 30, 42, 54]  # axial slices (MNI z, mm)
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("vis_dir", help="Merged occlusion folder (one map per scan + summary.csv).")
-    p.add_argument("--centaur_dir", required=True, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, ...).")
+    p.add_argument("vis_dir", nargs="?", help="Merged occlusion folder (one map per scan + summary.csv).")
+    p.add_argument("--replot", default=None, help="Only redraw the montage from this folder's group_mean_*.nii.gz "
+                   "(group averages, no per-scan maps needed); give the group sizes with --counts.")
+    p.add_argument("--counts", default=None, help="With --replot: e.g. TP=86,TN=339,FN=29")
+    p.add_argument("--vmax", type=float, default=None, help="With --replot: colour range (default: 99.5th percentile).")
+    p.add_argument("--no_outline", action="store_true", help="Montage without the CenTauR meta-temporal outline.")
+    p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, ...).")
     p.add_argument("--atlas_dir", default=None, help="DK atlas folder (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
     p.add_argument("--regions", default=None, help="FDA region map from plot_fda_regions.py (optional, supplementary).")
     p.add_argument("--label", default="", help="Name of the set for figure titles, e.g. 'Held-out test'.")
@@ -99,8 +104,8 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
     All rows share one scale (the slides compare how much evidence each group has, not only where it lies)."""
     from nilearn import datasets
     bg = datasets.load_mni152_template(resolution=1)
-    outline_1mm = image.smooth_img(image.resample_to_img(regions_img, bg, interpolation="continuous",
-                                                         force_resample=True, copy_header=True), fwhm=2)
+    outline_1mm = None if regions_img is None else image.smooth_img(
+        image.resample_to_img(regions_img, bg, interpolation="continuous", force_resample=True, copy_header=True), fwhm=2)
     rows = [g for g in ("TP", "TN", "FN", "FP") if g in means]  # concordant first, Model − / Read + last
     fig = plt.figure(figsize=(13, 1.75 * len(rows) + 0.7), facecolor="white")
     left, right, top, bottom = 0.15, 0.87, 0.89, 0.08
@@ -115,7 +120,8 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
                                       cmap="RdBu_r", vmax=vmax, symmetric_cbar=True, threshold=vmax * 0.08,
                                       colorbar=False, black_bg=False, draw_cross=False, annotate=False, dim=-0.3,
                                       resampling_interpolation="continuous")
-        disp.add_contours(outline_1mm, levels=[0.5], colors="0.1", linewidths=0.8)
+        if outline_1mm is not None:
+            disp.add_contours(outline_1mm, levels=[0.5], colors="0.1", linewidths=0.8)
         ax.text(-0.01, 0.5, f"{name}\nn = {n[g]}", transform=ax.transAxes, ha="right", va="center", fontsize=15)
         axes.append(ax)
     for j, z in enumerate(CUTS):
@@ -133,7 +139,8 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
                  color="0.3")
     fig.text(left, 0.985, "Group-average occlusion maps" + (f", {title.replace('Held-out', 'held-out')}" if title else ""), ha="left", va="top",
              fontsize=16)
-    fig.text(right, 0.985, f"Outline: {outline}", ha="right", va="top", fontsize=13, color="0.35")
+    if outline_1mm is not None:
+        fig.text(right, 0.985, f"Outline: {outline}", ha="right", va="top", fontsize=13, color="0.35")
     fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05); plt.close(fig)
 
 
@@ -188,8 +195,24 @@ def by_group(shares: pd.DataFrame, cols: list) -> pd.DataFrame:
     return t
 
 
+def replot(args):
+    folder = Path(args.replot)
+    counts = {k: int(v) for k, v in (x.split("=") for x in args.counts.split(","))}
+    means = {g: nib.load(folder / f"group_mean_{g}.nii.gz") for g in counts if (folder / f"group_mean_{g}.nii.gz").exists()}
+    in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 0)
+    vmax = args.vmax or float(np.percentile(np.abs(np.concatenate([i.get_fdata()[in_brain] for i in means.values()])), 99.5))
+    out = Path(args.out_dir) if args.out_dir else folder
+    out.mkdir(parents=True, exist_ok=True)
+    montage(means, counts, None, vmax, args.label, out / "group_montage_no_outline.png")
+    print(f"[save] {out / 'group_montage_no_outline.png'} (colour range ±{vmax:.3f})")
+
+
 def main():
     args = parse_args()
+    if args.replot:
+        return replot(args)
+    if not (args.vis_dir and args.centaur_dir):
+        raise SystemExit("vis_dir and --centaur_dir are needed (or --replot)")
     vis = Path(args.vis_dir)
     out = Path(args.out_dir) if args.out_dir else vis / "group_maps"
     out.mkdir(parents=True, exist_ok=True)
@@ -262,7 +285,7 @@ def main():
             means[g] = img
     if means:
         vmax = float(np.percentile(np.abs(np.concatenate([i.get_fdata()[in_brain] for i in means.values()])), 99.5))
-        montage(means, counts, outline_img, vmax, args.label, out / "group_montage.png")
+        montage(means, counts, None if args.no_outline else outline_img, vmax, args.label, out / "group_montage.png")
         surfaces(means, counts, vmax, out / "group_surface.png")
 
     # CenTauR shares by group (+ each region's volume share for reference) and tests
