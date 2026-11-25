@@ -191,9 +191,12 @@ def figure(t: pd.DataFrame, title: str, out: Path):
     fig.suptitle(title, fontsize=11); fig.tight_layout(); fig.savefig(out); plt.close(fig)
 
 
+NOT_CLINICAL = ("frontal10",)  # image measures: kept in the csv and the full figure, left out of the clinical slide figure
+
+
 def figure_odds(t: pd.DataFrame, title: str, out: Path):
-    """Slide version: only the read-vs-model odds ratios (model 4), factor names on the left."""
-    m4 = t[t["model"].str.startswith("4") & t["estimate"].notna()]
+    """Slide version: only the read-vs-model odds ratios (model 4) for the clinical factors, names on the left."""
+    m4 = t[t["model"].str.startswith("4") & t["estimate"].notna() & ~t["extra"].isin(NOT_CLINICAL)]
     m4 = m4[(m4["extra"] == "none") | (m4["term"] == m4["extra"].map(EXTRAS))]
     if m4.empty:
         return
@@ -220,7 +223,7 @@ def main():
     run = Path(args.run_dir).resolve()
     out = Path(args.out_dir) if args.out_dir else run / "figures" / "regressions"
     out.mkdir(parents=True, exist_ok=True)
-    names = {"test": "Held-out test", "avid": f"External ({external_name(args.ext_dataset)})"}
+    names = {"test": "Held-out test", "avid": external_name(args.ext_dataset)}
     for which in args.sets:
         d = load(run, which, args)
         t = run_set(d)
