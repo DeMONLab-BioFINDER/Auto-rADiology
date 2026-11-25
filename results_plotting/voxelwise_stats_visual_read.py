@@ -101,6 +101,7 @@ def parse_args():
     p.add_argument("--pkl_dir", required=True, help="Folder with the original MNI tau_batch_*.pkl.")
     p.add_argument("--ref_mask", required=True, help="Reference-region mask (NIfTI, MNI space).")
     p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): optional overlap table.")
+    p.add_argument("--no_outline", action="store_true", help="Maps without the CenTauR meta-temporal outline.")
     p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (default: the --ref_mask folder).")
     p.add_argument("--atlas_dir", default=None, help="DK atlas folder, cortex outline only (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
     p.add_argument("--whole_brain", action="store_true", help="Whole brain instead of cortex only.")
@@ -300,7 +301,7 @@ def main():
     # the masker orders voxels like keep[...] boolean indexing, the same order as X's columns
 
     centaur = centaur_masks(keep.shape, affine, Path(args.centaur_dir) if args.centaur_dir else Path(args.ref_mask).parent)
-    regions_img = nib.Nifti1Image(centaur["Meta-temporal"].astype(np.int8), affine)  # outline on the maps
+    regions_img = None if args.no_outline else nib.Nifti1Image(centaur["Meta-temporal"].astype(np.int8), affine)
     zones = None
     if args.regions:
         zones_1mm, z_aff = region_zones(Path(args.regions))
