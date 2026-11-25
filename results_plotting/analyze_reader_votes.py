@@ -218,7 +218,7 @@ def fig_prob_by_votes(df: pd.DataFrame, out: Path, set_label: str) -> None:
     fig, ax = plt.subplots(figsize=(6.4, 6.6))
     ax.axhspan(*UNCERTAIN, color="0.92", zorder=0)
     ax.axhline(0.5, color="0.55", ls="--", lw=1.2, zorder=1)
-    names = {0: "All\nnegative", 1: "Split", 2: "Split", 3: "All\npositive"}
+    names = {0: "All 3\nRead −", 1: "1 Read +\n2 Read −", 2: "2 Read +\n1 Read −", 3: "All 3\nRead +"}
     ticks = []
     for v in range(4):
         pr = tri.loc[tri["positive_votes"] == v, "prob"].to_numpy()
@@ -229,13 +229,13 @@ def fig_prob_by_votes(df: pd.DataFrame, out: Path, set_label: str) -> None:
             n_unc = int(((pr >= UNCERTAIN[0]) & (pr <= UNCERTAIN[1])).sum())
             ax.text(v, 1.05, f"{n_unc} of {len(pr)}\nuncertain",
                     ha="center", va="bottom", fontsize=14, color="0.25", linespacing=1.0)
-        ticks.append(f"{v} of 3\n{names[v]}")
+        ticks.append(names[v])
     ax.set_xticks(range(4), ticks, fontsize=14)
     ax.set_xlim(-0.5, 3.5)
     ax.set_ylim(-0.04, 1.2)
     ax.set_yticks([0, 0.5, 1.0], ["0", ".5", "1"])
     ax.tick_params(axis="y", labelsize=14)
-    ax.set_xlabel("Readers who said positive", fontsize=15)
+    ax.set_xlabel("Votes of the three readers", fontsize=15)
     ax.set_ylabel("Model probability", fontsize=15)
     ax.set_title(f"Reader votes and model confidence,\n{set_label}", fontsize=16, loc="left", pad=64)
     ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[0], label="Consensus Read −"),
