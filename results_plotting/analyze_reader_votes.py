@@ -226,9 +226,10 @@ def fig_prob_by_votes(df: pd.DataFrame, out: Path, set_label: str) -> None:
         ax.scatter(v + rng.uniform(-0.2, 0.2, len(pr)), pr, s=34, alpha=0.6, color=color, edgecolor="white",
                    linewidth=0.5, zorder=2)
         if len(pr):
-            ax.text(v, 1.05, f"{100 * np.mean((pr >= UNCERTAIN[0]) & (pr <= UNCERTAIN[1])):.0f}%\nuncertain",
+            n_unc = int(((pr >= UNCERTAIN[0]) & (pr <= UNCERTAIN[1])).sum())
+            ax.text(v, 1.05, f"{n_unc} of {len(pr)}\nuncertain",
                     ha="center", va="bottom", fontsize=14, color="0.25", linespacing=1.0)
-        ticks.append(f"{v} of 3\n{names[v]}\n(n = {len(pr)})")
+        ticks.append(f"{v} of 3\n{names[v]}")
     ax.set_xticks(range(4), ticks, fontsize=14)
     ax.set_xlim(-0.5, 3.5)
     ax.set_ylim(-0.04, 1.2)
