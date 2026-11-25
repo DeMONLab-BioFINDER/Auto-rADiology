@@ -82,6 +82,8 @@ def parse_args():
     p.add_argument("--counts", default=None, help="With --replot: e.g. TP=86,TN=339,FN=29")
     p.add_argument("--vmax", type=float, default=None, help="With --replot: colour range (default: 99.5th percentile).")
     p.add_argument("--no_outline", action="store_true", help="Montage without the CenTauR meta-temporal outline.")
+    p.add_argument("--universal", default="CenTauR.nii.gz", help="Universal CenTauR mask in --centaur_dir (the overlap of "
+                   "six tracer-specific AD masks; the four regional masks lie inside it). Added if the file exists.")
     p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, ...).")
     p.add_argument("--atlas_dir", default=None, help="DK atlas folder (default <proj>/data/atlases/lotter2025_mni_freesurfer).")
     p.add_argument("--regions", default=None, help="FDA region map from plot_fda_regions.py (optional, supplementary).")
@@ -241,6 +243,9 @@ def main():
     any_centaur = np.logical_or.reduce(list(centaur.values()))
     cortex = (DKCortex(MNI_SHAPE, MNI_2MM_RAS, args.atlas_dir).mask | any_centaur) & in_brain
     regions = {**centaur, OUTSIDE: cortex & ~any_centaur}
+    universal_f = Path(args.centaur_dir) / args.universal
+    if universal_f.exists():  # whole AD-tau region (contains the four), cortex part only; added after the planned tests
+        regions = {"Universal": load_mask(universal_f) & cortex, **regions}
     vol_share = {name: m.sum() / cortex.sum() for name, m in regions.items()}
     print(f"[masks] cortex {cortex.sum() * 8 / 1000:.0f} ml; volume share: "
           + ", ".join(f"{k} {v:.0%}" for k, v in vol_share.items()))
@@ -317,6 +322,8 @@ def main():
     by_group(shares, amount_cols).to_csv(out / "centaur_amount_by_group.csv")
     amount_tests = share_tests(shares, amount_cols, args.n_perm)
     amount_tests.to_csv(out / "centaur_amount_tests.csv", index=False)
+    if "Universal" in shares:  # its own file: added after the planned meta-temporal / temporoparietal tests
+        share_tests(shares, ["Universal"], args.n_perm).to_csv(out / "centaur_universal_tests.csv", index=False)
 
     labels = dict((k, lab) for k, lab, _, _ in GROUPS)
     print(f"{args.label or vis.name}: {len(shares)} scans with maps "
