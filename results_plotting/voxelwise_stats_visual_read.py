@@ -91,7 +91,11 @@ TITLES.update({
     "read_pos_below_cutoff": "Read + scans: meta-temporal SUVR below vs above the cut point",
     "model_neg_read_pos_vs_neg": "Model − scans: Read + vs Read −",
     "missed_vs_detected_plain": "Model − / Read + vs Model + / Read +, tau not held equal",
+    # the Model - / Read + scans split at the pre-set confidence cut-off (P <= .1 = confident), each vs Model - / Read -
+    "confident_neg_pos_vs_neg": "Model − scans: confident Read + vs Read −",
+    "other_neg_pos_vs_neg": "Model − scans: other Read + vs Read −",
 })
+CONFIDENT_LOGODDS = np.log(0.1 / 0.9)  # P(positive) <= .1
 
 
 def parse_args():
@@ -191,6 +195,10 @@ def design(t: pd.DataFrame, analysis: str):
         base = t[t["read"] == 0]
     elif analysis == "model_neg_read_pos_vs_neg":
         base = t[t["call"] == 0]
+    elif analysis == "confident_neg_pos_vs_neg":
+        base = t[(t["call"] == 0) & ((t["read"] == 0) | (t["logodds"] <= CONFIDENT_LOGODDS))]
+    elif analysis == "other_neg_pos_vs_neg":
+        base = t[(t["call"] == 0) & ((t["read"] == 0) | (t["logodds"] > CONFIDENT_LOGODDS))]
     z = lambda s: (s - s.mean()) / s.std()
     conf = {"age": z(base["age"]), "male": (base["sex"] == "Male").astype(float)}
     if base["site"].nunique() > 1:
@@ -211,7 +219,7 @@ def design(t: pd.DataFrame, analysis: str):
         tested = (base["MetaTemporal"] >= cut).astype(float)
     elif analysis == "read_pos_below_cutoff":
         tested = (base["MetaTemporal"] < cut).astype(float)
-    else:  # read_pos_vs_neg, model_neg_read_pos_vs_neg
+    else:  # read_pos_vs_neg, model_neg_read_pos_vs_neg, confident_ / other_neg_pos_vs_neg
         tested = base["read"].astype(float)
     return base.index.to_numpy(), tested.to_numpy()[:, None], pd.DataFrame(conf).to_numpy()
 
