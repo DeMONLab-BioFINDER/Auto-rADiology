@@ -116,6 +116,7 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
     bg = datasets.load_mni152_template(resolution=1)
     outline_1mm = None if regions_img is None else image.smooth_img(
         image.resample_to_img(regions_img, bg, interpolation="continuous", force_resample=True, copy_header=True), fwhm=2)
+    brain = np.asarray(datasets.load_mni152_brain_mask(resolution=1).dataobj) > 0  # colour only inside the brain
     rows = [g for g in ("TP", "TN", "FN", "FP") if g in means]  # concordant first, Model − / Read + last
     fig = plt.figure(figsize=(13, 1.75 * len(rows) + 0.7), facecolor="white")
     left, right, top, bottom = 0.15, 0.87, 0.89, 0.08
@@ -124,8 +125,9 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
     for i, g in enumerate(rows):
         ax = fig.add_axes([left, top - (i + 1) * h, right - left, h * 0.96])
         name = dict((k, lab) for k, lab, _, _ in GROUPS)[g]
-        shown = image.resample_to_img(image.smooth_img(means[g], fwhm=3), bg, interpolation="continuous",
+        shown = image.resample_to_img(image.smooth_img(means[g], fwhm=2), bg, interpolation="continuous",
                                       force_resample=True, copy_header=True)
+        shown = nib.Nifti1Image((shown.get_fdata() * brain).astype(np.float32), shown.affine)
         kw = dict(bg_img=bg, display_mode="z", cut_coords=CUTS, axes=ax, figure=fig, cmap=OCC_CMAP, vmax=vmax,
                   symmetric_cbar=True, threshold=vmax * 0.08, colorbar=False, black_bg=False, draw_cross=False,
                   annotate=False, dim=-0.3, resampling_interpolation="continuous")
@@ -161,7 +163,7 @@ def montage(means: dict, n: dict, regions_img, vmax: float, title: str, out: Pat
              fontsize=16)
     if outline_1mm is not None:
         fig.text(right, 0.985, f"Outline: {outline}", ha="right", va="top", fontsize=13, color="0.35")
-    fig.savefig(out, facecolor="white", dpi=200, bbox_inches="tight", pad_inches=0.05); plt.close(fig)
+    fig.savefig(out, facecolor="white", dpi=300, bbox_inches="tight", pad_inches=0.05); plt.close(fig)
 
 
 def surfaces(means: dict, n: dict, vmax: float, out: Path):
