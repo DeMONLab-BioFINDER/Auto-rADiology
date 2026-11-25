@@ -51,6 +51,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pandas as pd
+from nilearn import image
 from matplotlib import colors as mcolors
 from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
 
@@ -281,16 +282,24 @@ def main():
     zones_layer = []  # invisible, only for the click readout
     if args.regions:
         zones, z_aff = region_zones(Path(args.regions))
+        # onto the 2 mm scan grid: 8x fewer voxels than the 1 mm atlas, loads much faster (e.g. over ThinLinc)
+        zones = np.asarray(image.resample_to_img(nib.Nifti1Image(zones.astype(np.int16), z_aff),
+                                                 nib.Nifti1Image(np.zeros(MNI_SHAPE, np.int8), MNI_2MM_RAS),
+                                                 interpolation="nearest", force_resample=True, copy_header=True).dataobj
+                           ).astype(np.int8)
+        z_aff = MNI_2MM_RAS
         zones_layer = [{"b64": nifti_b64(zones, z_aff), "name": "zones.nii.gz", "colormap": "gray",
                         "cal_min": 0.0, "cal_max": 6.0, "opacity": 0.0}]
     in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 2)
     fda_layers, fda_legend = [], ""
     if args.regions:
         from nilearn import datasets
-        tpl = datasets.load_mni152_template(resolution=1)
+        tpl = datasets.load_mni152_template(resolution=2)  # 2 mm: 8x fewer voxels, fast 3D even in software rendering
         t = np.asarray(tpl.dataobj, dtype=np.float32)
         t8 = np.clip(255 * t / np.percentile(t[t > 0], 99.5), 0, 255).astype(np.uint8)  # uint8: keeps the page small
         reg = nib.load(args.regions)
+        reg = image.resample_to_img(nib.Nifti1Image(np.asarray(reg.dataobj).astype(np.int16), reg.affine), tpl,
+                                    interpolation="nearest", force_resample=True, copy_header=True)
         fda_layers = [{"b64": nifti_b64(t8, tpl.affine), "name": "template.nii.gz", "colormap": "gray",
                        "cal_min": 0.0, "cal_max": 255.0, "opacity": 1.0},
                       {"b64": nifti_b64(np.where(np.isin(np.asarray(reg.dataobj).astype(np.uint8), NOT_SHOWN), 0,
