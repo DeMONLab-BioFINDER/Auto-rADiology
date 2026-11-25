@@ -13,6 +13,11 @@ Each change is applied two ways:
 The difference rescaled - fixed is the part that works through the scaling (bright off-target areas setting the
 top of the scale and squeezing the cortex); 'fixed' alone is what the network itself does with the signal.
 
+--region chp: the same experiment on the choroid plexus stand-in instead (atlas_utils.choroid_plexus_frac: lateral
+ventricle + temporal horn behind the foramen of Monro, grown 2 mm into white matter). Does the model use or discount
+signal there - the off-target that readers may confuse with mesial-temporal tau? Soft edges = the voxel's fraction
+inside the region (so nothing outside it, e.g. the hippocampus, is changed). Outputs go to perturb_chp_<set>/.
+
 Built-in check: the unchanged scan through the same preprocessing and model must reproduce the model's saved
 probabilities (printed; a warning if they do not).
 
@@ -23,7 +28,7 @@ whole-cerebellum reference (as the focality analysis).
 Usage (Berzelius, GPU; see sbatch_scripts/submit_perturb-offtarget.sh):
     python run_perturb_offtarget.py --best_model_folder <run> --dataset Gothenburg --pool attention \\
         --data_type tau_T1MNI_pts --input_path <data> --pkl_dir <tau_T1MNI pkls> \\
-        --ref_mask <masks>/voi_WhlCbl_2mm.nii [--atlas_dir <lotter2025_mni_freesurfer>] [--out_dir <folder>]
+        --ref_mask <masks>/voi_WhlCbl_2mm.nii [--region deep|chp] [--atlas_dir <lotter2025_mni_freesurfer>] [--out_dir <folder>]
 Outputs (<run>/figures/perturb_offtarget_<set>/): perturb_by_group.csv, perturb_tests.csv, perturb_change.png
     (no IDs); perturb_per_scan.csv (HAS IDs - keep local)
 """
@@ -76,6 +81,8 @@ def parse_args():
     p.add_argument("--pkl_dir", required=True)
     p.add_argument("--ref_mask", required=True, help="Whole-cerebellum mask (voi_WhlCbl_2mm.nii).")
     p.add_argument("--atlas_dir", default=None)
+    p.add_argument("--region", default="deep", choices=["deep", "chp"],
+                   help="deep = striatum + thalamus (default); chp = choroid plexus stand-in")
     p.add_argument("--max_scans", type=int, default=0, help="Only the first N scans (quick check).")
     p.add_argument("--out_dir", default=None)
     return p.parse_args()
@@ -131,8 +138,11 @@ def pipeline(a):
     return _build_transform(SimpleNamespace(**{**MNI_RECIPE, **recipe}))
 
 
+REGION_NAME = {"deep": "striatum + thalamus", "chp": "choroid plexus region"}
+
+
 def masks_on(shape, affine, a):
-    """Striatum + thalamus (soft weight 0..1) and whole-cerebellum mask on the pkl grid."""
+    """The region (--region; mask + soft weight 0..1) and whole-cerebellum mask on the pkl grid."""
     import nibabel as nib
     from nilearn import image
     from atlas_utils import DEFAULT_ATLAS_DIR
@@ -147,9 +157,13 @@ def masks_on(shape, affine, a):
                                  force_resample=True, copy_header=True).get_fdata()
     deep = frac >= 0.5
     weight = np.clip(gaussian_filter(deep.astype(np.float32), 1.0), 0, 1)  # soft edges (about 2 mm)
+    if a.region == "chp":
+        from atlas_utils import choroid_plexus_frac
+        frac = choroid_plexus_frac(shape, affine, a.atlas_dir)
+        deep, weight = frac >= 0.5, np.clip(frac, 0, 1).astype(np.float32)  # soft edges stay inside the region
     cbl = image.resample_to_img(nib.load(a.ref_mask), target, interpolation="nearest", force_resample=True,
                                 copy_header=True).get_fdata() > 0
-    print(f"[masks] striatum + thalamus {int(deep.sum())} voxels, cerebellum {int(cbl.sum())} voxels")
+    print(f"[masks] {REGION_NAME[a.region]} {int(deep.sum())} voxels, cerebellum {int(cbl.sum())} voxels")
     return deep, weight, cbl
 
 
@@ -187,7 +201,7 @@ def main():
     a = parse_args()
     device = get_device()
     set_tag = "test" if a.dataset == "Gothenburg" else a.dataset.removesuffix("_unseen").lower()
-    out = Path(a.out_dir) if a.out_dir else Path(a.best_model_folder) / "figures" / f"perturb_offtarget_{set_tag}"
+    out = Path(a.out_dir) if a.out_dir else Path(a.best_model_folder) / "figures" / f"perturb_{'offtarget' if a.region == 'deep' else 'chp'}_{set_tag}"
     out.mkdir(parents=True, exist_ok=True)
     preds = predictions(a)
     if a.max_scans:
@@ -216,7 +230,7 @@ def main():
     deep_suvr = pd.Series({k: v[3] for k, v in raw.items()})
     neg = [k for k in deep_suvr.index if preds.loc[k, "group"] == GROUPS[1]]
     target = {"typical": float(deep_suvr[neg].median()), "high": float(deep_suvr.quantile(0.9))}
-    print(f"[levels] striatum + thalamus SUVR: typical (median Model − / Read −) {target['typical']:.3f}, "
+    print(f"[levels] {REGION_NAME[a.region]} SUVR: typical (median Model − / Read −) {target['typical']:.3f}, "
           f"high (90th percentile) {target['high']:.3f}")
 
     # pass 2: perturb and run the model
@@ -283,7 +297,7 @@ def main():
                               "median_change": dd.median(), "p_wilcoxon": stats.wilcoxon(dd).pvalue})
     tests = pd.DataFrame(tests)
     tests.round(4).to_csv(out / "perturb_tests.csv", index=False)
-    figure(d, target, set_tag, out / "perturb_change.png")
+    figure(d, target, set_tag, out / "perturb_change.png", REGION_NAME[a.region])
     with pd.option_context("display.width", 230, "display.max_columns", None):
         print("\nPer group (change = log-odds of positive after - before; flips = calls that change at 0.5):\n"
               + summ.round(3).to_string(index=False))
@@ -291,8 +305,8 @@ def main():
     print(f"\nSaved to {out} (perturb_per_scan.csv has IDs - keep it local)")
 
 
-def figure(d: pd.DataFrame, target: dict, set_tag: str, out: Path):
-    """Change in log-odds when striatum + thalamus is set to the typical level, per group, rescaled vs fixed."""
+def figure(d: pd.DataFrame, target: dict, set_tag: str, out: Path, region: str = "striatum + thalamus"):
+    """Change in log-odds when the region is set to the typical level, per group, rescaled vs fixed."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -312,7 +326,7 @@ def figure(d: pd.DataFrame, target: dict, set_tag: str, out: Path):
                 ax.hlines(v.median(), i + (j - 0.5) * 0.36 - 0.14, i + (j - 0.5) * 0.36 + 0.14, color="0.1", lw=2)
         ax.axhline(0, color="0.5", ls="--", lw=1)
         ax.set_xticks(range(len(groups)), [g.replace(" (", "\n(") for g in groups], fontsize=10)
-        ax.set_title(f"Striatum + thalamus set to {level} (SUVR {target[level]:.2f})", fontsize=12)
+        ax.set_title(f"{region[0].upper() + region[1:]} set to {level} (SUVR {target[level]:.2f})", fontsize=12)
         ax.spines[["top", "right"]].set_visible(False)
     axes[0].set_ylabel("Change in the model's log-odds of positive", fontsize=11)
     axes[0].legend(frameon=False, fontsize=10, loc="upper left")

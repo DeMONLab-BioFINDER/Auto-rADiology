@@ -19,6 +19,11 @@ Per scan:
                   about 0.2%; a share, so independent of how strong the output was; needs --occ_dir)   B: low
     deep          mean SUVR in striatum + thalamus (FreeSurfer aseg of the template; classic flortaucipir off-target)
                                                                                            A: higher than normal scans
+    chp_peak      hottest 2 ml spot in the choroid plexus stand-in (lateral ventricle + temporal horn behind the foramen
+                  of Monro, grown 2 mm into white matter; atlas_utils.choroid_plexus_frac). A spot, because the region is
+                  mostly fluid and white matter around the small hot plexus                A: readers took spill-over
+                  next to the hippocampus for mesial-temporal tau -> higher in confident Model - / Read +
+    chp           mean SUVR of that whole region (check; diluted by fluid, lower with bigger ventricles)
     peak_1ml, peak_4ml, hot_share_1ml, hot_share_4ml   the same with a 1 or 4 ml hot spot (does the size matter?)
     meta          CenTauR meta-temporal SUVR on the same images (links to the rest of the analysis)
     grey_vs_whole mean of the inferior cerebellar grey matter (CenTauR reference) on this scale: the spreadsheet SUVR is
@@ -27,7 +32,8 @@ Group map (no statistics): per voxel, the share of each group's scans above 1.65
 
 Tests:
   within Read + scans, Model - vs Model + : logistic regression, each measure alone and at the same mean cortical SUVR,
-      likelihood-ratio test, FDR across the main measures (peak, extent, hot_share, deep)
+      likelihood-ratio test, FDR across the main measures (peak, extent, hot_share, deep); the choroid plexus measures
+      (chp_peak, chp) are their own family, added later (so the main results do not change)
   Mann-Whitney: Model - / Read + (all; confident P <= .1) vs Model + / Read + and vs Model - / Read -, FDR across measures
   hot-spot region: counts per group (descriptive)
 
@@ -53,7 +59,7 @@ from nilearn import image
 from scipy import stats
 from scipy.ndimage import gaussian_filter
 
-from atlas_utils import DEFAULT_ATLAS_DIR, DKCortex, centaur_masks
+from atlas_utils import DEFAULT_ATLAS_DIR, DKCortex, centaur_masks, choroid_plexus_frac
 from plot_fda_regions import FS_ASEG, fetch
 from plot_utils import CUSTOM_PALETTE, fdr_bh
 from voxelwise_stats_visual_read import load_table
@@ -69,9 +75,12 @@ GROUPS = ["Model + / Read +", "Model − / Read −", "Model − / Read + (confi
 COLOURS = {GROUPS[0]: CUSTOM_PALETTE[3], GROUPS[1]: CUSTOM_PALETTE[0], GROUPS[2]: CUSTOM_PALETTE[1],
            GROUPS[3]: "#E9A9C2", GROUPS[4]: CUSTOM_PALETTE[4]}
 MAIN = ["peak", "extent_ml", "hot_share", "deep"]
+CHP = ["chp_peak", "chp"]
+FAMILY = {**{m: "main" for m in MAIN}, **{m: "choroid plexus" for m in CHP}}
 CHECKS = ["peak_1ml", "peak_4ml", "hot_share_1ml", "hot_share_4ml"]
 LABELS = {"peak": "Peak (hottest 2 ml of cortex)", "extent_ml": "Cortex above 1.65 (ml)",
           "hot_share": "Model evidence on the hot spot (share)", "deep": "Striatum + thalamus SUVR",
+          "chp_peak": "Choroid plexus: hottest 2 ml", "chp": "Choroid plexus region: mean SUVR (check)",
           "peak_1ml": "Peak, hottest 1 ml (check)", "peak_4ml": "Peak, hottest 4 ml (check)",
           "hot_share_1ml": "Model evidence on hottest 1 ml (check)", "hot_share_4ml": "Model evidence on hottest 4 ml (check)",
           "mean": "Mean cortical SUVR", "meta": "Meta-temporal SUVR", "grey_vs_whole": "Cerebellar grey / whole cerebellum"}
@@ -131,6 +140,17 @@ def hot_region(centre, c: dict, near_mm: float = 4.0, vox_mm=None) -> str:
     return "Other cortex"
 
 
+def spot(x, region, vox_mm):
+    """Hottest point of a region (found after 6 mm smoothing within the region, so one noisy voxel cannot win); returns
+    it and the region's voxels sorted by distance to it."""
+    sigma = SMOOTH_MM / np.sqrt(8 * np.log(2)) / vox_mm
+    w = gaussian_filter(region.astype(np.float32), sigma)
+    xs = np.divide(gaussian_filter(np.where(region, x, 0), sigma), w, out=np.zeros_like(x), where=w > 1e-3)
+    ijk = np.argwhere(region)
+    centre = ijk[np.argmax(xs[region])]
+    return centre, ijk[np.argsort(np.sqrt((((ijk - centre) * vox_mm) ** 2).sum(1)))]
+
+
 def per_scan(x, cortex, masks, vox_ml, occ=None):
     """Measures of one SUVR volume (RAS grid), and its above-1.65 mask; None if the cortex is not covered."""
     cov = cortex & (x != 0)
@@ -143,18 +163,13 @@ def per_scan(x, cortex, masks, vox_ml, occ=None):
     # the hot spot is a spot: the hottest point of the cortex (lightly smoothed within the cortex, so one noisy voxel
     # cannot win), then the cortical voxels closest to it, 1 / 2 / 4 ml
     vox_mm = np.sqrt((masks["affine"][:3, :3] ** 2).sum(0))
-    sigma = SMOOTH_MM / np.sqrt(8 * np.log(2)) / vox_mm
-    w = gaussian_filter(cov.astype(np.float32), sigma)
-    xs = np.divide(gaussian_filter(np.where(cov, x, 0), sigma), w, out=np.zeros_like(x), where=w > 1e-3)
-    ijk = np.argwhere(cov)
-    centre = ijk[np.argmax(xs[cov])]
-    dist = np.sqrt((((ijk - centre) * vox_mm) ** 2).sum(1))
+    centre, near = spot(x, cov, vox_mm)
     m["hot_x"], m["hot_y"], m["hot_z"] = (masks["affine"] @ np.r_[centre, 1])[:3].round(1)
     m["hot_region"] = hot_region(centre, masks["centaur"], vox_mm=vox_mm)
     for ml in HOT_ML:
         n_hot = max(1, int(round(ml / vox_ml)))
         hot = np.zeros_like(cov)
-        hot[tuple(ijk[np.argsort(dist)[:n_hot]].T)] = True
+        hot[tuple(near[:n_hot].T)] = True
         sfx = "" if ml == HOT_ML[0] else f"_{ml:g}ml"
         m["peak" + sfx] = float(x[hot].mean())
         if pos is not None:
@@ -162,6 +177,11 @@ def per_scan(x, cortex, masks, vox_ml, occ=None):
     for key, msk in (("meta", masks["centaur"]["Meta-temporal"]), ("deep", masks["deep"])):
         ok = msk & (x != 0)
         m[key] = float(x[ok].mean()) if ok.sum() >= 0.5 * msk.sum() else np.nan
+    chp = masks["chp"] & (x != 0)
+    if chp.sum() >= 0.5 * masks["chp"].sum():
+        m["chp"] = float(x[chp].mean())
+        _, near = spot(x, chp, vox_mm)
+        m["chp_peak"] = float(x[tuple(near[:max(1, int(round(HOT_ML[0] / vox_ml)))].T)].mean())
     if masks.get("grey") is not None:
         ok = masks["grey"] & (x != 0)
         m["grey_vs_whole"] = float(x[ok].mean()) if ok.sum() >= 0.5 * masks["grey"].sum() else np.nan
@@ -189,7 +209,7 @@ def logit_tests(d: pd.DataFrame, measures: list) -> pd.DataFrame:
             continue
         dd["z"] = (dd[m] - dd[m].mean()) / dd[m].std()
         dd["amount"] = (dd["mean"] - dd["mean"].mean()) / dd["mean"].std()
-        row = {"measure": LABELS[m], "main": m in MAIN, "n": len(dd), "n_model_neg": int(dd["wrong"].sum())}
+        row = {"measure": LABELS[m], "family": FAMILY.get(m, "check"), "n": len(dd), "n_model_neg": int(dd["wrong"].sum())}
         for prefix, adj in (("plain_", []), ("", ["amount"])):
             try:
                 with warnings.catch_warnings():
@@ -205,8 +225,10 @@ def logit_tests(d: pd.DataFrame, measures: list) -> pd.DataFrame:
     t = pd.DataFrame(rows)
     for prefix in ("plain_", ""):
         if f"{prefix}p" in t:
-            ok = t[f"{prefix}p"].notna() & t["main"]
-            t.loc[ok, f"{prefix}p_fdr"] = fdr_bh(t.loc[ok, f"{prefix}p"])
+            for fam in ("main", "choroid plexus"):
+                ok = t[f"{prefix}p"].notna() & (t["family"] == fam)
+                if ok.any():
+                    t.loc[ok, f"{prefix}p_fdr"] = fdr_bh(t.loc[ok, f"{prefix}p"])
     return t
 
 
@@ -225,11 +247,13 @@ def group_tests(d: pd.DataFrame, measures: list) -> pd.DataFrame:
         for m in measures:
             x, y = d.loc[a, m].dropna(), d.loc[b, m].dropna()
             p = stats.mannwhitneyu(x, y).pvalue if len(x) >= 3 and len(y) >= 3 else np.nan
-            part.append({"comparison": name, "measure": LABELS[m], "main": m in MAIN, "n_a": len(x), "n_b": len(y),
+            part.append({"comparison": name, "measure": LABELS[m], "family": FAMILY.get(m, "check"), "n_a": len(x), "n_b": len(y),
                          "median_a": x.median(), "median_b": y.median(), "p": p})
         part = pd.DataFrame(part)
-        ok = part["p"].notna() & part["main"]
-        part.loc[ok, "p_fdr"] = fdr_bh(part.loc[ok, "p"])
+        for fam in ("main", "choroid plexus"):
+            ok = part["p"].notna() & (part["family"] == fam)
+            if ok.any():
+                part.loc[ok, "p_fdr"] = fdr_bh(part.loc[ok, "p"])
         rows.append(part)
     return pd.concat(rows, ignore_index=True)
 
@@ -293,10 +317,11 @@ def main():
             cortex = DKCortex(x.shape, aff, args.atlas_dir).mask
             masks = {"affine": aff, "centaur": centaur_masks(x.shape, aff, cdir),
                      "deep": deep_mask(x.shape, aff, args.atlas_dir),
+                     "chp": choroid_plexus_frac(x.shape, aff, args.atlas_dir) >= 0.5,
                      "grey": on_grid(nib.load(args.grey_ref), x.shape, aff) > 0 if args.grey_ref else None}
             vox_ml = float(abs(np.linalg.det(aff[:3, :3]))) / 1000
             print(f"[grid] {x.shape}, cortex {cortex.sum() * vox_ml:.0f} ml, striatum + thalamus "
-                  f"{masks['deep'].sum() * vox_ml:.0f} ml")
+                  f"{masks['deep'].sum() * vox_ml:.0f} ml, choroid plexus region {masks['chp'].sum() * vox_ml:.0f} ml")
         occ = None
         if occ_dir is not None:
             f = occ_dir / f"{scan_id}_occlusion_pos_vs_neg.nii.gz"
@@ -322,7 +347,7 @@ def main():
     if occ_dir is not None:
         print(f"[occlusion] maps found for {len(rows) - no_occ} of {len(rows)} scans")
     d = pd.DataFrame(rows)
-    main_m = [m for m in MAIN if m in d and d[m].notna().any()]
+    main_m = [m for m in MAIN + CHP if m in d and d[m].notna().any()]
     check_m = [m for m in CHECKS if m in d and d[m].notna().any()]
 
     d.round(4).to_csv(out / "focality_per_scan.csv", index=False)
@@ -336,7 +361,7 @@ def main():
     pd.concat([lt.assign(test="Model − within Read + (logistic; plain and at the same mean cortical SUVR)"),
                gt.assign(test="Mann-Whitney")], ignore_index=True).round(4).to_csv(out / "focality_tests.csv", index=False)
     set_label = "held-out test" if args.set == "test" else args.ext_dataset.removesuffix("_unseen")
-    scatter(d, main_m, set_label, out / "focality_scatter.png")
+    scatter(d, [m for m in main_m if m != "chp"], set_label, out / "focality_scatter.png")
     maps_figure(freq, masks["affine"], set_label, out / "focality_maps.png")
     with pd.option_context("display.width", 230, "display.max_columns", None):
         print("\nMedian per group:\n" + summ.to_string())

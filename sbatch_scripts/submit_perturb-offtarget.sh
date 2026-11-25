@@ -11,6 +11,7 @@
 # Usage (from the Auto-rADiology root):
 #   POOL=attention sbatch sbatch_scripts/submit_perturb-offtarget.sh <final_run_folder>
 #   MAX_SCANS=20 ...   quick check on the first 20 scans of each set
+#   REGION=chp ...     choroid plexus stand-in instead of striatum + thalamus (outputs perturb_chp_test/ and _avid/)
 
 #SBATCH -A berzelius-2026-231
 #SBATCH --gpus=1
@@ -36,7 +37,7 @@ DATA="${DATA:-/proj/berzelius-2024-156/users/x_nadpi/data}"
 COMMON=(--best_model_folder "$RUN" --pool "${POOL:-attention}" --data_type "${DATA_TYPE:-tau_T1MNI_pts}"
         --input_path "$DATA" --pkl_dir "${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
         --ref_mask "$DATA/masks/voi_WhlCbl_2mm.nii" --atlas_dir "$DATA/atlases/lotter2025_mni_freesurfer"
-        --max_scans "${MAX_SCANS:-0}")
+        --max_scans "${MAX_SCANS:-0}" --region "${REGION:-deep}")
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
 echo -e "\n================ test ================"
