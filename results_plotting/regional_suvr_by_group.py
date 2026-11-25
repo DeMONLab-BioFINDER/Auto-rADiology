@@ -38,7 +38,7 @@ TICK = {"Temporoparietal": "Temporo-\nparietal", "Mesial temporal": "Mesial\ntem
 BOXES = ["Model − / Read −", "Model − / Read +", "Model + / Read +"]  # low -> high tau; Model + / Read − = points only
 
 
-def plot(sets: list, out: Path):
+def plot(sets: list, out: Path, ymax: float = None):
     """sets = [(title, data frame with 'group' + region columns)]: one panel per set, boxes per region and group."""
     labs = [lab for _, lab in REGIONS]
     fig, axes = plt.subplots(1, len(sets), figsize=(6.4 * len(sets), 5.2), sharey=True, squeeze=False)
@@ -65,6 +65,14 @@ def plot(sets: list, out: Path):
         ax.set_xticks(range(len(labs)), [TICK.get(l, l) for l in labs], fontsize=11.5)
         ax.set_xlim(-0.55, len(labs) - 0.35)
         ax.set_title(title, fontsize=13.5)
+        if ymax:  # boxes use all scans; the axis stops at ymax so the low range stays readable
+            ax.set_ylim(top=ymax)
+            over = d.groupby("group")[labs].apply(lambda x: int((x > ymax).any(axis=1).sum()))
+            over = {g: k for g, k in over.items() if k}
+            if over:
+                ax.text(0.0, -0.2, f"Not shown (above {ymax:g} in a region): "
+                        + ", ".join(f"{k} {g}" for g, k in over.items()), transform=ax.transAxes, fontsize=9.5,
+                        color="#555555", va="top")
         ax.yaxis.grid(True, color="#E5E5E5", lw=0.8)
         ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
@@ -75,7 +83,7 @@ def plot(sets: list, out: Path):
     fig.legend(handles, BOXES + ["Model + / Read − (single scans)"], loc="lower center", ncol=4, frameon=False,
                fontsize=11, bbox_to_anchor=(0.5, -0.01))
     fig.suptitle("Tau in each CenTauR region", fontsize=15)
-    fig.tight_layout(rect=(0, 0.07, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.08 if ymax else 0.07, 1, 0.97))
     fig.savefig(out, dpi=200, facecolor="white", bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {out}")
@@ -86,9 +94,10 @@ def main():
     p.add_argument("run_dir", nargs="?"); p.add_argument("--dataset", default="Gothenburg"); p.add_argument("--demo_csv", default=None)
     p.add_argument("--plot_from", nargs="+", default=None, help='"title=data.csv" per panel (regional_suvr_by_group_data.csv)')
     p.add_argument("--out", default="regional_suvr_by_group_sets.png")
+    p.add_argument("--ymax", type=float, default=None, help="Stop the y-axis here (boxes still use all scans).")
     args = p.parse_args()
     if args.plot_from:
-        plot([(t, pd.read_csv(f)) for t, f in (x.split("=", 1) for x in args.plot_from)], Path(args.out))
+        plot([(t, pd.read_csv(f)) for t, f in (x.split("=", 1) for x in args.plot_from)], Path(args.out), args.ymax)
         return
     if not args.run_dir:
         p.error("run_dir is required unless --plot_from is given")
