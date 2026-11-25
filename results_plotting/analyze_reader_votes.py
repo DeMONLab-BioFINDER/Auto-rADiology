@@ -43,6 +43,7 @@ Relative run dirs are looked up under <proj_path>/results.
 Output (default <proj_path>/results/reader_votes/<run>[_oof]_<dataset>/, outside the repo):
     1_disagreement_by_group.csv, 1_tests.csv, 2_unanimous_rescoring.csv, 3_model_vs_reader.csv,
     4_prob_by_votes.csv, 4_tests.csv, 6_grade_at_same_suvr.csv (no IDs)
+    fig_prob_by_votes.png (one dot per 3-reader scan: model probability by readers who said positive; no IDs)
     5_disagreement_cases.csv (has IDs - keep off slides)
 """
 import argparse
@@ -55,7 +56,11 @@ import statsmodels.formula.api as smf
 from scipy.stats import chi2, fisher_exact, spearmanr
 from sklearn.metrics import roc_auc_score
 
-from plot_utils import resolve_path, resolve_predictions_csv
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from plot_utils import CUSTOM_PALETTE, external_name, resolve_path, resolve_predictions_csv
 
 GROUP_ORDER = ["unanimous", "split 2-1", "single reader"]
 READ_COLS = ["read_1", "read_2", "read_3"]
@@ -201,6 +206,42 @@ def prob_by_votes(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return table, pd.DataFrame(tests)
 
 
+def fig_prob_by_votes(df: pd.DataFrame, out: Path, set_label: str) -> None:
+    """One dot per 3-reader scan: model probability by the number of readers who said positive. If the model
+    struggled where the readers do, the dots at 1 and 2 votes (readers split) would sit in the uncertain band."""
+    tri = df[df["n_readers"] == 3]
+    rng = np.random.default_rng(0)
+    fig, ax = plt.subplots(figsize=(8.5, 6))
+    ax.axhspan(*UNCERTAIN, color="0.93", zorder=0)
+    ax.axhline(0.5, color="0.55", ls="--", lw=1.2, zorder=1)
+    ax.text(3.62, np.mean(UNCERTAIN), "Model\nuncertain", va="center", ha="left", fontsize=12, color="0.4")
+    names = {0: "All negative", 1: "Split", 2: "Split", 3: "All positive"}
+    ticks = []
+    for v in range(4):
+        pr = tri.loc[tri["positive_votes"] == v, "prob"].to_numpy()
+        color = CUSTOM_PALETTE[1] if v >= 2 else CUSTOM_PALETTE[0]
+        ax.scatter(v + rng.uniform(-0.2, 0.2, len(pr)), pr, s=26, alpha=0.6, color=color, edgecolor="white",
+                   linewidth=0.5, zorder=2)
+        if len(pr):
+            ax.text(v, 1.06, f"{100 * np.mean((pr >= UNCERTAIN[0]) & (pr <= UNCERTAIN[1])):.0f}% uncertain",
+                    ha="center", fontsize=12, color="0.25")
+        ticks.append(f"{v} of 3\n{names[v]}\n(n = {len(pr)})")
+    ax.set_xticks(range(4), ticks, fontsize=12.5)
+    ax.set_xlim(-0.55, 3.55)
+    ax.set_ylim(-0.04, 1.12)
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.tick_params(axis="y", labelsize=12)
+    ax.set_xlabel("Readers who said positive", fontsize=13)
+    ax.set_ylabel("Model probability (positive)", fontsize=13)
+    ax.set_title(f"Model probability where readers agree and split, {set_label}", fontsize=15, loc="left", pad=28)
+    from matplotlib.lines import Line2D
+    ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=8, color=CUSTOM_PALETTE[0], label="Read −"),
+                       Line2D([], [], marker="o", ls="", ms=8, color=CUSTOM_PALETTE[1], label="Read +")],
+              loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False, fontsize=12)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout(); fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
+
+
 def disagreement_cases(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFrame:
     cases = df[df["disagrees"]].copy()
     cases["direction"] = np.where(cases["y"] == 0, "Model + / Read -", "Model - / Read +")
@@ -310,6 +351,8 @@ def main():
     for key, table in out.items():
         table.to_csv(out_dir / f"{key}.csv", index=False)
     cases.to_csv(out_dir / "5_disagreement_cases.csv", index=False)
+    set_label = "held-out test" if args.dataset == "Gothenburg" or args.oof else external_name(args.dataset)
+    fig_prob_by_votes(df, out_dir / "fig_prob_by_votes.png", set_label + (" (out-of-fold)" if args.oof else ""))
     print(f"\nSaved to {out_dir} (5_disagreement_cases.csv has IDs - keep it off slides).")
 
 
