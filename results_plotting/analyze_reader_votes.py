@@ -43,7 +43,7 @@ Relative run dirs are looked up under <proj_path>/results.
 Output (default <proj_path>/results/reader_votes/<run>[_oof]_<dataset>/, outside the repo):
     1_disagreement_by_group.csv, 1_tests.csv, 2_unanimous_rescoring.csv, 3_model_vs_reader.csv,
     4_prob_by_votes.csv, 4_tests.csv, 6_grade_at_same_suvr.csv (no IDs)
-    fig_prob_by_votes.png (one dot per 3-reader scan: model probability by readers who said positive; no IDs)
+    fig_prob_by_votes.png (one dot per 3-reader scan: model probability by readers who said positive) + _data.csv (no IDs)
     5_disagreement_cases.csv (has IDs - keep off slides)
 """
 import argparse
@@ -208,36 +208,40 @@ def prob_by_votes(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def fig_prob_by_votes(df: pd.DataFrame, out: Path, set_label: str) -> None:
     """One dot per 3-reader scan: model probability by the number of readers who said positive. If the model
-    struggled where the readers do, the dots at 1 and 2 votes (readers split) would sit in the uncertain band."""
+    struggled where the readers do, the dots at 1 and 2 votes (readers split) would sit in the uncertain band.
+    Sized for half a slide. Also saves the plotted values (no IDs) next to it, so the figure can be redrawn."""
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
     tri = df[df["n_readers"] == 3]
+    tri[["positive_votes", "prob"]].to_csv(out.with_name(out.stem + "_data.csv"), index=False)
     rng = np.random.default_rng(0)
-    fig, ax = plt.subplots(figsize=(8.5, 6))
-    ax.axhspan(*UNCERTAIN, color="0.93", zorder=0)
+    fig, ax = plt.subplots(figsize=(6.4, 6.6))
+    ax.axhspan(*UNCERTAIN, color="0.92", zorder=0)
     ax.axhline(0.5, color="0.55", ls="--", lw=1.2, zorder=1)
-    ax.text(3.62, np.mean(UNCERTAIN), "Model\nuncertain", va="center", ha="left", fontsize=12, color="0.4")
-    names = {0: "All negative", 1: "Split", 2: "Split", 3: "All positive"}
+    names = {0: "All\nnegative", 1: "Split", 2: "Split", 3: "All\npositive"}
     ticks = []
     for v in range(4):
         pr = tri.loc[tri["positive_votes"] == v, "prob"].to_numpy()
         color = CUSTOM_PALETTE[1] if v >= 2 else CUSTOM_PALETTE[0]
-        ax.scatter(v + rng.uniform(-0.2, 0.2, len(pr)), pr, s=26, alpha=0.6, color=color, edgecolor="white",
+        ax.scatter(v + rng.uniform(-0.2, 0.2, len(pr)), pr, s=34, alpha=0.6, color=color, edgecolor="white",
                    linewidth=0.5, zorder=2)
         if len(pr):
-            ax.text(v, 1.06, f"{100 * np.mean((pr >= UNCERTAIN[0]) & (pr <= UNCERTAIN[1])):.0f}% uncertain",
-                    ha="center", fontsize=12, color="0.25")
+            ax.text(v, 1.05, f"{100 * np.mean((pr >= UNCERTAIN[0]) & (pr <= UNCERTAIN[1])):.0f}%\nuncertain",
+                    ha="center", va="bottom", fontsize=14, color="0.25", linespacing=1.0)
         ticks.append(f"{v} of 3\n{names[v]}\n(n = {len(pr)})")
-    ax.set_xticks(range(4), ticks, fontsize=12.5)
-    ax.set_xlim(-0.55, 3.55)
-    ax.set_ylim(-0.04, 1.12)
-    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
-    ax.tick_params(axis="y", labelsize=12)
-    ax.set_xlabel("Readers who said positive", fontsize=13)
-    ax.set_ylabel("Model probability (positive)", fontsize=13)
-    ax.set_title(f"Model probability where readers agree and split, {set_label}", fontsize=15, loc="left", pad=28)
-    from matplotlib.lines import Line2D
-    ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=8, color=CUSTOM_PALETTE[0], label="Read −"),
-                       Line2D([], [], marker="o", ls="", ms=8, color=CUSTOM_PALETTE[1], label="Read +")],
-              loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False, fontsize=12)
+    ax.set_xticks(range(4), ticks, fontsize=14)
+    ax.set_xlim(-0.5, 3.5)
+    ax.set_ylim(-0.04, 1.2)
+    ax.set_yticks([0, 0.5, 1.0], ["0", ".5", "1"])
+    ax.tick_params(axis="y", labelsize=14)
+    ax.set_xlabel("Readers who said positive", fontsize=15)
+    ax.set_ylabel("Model probability", fontsize=15)
+    ax.set_title(f"Reader votes and model confidence,\n{set_label}", fontsize=16, loc="left", pad=36)
+    ax.legend(handles=[Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[0], label="Read −"),
+                       Line2D([], [], marker="o", ls="", ms=9, color=CUSTOM_PALETTE[1], label="Read +"),
+                       Patch(color="0.88", label="Model uncertain")],
+              loc="lower left", bbox_to_anchor=(-0.02, 1.0), ncol=3, frameon=False, fontsize=13,
+              handletextpad=0.3, columnspacing=1.0)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig)
 
