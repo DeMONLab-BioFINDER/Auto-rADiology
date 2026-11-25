@@ -13,13 +13,17 @@ laterality index LI (%) = 100 x (right - left) / (right + left), as in Anijärv 
 
 Analyses (one set at a time, test and AVID never pooled):
   1. Sanity: the bilateral SUVR computed here vs the MetaTemporal SUVR in the demographics (Pearson r).
-  2. Who calls asymmetric scans positive, at the same bilateral meta-temporal SUVR?
-       read:   logistic  read ~ |LI| (z) + cr(MetaTemporal, df=3) + age + sex [+ site]
+  2. Who calls asymmetric scans positive, at the same tau on the HOTTER side?
+       read:   logistic  read ~ |LI| (z) + cr(<region>_hot, df=3) + age + sex [+ site]
+     <region>_hot = the higher of the left and right SUVR. Holding the hotter side equal is the fair test: at the
+     same bilateral average a one-sided scan has a hotter side by construction, so 'called positive more often' would
+     be partly built in. (Until 26 Nov 2026 the bilateral MetaTemporal SUVR was held equal; those rows are kept in
+     asymmetry_tests.csv as 'check: same bilateral average', outside the FDR.)
        model:  logistic  model call ~ the same
        output: OLS (HC3) model log-odds ~ read + the same
      -> odds ratios per SD of |LI| for read and model side by side (as in regress_model_output_visual_read.py).
   3. Read + scans only: |LI| in detected (Model + / Read +) vs missed (Model - / Read +) scans (Mann-Whitney),
-     and logistic  model call ~ |LI| + spline + age + sex [+ site].
+     and logistic  model call ~ |LI| + spline of the hotter side + age + sex [+ site].
   4. Does the model's advantage over meta-temporal SUVR grow with asymmetry? AUC of model and of SUVR in scans
      below / above the median |LI| (paired bootstrap of the AUC difference in each half).
 FDR (Benjamini-Hochberg) over the |LI| tests of analyses 2-3, per region. Exploratory.
@@ -30,6 +34,7 @@ Usage:
         --ref_mask <masks>/voi_CerebGry_tau_2mm.nii --centaur_dir <folder with Meta_CenTauR.nii.gz, TP_CenTauR.nii.gz>
 Outputs (<run_dir>/figures/asymmetry_<set>/): asymmetry_tests.csv, auc_by_asymmetry.csv, asymmetry.png (no IDs);
 asymmetry_per_scan.csv (has IDs).
+--from_per_scan <asymmetry_per_scan.csv>: rerun the statistics from an earlier run's per-scan table (no images needed).
 """
 import argparse
 import warnings
@@ -52,7 +57,7 @@ from regress_model_output_visual_read import CLIP, find_ext_demo
 from voxelwise_visual_read import suvr_images
 
 REGIONS = {"MetaTemporal": "Meta_CenTauR.nii.gz", "TemporoParietal": "TP_CenTauR.nii.gz"}
-SPLINE = "cr(MetaTemporal, df=3)"
+SPLINE = "cr(MetaTemporal, df=3)"  # check only: the bilateral average (spreadsheet value)
 GROUPS = {(1, 1): "Model + / Read +", (1, 0): "Model − / Read +", (0, 0): "Model − / Read −", (0, 1): "Model + / Read −"}
 
 
@@ -60,9 +65,10 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("run_dir")
     p.add_argument("--set", default="test", choices=["test", "avid"])
-    p.add_argument("--pkl_dir", required=True)
-    p.add_argument("--ref_mask", required=True)
-    p.add_argument("--centaur_dir", required=True, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, TP_CenTauR.nii.gz).")
+    p.add_argument("--pkl_dir", default=None)
+    p.add_argument("--ref_mask", default=None)
+    p.add_argument("--from_per_scan", default=None, help="Rerun the statistics from this asymmetry_per_scan.csv.")
+    p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, TP_CenTauR.nii.gz).")
     p.add_argument("--dataset", default="Gothenburg")
     p.add_argument("--ext_dataset", default="AVID_unseen")
     p.add_argument("--demo_csv", default=None)
@@ -137,8 +143,9 @@ def asymmetry(table: pd.DataFrame, args) -> pd.DataFrame:
     return table.merge(a, on="ID", how="inner")
 
 
-def covariates(d: pd.DataFrame) -> str:
-    terms = [SPLINE, "age10", "C(sex)"]
+def covariates(d: pd.DataFrame, region: str = None) -> str:
+    """Held equal: the hotter side of the region (default) or, with region=None, the bilateral average (check)."""
+    terms = [f"cr({region}_hot, df=3)" if region else SPLINE, "age10", "C(sex)"]
     if d["site"].nunique() > 1:
         terms.append("C(site)")
     return " + ".join(terms)
@@ -177,7 +184,14 @@ def main():
     run = Path(args.run_dir)
     out = Path(args.out_dir) if args.out_dir else run / "figures" / f"asymmetry_{args.set}"
     out.mkdir(parents=True, exist_ok=True)
-    d = asymmetry(load_table(run, args), args)
+    if args.from_per_scan:
+        d = pd.read_csv(args.from_per_scan)
+    else:
+        if not (args.pkl_dir and args.ref_mask and args.centaur_dir):
+            raise SystemExit("--pkl_dir, --ref_mask and --centaur_dir are needed (or --from_per_scan)")
+        d = asymmetry(load_table(run, args), args)
+    for name in REGIONS:
+        d[f"{name}_hot"] = d[[f"{name}_L", f"{name}_R"]].max(axis=1)
     d = d.dropna(subset=["MetaTemporal", "age10", "sex"])
     d["group"] = [GROUPS[(r, c)] for r, c in zip(d["read"], d["call"])]
     d.to_csv(out / "asymmetry_per_scan.csv", index=False)
@@ -192,29 +206,31 @@ def main():
         ai = f"{name}_absAI"
         e = d.dropna(subset=[ai]).copy()
         e["z_ai"] = (e[ai] - e[ai].mean()) / e[ai].std()
-        cov = covariates(e)
         rp = e[e["read"] == 1]
-        specs = [("read", "logit", f"read ~ z_ai + {cov}", e),
-                 ("model call", "logit", f"call ~ z_ai + {cov}", e),
-                 ("model log-odds (same read)", "ols", f"logodds ~ read + z_ai + {cov}", e),
-                 ("model call, read + only", "logit", f"call ~ z_ai + {covariates(rp)}", rp)]
-        rows = []
-        for label, kind, f, data in specs:
-            res = fit(kind, f, data, "z_ai")
-            if res:
-                rows.append({"region": name, "outcome": label, "effect": "odds ratio per SD |LI|" if kind == "logit"
-                             else "log-odds per SD |LI|", **res})
+        rows, checks = [], []
+        for held, target, region in (("same hotter side", rows, name), ("check: same bilateral average", checks, None)):
+            cov = covariates(e, region)
+            specs = [("read", "logit", f"read ~ z_ai + {cov}", e),
+                     ("model call", "logit", f"call ~ z_ai + {cov}", e),
+                     ("model log-odds (same read)", "ols", f"logodds ~ read + z_ai + {cov}", e),
+                     ("model call, read + only", "logit", f"call ~ z_ai + {covariates(rp, region)}", rp)]
+            for label, kind, f, data in specs:
+                res = fit(kind, f, data, "z_ai")
+                target.append({"region": name, "outcome": label, "held equal": held,
+                               "effect": "odds ratio per SD |LI|" if kind == "logit" else "log-odds per SD |LI|",
+                               **(res or {"note": "could not be estimated (too few scans / separation)"})})
         det, mis = rp.loc[rp["call"] == 1, ai], rp.loc[rp["call"] == 0, ai]
         if len(det) >= 5 and len(mis) >= 5:
             u = stats.mannwhitneyu(det, mis)
             rows.append({"region": name, "outcome": "|LI| detected vs missed (read +)",
                          "effect": "median |LI| detected − missed", "estimate": det.median() - mis.median(),
                          "lo": np.nan, "hi": np.nan, "p": u.pvalue, "n": len(det) + len(mis)})
-        if rows:
-            q = multipletests([x["p"] for x in rows], method="fdr_bh")[1]
-            for x, qq in zip(rows, q):
+        ok = [x for x in rows if pd.notna(x.get("p"))]
+        if ok:
+            q = multipletests([x["p"] for x in ok], method="fdr_bh")[1]
+            for x, qq in zip(ok, q):
                 x["p_fdr"] = qq
-        tests += rows
+        tests += rows + checks
 
         med = e[ai].median()
         for half, s in [("symmetric (below median |LI|)", e[e[ai] <= med]), ("asymmetric (above median)", e[e[ai] > med])]:
