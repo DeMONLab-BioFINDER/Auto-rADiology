@@ -9,6 +9,9 @@
 # Usage (from the Auto-rADiology root):
 #   sbatch sbatch_scripts/submit_case-viewers.sh <final_run_folder>
 #   ANSWERS=<earlier review csv> sbatch ...   pre-fills the review page with earlier answers (columns Set, ID + questions)
+#   SPLIT=1 sbatch ...   instead: every scan where the three readers split 2-1 (any model call, both reads). Reruns
+#                        analyze_reader_votes.py (fast) for its 7_split_vote_cases.csv, then viewers_split_<set>/ and
+#                        split_review.html (same questions and answer saving as case_review.html).
 
 #SBATCH -A berzelius-2026-231
 #SBATCH -p berzelius-hopper-cpu
@@ -39,6 +42,25 @@ CA="$RUN/validation/figures/discordant_by_confidence/cases.csv"
 COMMON=(--pkl_dir "${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}" --cbl_mask "$DATA/masks/voi_WhlCbl_2mm.nii"
         --regions "$DATA/masks/fda_regions_MNI152NLin2009cAsym.nii.gz")
 ids() { python -c "import pandas as pd; print(','.join(pd.read_csv('$1')['ID'].astype(str)))"; }
+
+if [[ -n "$SPLIT" ]]; then
+  VOTES_OUT="$(cd .. && pwd)/results/reader_votes"
+  RUN_NAME=$(basename "$RUN")
+  echo "================ reader votes (split list) ================"
+  python results_plotting/analyze_reader_votes.py "$RUN" --votes "$DATA/IDs_reads.csv" --dataset Gothenburg \
+    --demo_csv "$DATA/demo.csv" --out_dir "$VOTES_OUT"
+  python results_plotting/analyze_reader_votes.py "$RUN" --votes "$DATA/AVIDIDs_reads.csv" --dataset AVID_unseen \
+    --demo_csv "$DATA/demo_AVID_unseen.csv" --out_dir "$VOTES_OUT"
+  CT="$VOTES_OUT/${RUN_NAME}_Gothenburg/7_split_vote_cases.csv"
+  CA="$VOTES_OUT/${RUN_NAME}_AVID_unseen/7_split_vote_cases.csv"
+  echo "================ split viewers ================"
+  [[ -n "$(ids "$CT")" ]] && python results_plotting/make_case_viewer.py --vis_dir "$T" --ids "$(ids "$CT")" "${COMMON[@]}" --out_dir "$V/viewers_split_test"
+  [[ -n "$(ids "$CA")" ]] && python results_plotting/make_case_viewer.py --vis_dir "$A" --ids "$(ids "$CA")" "${COMMON[@]}" --out_dir "$V/viewers_split_avid"
+  python results_plotting/make_case_review.py --cases "test=$CT" "AVID=$CA" \
+    --viewers "test=$V/viewers_split_test" "AVID=$V/viewers_split_avid" \
+    ${ANSWERS:+--answers "$ANSWERS"} --out "$V/split_review.html"
+  exit 0
+fi
 
 echo "================ test viewers ================"
 python results_plotting/make_case_viewer.py --vis_dir "$T" --ids "$(ids "$CT")" "${COMMON[@]}" --out_dir "$V/viewers_discordant_test"

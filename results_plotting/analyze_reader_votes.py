@@ -29,6 +29,9 @@ Checks (all at the run's own `pred`, i.e. its 0.5 threshold):
      "less tau"? Logistic regression (statsmodels) of Model - on moderate vs frequent, alone and with
      MetaTemporal SUVR, as odds ratio [95% CI] with a likelihood-ratio p. If the odds ratio stays high at the
      same SUVR, the readers' "moderate" grade marks something the regional average misses.
+  7. Split-vote list: every 3-reader scan where the readers split 2-1, whatever the model said (both reads), with
+     model probability, confidence band, votes and the demographics columns (has IDs - not for slides). In the
+     same layout as discordant_by_confidence.py cases.csv, so make_case_review.py can build a review page from it.
 Groups are small: read the counts first and the p-values second.
 
 Usage:
@@ -44,7 +47,7 @@ Output (default <proj_path>/results/reader_votes/<run>[_oof]_<dataset>/, outside
     1_disagreement_by_group.csv, 1_tests.csv, 2_unanimous_rescoring.csv, 3_model_vs_reader.csv,
     4_prob_by_votes.csv, 4_tests.csv, 6_grade_at_same_suvr.csv (no IDs)
     fig_prob_by_votes.png (one dot per 3-reader scan: model probability by readers who said positive) + _data.csv (no IDs)
-    5_disagreement_cases.csv (has IDs - keep off slides)
+    5_disagreement_cases.csv, 7_split_vote_cases.csv (have IDs - keep off slides)
 """
 import argparse
 import warnings
@@ -262,6 +265,20 @@ def disagreement_cases(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFr
     return cases.sort_values(["direction", "agreement", "read category", "prob"])
 
 
+def split_vote_cases(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFrame:
+    """Every 3-reader scan with a 2-1 split, both reads and any model call (cases.csv layout for make_case_review)."""
+    s = df[df["agreement"] == "split 2-1"].copy()
+    s["direction"] = [f"Model {'+' if p else '−'} / Read {'+' if y else '−'}" for p, y in zip(s["pred"], s["y"])]
+    conf = np.minimum(s["prob"], 1 - s["prob"])  # pre-set bands: confident <= .1 / >= .9, uncertain .3-.7
+    s["band"] = np.select([conf <= 0.1, conf >= 0.3], ["Confident", "Uncertain"], "Moderately confident")
+    s = s.rename(columns={"ID_ind": "ID"})[["ID", "direction", "band", "prob", "agreement", "positive_votes",
+                                            "n_readers", "read category", *READ_COLS]]
+    if demo is not None:
+        demo_cols = [c for c in DEMO_COLS + ["apoe"] if c in demo.columns and c not in s.columns]
+        s = s.merge(demo[["ID"] + demo_cols].drop_duplicates("ID"), on="ID", how="left")
+    return s.sort_values(["positive_votes", "prob"], ascending=[False, True])
+
+
 def grade_at_same_suvr(df: pd.DataFrame, demo: pd.DataFrame | None) -> pd.DataFrame:
     """Read + scans: odds of Model - for moderate vs frequent tau score, alone and at the same MetaTemporal SUVR."""
     if demo is None or "MetaTemporal" not in demo.columns:
@@ -326,6 +343,7 @@ def main():
         print(f"Demographics: {demo_path}")
     demo = pd.read_csv(demo_path) if demo_path else None
     cases = disagreement_cases(df, demo)
+    split = split_vote_cases(df, demo)
     out["6_grade_at_same_suvr"] = grade_at_same_suvr(df, demo)
 
     titles = {
@@ -356,9 +374,12 @@ def main():
     for key, table in out.items():
         table.to_csv(out_dir / f"{key}.csv", index=False)
     cases.to_csv(out_dir / "5_disagreement_cases.csv", index=False)
+    split.to_csv(out_dir / "7_split_vote_cases.csv", index=False)
+    print("\n7. Split 2-1 scans (any model call):")
+    print(split.groupby(["positive_votes", "direction", "band"]).size().rename("scans").to_string())
     set_label = "held-out test" if args.dataset == "Gothenburg" or args.oof else external_name(args.dataset)
     fig_prob_by_votes(df, out_dir / "fig_prob_by_votes.png", set_label + (" (out-of-fold)" if args.oof else ""))
-    print(f"\nSaved to {out_dir} (5_disagreement_cases.csv has IDs - keep it off slides).")
+    print(f"\nSaved to {out_dir} (5_disagreement_cases.csv and 7_split_vote_cases.csv have IDs - keep them off slides).")
 
 
 if __name__ == "__main__":
