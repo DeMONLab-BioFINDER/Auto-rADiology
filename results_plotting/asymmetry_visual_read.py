@@ -10,6 +10,10 @@ laterality index LI (%) = 100 x (right - left) / (right + left), as in Anijärv 
 |LI| = how one-sided, regardless of side. (Columns keep the old names <region>_AI / <region>_absAI; until
 26 Nov 2026 they held (left - right) / mean(left, right) = -LI / 50, i.e. the same ranking and per-SD results.) The meta-temporal region is the main measure
 (decided before looking: it is the region the rest of the analysis adjusts for); temporoparietal is secondary.
+Added 26 Nov 2026: the Universal CenTauR region (the overlap of the tracer AD masks, containing the four regional
+masks: one general 'is the scan one-sided overall?' check) and the remaining CenTauR regions (mesial temporal,
+frontal), each analysed the same way. Expect frontal |LI| to be noisy (little tau at this stage) and mesial
+temporal |LI| to pick up off-target signal. A region whose mask is not in --centaur_dir is skipped.
 
 Analyses (one set at a time, test and AVID never pooled):
   1. Sanity: the bilateral SUVR computed here vs the MetaTemporal SUVR in the demographics (Pearson r).
@@ -26,7 +30,8 @@ Analyses (one set at a time, test and AVID never pooled):
      and logistic  model call ~ |LI| + spline of the hotter side + age + sex [+ site].
   4. Does the model's advantage over meta-temporal SUVR grow with asymmetry? AUC of model and of SUVR in scans
      below / above the median |LI| (paired bootstrap of the AUC difference in each half).
-FDR (Benjamini-Hochberg) over the |LI| tests of analyses 2-3, per region. Exploratory.
+FDR (Benjamini-Hochberg) over the |LI| tests of analyses 2-3, per region (p_fdr, unchanged), and over all regions
+together (p_fdr_all_regions). Exploratory.
 
 Usage:
     python results_plotting/asymmetry_visual_read.py <final_run_dir> --set test \\
@@ -56,7 +61,10 @@ from plot_utils import CONFUSION_CATEGORY_PALETTE, add_subgroup_columns, externa
 from regress_model_output_visual_read import CLIP, find_ext_demo
 from voxelwise_visual_read import suvr_images
 
-REGIONS = {"MetaTemporal": "Meta_CenTauR.nii.gz", "TemporoParietal": "TP_CenTauR.nii.gz"}
+REGIONS = {"MetaTemporal": "Meta_CenTauR.nii.gz", "TemporoParietal": "TP_CenTauR.nii.gz",
+           "Universal": "CenTauR.nii.gz", "MesialTemporal": "Mesial_CenTauR.nii.gz", "Frontal": "Frontal_CenTauR.nii.gz"}
+TITLES = {"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal", "Universal": "Universal",
+          "MesialTemporal": "Mesial temporal", "Frontal": "Frontal"}
 SPLINE = "cr(MetaTemporal, df=3)"  # check only: the bilateral average (spreadsheet value)
 GROUPS = {(1, 1): "Model + / Read +", (1, 0): "Model − / Read +", (0, 0): "Model − / Read −", (0, 1): "Model + / Read −"}
 
@@ -68,7 +76,8 @@ def parse_args():
     p.add_argument("--pkl_dir", default=None)
     p.add_argument("--ref_mask", default=None)
     p.add_argument("--from_per_scan", default=None, help="Rerun the statistics from this asymmetry_per_scan.csv.")
-    p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, TP_CenTauR.nii.gz).")
+    p.add_argument("--centaur_dir", default=None, help="Folder with the CenTauR masks (Meta_CenTauR.nii.gz, TP_CenTauR.nii.gz, CenTauR.nii.gz, "
+                   "Mesial_CenTauR.nii.gz, Frontal_CenTauR.nii.gz; missing ones are skipped).")
     p.add_argument("--dataset", default="Gothenburg")
     p.add_argument("--ext_dataset", default="AVID_unseen")
     p.add_argument("--demo_csv", default=None)
@@ -110,6 +119,9 @@ def hemisphere_masks(centaur_dir: Path, shape, affine) -> dict:
     x = nib.affines.apply_affine(affine, ijk)[:, 0].reshape(shape)
     out = {}
     for name, fname in REGIONS.items():
+        if not (centaur_dir / fname).exists():
+            print(f"[mask] {name}: {fname} not in {centaur_dir} - skipped")
+            continue
         img = nib.load(centaur_dir / fname)
         img = nib.Nifti1Image(np.squeeze(np.asarray(img.dataobj)), img.affine)
         m = image.resample_to_img(img, target, interpolation="nearest", force_resample=True,
@@ -139,7 +151,8 @@ def asymmetry(table: pd.DataFrame, args) -> pd.DataFrame:
         print(f"[data] {len(skipped)} scans left out: reference region not covered")
     a = pd.DataFrame(rows)
     for name in REGIONS:
-        a[f"{name}_absAI"] = a[f"{name}_AI"].abs()
+        if f"{name}_AI" in a:
+            a[f"{name}_absAI"] = a[f"{name}_AI"].abs()
     return table.merge(a, on="ID", how="inner")
 
 
@@ -190,7 +203,9 @@ def main():
         if not (args.pkl_dir and args.ref_mask and args.centaur_dir):
             raise SystemExit("--pkl_dir, --ref_mask and --centaur_dir are needed (or --from_per_scan)")
         d = asymmetry(load_table(run, args), args)
-    for name in REGIONS:
+    regions = [n for n in REGIONS if f"{n}_L" in d and f"{n}_absAI" in d]
+    print(f"[data] regions: {', '.join(regions)}")
+    for name in regions:
         d[f"{name}_hot"] = d[[f"{name}_L", f"{name}_R"]].max(axis=1)
     d = d.dropna(subset=["MetaTemporal", "age10", "sex"])
     d["group"] = [GROUPS[(r, c)] for r, c in zip(d["read"], d["call"])]
@@ -202,7 +217,7 @@ def main():
     print(f"[check] meta-temporal SUVR computed here vs demographics: r = {r:.3f} (n = {len(ok)})")
 
     tests, aucs = [], []
-    for name in REGIONS:
+    for name in regions:
         ai = f"{name}_absAI"
         e = d.dropna(subset=[ai]).copy()
         e["z_ai"] = (e[ai] - e[ai].mean()) / e[ai].std()
@@ -244,6 +259,9 @@ def main():
                          "diff": am - asu, "diff_lo": lo, "diff_hi": hi})
 
     tests, aucs = pd.DataFrame(tests), pd.DataFrame(aucs)
+    main = tests["p"].notna() & (tests["held equal"] != "check: same bilateral average")
+    if main.any():
+        tests.loc[main, "p_fdr_all_regions"] = multipletests(tests.loc[main, "p"], method="fdr_bh")[1]
     tests.to_csv(out / "asymmetry_tests.csv", index=False)
     aucs.to_csv(out / "auc_by_asymmetry.csv", index=False)
 
@@ -254,8 +272,8 @@ def main():
               "Model + / Read −": CONFUSION_CATEGORY_PALETTE["False Positive"]}
     order = [g for g in colour if (d["group"] == g).sum() > 0]
     set_name = "held-out test" if args.set == "test" else external_name(args.ext_dataset)
-    fig, axes = plt.subplots(1, len(REGIONS), figsize=(6.2 * len(REGIONS), 5.2), sharey=True)
-    for ax, name in zip(np.atleast_1d(axes), REGIONS):
+    fig, axes = plt.subplots(1, len(regions), figsize=(5.6 * len(regions), 5.2), sharey=True)
+    for ax, name in zip(np.atleast_1d(axes), regions):
         vals = [d.loc[d["group"] == g, f"{name}_absAI"].dropna() for g in order]
         bp = ax.boxplot(vals, widths=0.55, showfliers=False, patch_artist=True,
                         medianprops={"color": "0.15", "linewidth": 2}, whiskerprops={"color": "0.45"},
@@ -268,7 +286,7 @@ def main():
         ax.set_xticks(range(1, len(order) + 1), [f"{g.replace(' / ', ' /' + chr(10))}\n(n = {len(v)})"
                                                  for g, v in zip(order, vals)], fontsize=12)
         ax.tick_params(axis="y", labelsize=12)
-        ax.set_title({"MetaTemporal": "Meta-temporal", "TemporoParietal": "Temporoparietal"}.get(name, name), fontsize=14)
+        ax.set_title(TITLES.get(name, name), fontsize=14)
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="y", color="0.92")
     np.atleast_1d(axes)[0].set_ylabel("Left–right asymmetry |LI| (%)", fontsize=14)
@@ -279,7 +297,7 @@ def main():
 
     with pd.option_context("display.width", 200, "display.float_format", "{:.3g}".format):
         print("\nMedian |LI| by group:")
-        print(d.groupby("group")[[f"{n}_absAI" for n in REGIONS]].median().reindex(order).to_string())
+        print(d.groupby("group")[[f"{n}_absAI" for n in regions]].median().reindex(order).to_string())
         print("\nAsymmetry tests (FDR within region):")
         print(tests.to_string(index=False))
         print("\nAUC model vs meta-temporal SUVR, by asymmetry:")
