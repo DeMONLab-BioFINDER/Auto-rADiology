@@ -37,8 +37,16 @@
 #                      rigid_*_deg. The log warns about scans that stopped at the size limit. Afterwards, compare
 #                      with each person's MNI scan: scripts/check_template_alignment.py (runs at the end of this job).
 #                      Train with --data_type tau_template_pts.
+#   pilot           -> data/tau_template_pilot_pts      the "template" version on a few scans only, to check it
+#                      before the ~2 h full run: per site the 3 scans turned most by the rigid run
+#                      (tau_raw_2mm_rigid_pts/tau_pt_scans.csv, if there) + 5 random ones (seed 42), AVID
+#                      included -> ~55 scans, minutes. Redone from scratch on every run (only a check, never
+#                      train on it). Check output: <proj>/results/template_alignment_pilot/, including
+#                      sheet_<site>.png = each pilot scan next to its own MNI scan (view on Berzelius /
+#                      ThinLinc, don't download). PILOT_TILTED / PILOT_RANDOM change the counts.
 #
 # Usage:
+#   sbatch submit_convert-tau-raw-2mm-rigid.sh pilot      # try the template version on ~55 scans first
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh            # rigid
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh scale      # rigid + size (whole head; failed, kept for the record)
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh template   # rigid + size on the brain, MNI-like grid
@@ -72,14 +80,17 @@ TEMPLATE=$DATA/templates/tau_pet_template_mni2mm
 PKL_DIR=$DATA/tau_raw_backup
 MODE="${1:-rigid}"
 RECIPE_2MM=(--spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2)
+TEMPLATE_ARGS=(--template_grid --scale_range 0.85 1.15 --brain_mask_erode 1
+               --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 91 109 91)
+CHECK_DIR="$(cd .. && pwd)/results/template_alignment"
 case "$MODE" in
   rigid) OUT_DIR=$DATA/tau_raw_2mm_rigid_pts; SCALE_ARGS=("${RECIPE_2MM[@]}") ;;
   scale) OUT_DIR=$DATA/tau_raw_2mm_rigidscale_pts; SCALE_ARGS=("${RECIPE_2MM[@]}" --rigid_scale) ;;
   # same recipe as submit_convert-tau-T1MNI.sh after the alignment
-  template) OUT_DIR=$DATA/tau_template_pts
-            SCALE_ARGS=(--template_grid --scale_range 0.85 1.15 --brain_mask_erode 1
-                        --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 91 109 91) ;;
-  *) echo "Usage: sbatch submit_convert-tau-raw-2mm-rigid.sh [rigid|scale|template]"; exit 1 ;;
+  template) OUT_DIR=$DATA/tau_template_pts; SCALE_ARGS=("${TEMPLATE_ARGS[@]}") ;;
+  pilot) OUT_DIR=$DATA/tau_template_pilot_pts; SCALE_ARGS=("${TEMPLATE_ARGS[@]}" --ids_file "$OUT_DIR/pilot_ids.txt")
+         CHECK_DIR="${CHECK_DIR}_pilot" ;;
+  *) echo "Usage: sbatch submit_convert-tau-raw-2mm-rigid.sh [rigid|scale|template|pilot]"; exit 1 ;;
 esac
 
 if [[ ! -f "$TEMPLATE.nii.gz" ]]; then
@@ -87,7 +98,35 @@ if [[ ! -f "$TEMPLATE.nii.gz" ]]; then
   python scripts/make_pet_template.py --pkl_dir "$MNI_PKL_DIR" --out "$TEMPLATE" || exit 1
 fi
 
-if compgen -G "$OUT_DIR/tau_batch_*.pt" > /dev/null; then
+if [[ "$MODE" == "pilot" ]]; then
+  # a check only: start clean every time, then pick the scans
+  rm -f "$OUT_DIR"/tau_batch_*.pt "$OUT_DIR"/tau_pt_scans.csv "$OUT_DIR"/tau_pt_manifest.json
+  mkdir -p "$OUT_DIR"
+  python - "$DATA" "$OUT_DIR/pilot_ids.txt" "${PILOT_TILTED:-3}" "${PILOT_RANDOM:-5}" <<'PY' || exit 1
+import sys
+from pathlib import Path
+import pandas as pd
+data, out, n_tilt, n_rand = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+demo = pd.concat([pd.read_csv(data / f)[["ID", "site"]] for f in ("demo.csv", "demo_AVID_unseen.csv")
+                  if (data / f).exists()]).drop_duplicates("ID")
+rigid = data / "tau_raw_2mm_rigid_pts" / "tau_pt_scans.csv"
+if rigid.exists():
+    r = pd.read_csv(rigid)
+    demo = demo.merge(r[["index", "rigid_total_deg"]].rename(columns={"index": "ID"}), on="ID", how="left")
+else:
+    print(f"No {rigid}: random scans only")
+    demo["rigid_total_deg"] = float("nan")
+ids = []
+for site, g in demo.groupby("site"):
+    tilted = g.dropna(subset=["rigid_total_deg"]).nlargest(n_tilt, "rigid_total_deg")["ID"].tolist()
+    rest = g[~g["ID"].isin(tilted)]
+    rand = rest.sample(min(n_rand, len(rest)), random_state=42)["ID"].tolist()
+    ids += tilted + rand
+    print(f"{site}: most turned {tilted}, random {rand}")
+out.write_text(" ".join(str(int(i)) for i in sorted(ids)) + "\n")
+print(f"{len(ids)} pilot scans -> {out}")
+PY
+elif compgen -G "$OUT_DIR/tau_batch_*.pt" > /dev/null; then
   echo "Skipping $OUT_DIR: it already has tau_batch_*.pt files (delete them first to redo)."
   exit 0
 fi
@@ -95,8 +134,9 @@ echo "===== $OUT_DIR ====="
 python scripts/convert_tau_pkl_to_pt.py --pkl_dir "$PKL_DIR" --out_dir "$OUT_DIR" --batch_size 50 \
   --rigid_template "$TEMPLATE.nii.gz" "${SCALE_ARGS[@]}" || exit 1
 
-if [[ "$MODE" == "template" ]]; then
+if [[ "$MODE" == "template" || "$MODE" == "pilot" ]]; then
   echo "===== check against the MRI-based MNI scans ====="
+  SHEETS=(); [[ "$MODE" == "pilot" ]] && SHEETS=(--sheets)
   python scripts/check_template_alignment.py --template_dir "$OUT_DIR" --mni_dir "$DATA/tau_T1MNI_pts" \
-    --demo_csv "$DATA/demo.csv" "$DATA/demo_AVID_unseen.csv"
+    --demo_csv "$DATA/demo.csv" "$DATA/demo_AVID_unseen.csv" --out_dir "$CHECK_DIR" "${SHEETS[@]}"
 fi

@@ -111,15 +111,23 @@ def main(args):
         else:
             print(f"Rigid alignment to {args.rigid_template} before the recipe (rotation + shift"
                   f"{' + one overall scale factor' if args.rigid_scale else ' only'})")
+    only_ids = None
+    if args.ids_file:  # pilot: convert only these scans (ID = position in the pkl batches)
+        only_ids = {int(t) for t in Path(args.ids_file).read_text().replace(",", " ").split()}
+        print(f"Converting only the {len(only_ids)} scans listed in {args.ids_file} (pilot; not for training)")
     buffer, scan_rows = [], []
     batch_id = 0
     total = 0
+    scan_pos = -1  # position of the scan in the pkl batches = scan ID
 
     for pkl_path in pkl_files:
         with open(pkl_path, "rb") as f:
             data = pickle.load(f)
 
         for sample in data:
+            scan_pos += 1
+            if only_ids is not None and scan_pos not in only_ids:
+                continue
             img = sample["image"]
             img = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)
             img = np.clip(img, 0, None)
@@ -161,7 +169,7 @@ def main(args):
             touches_edge = any(a.size and ((a.min() == 0 and i < 2) or a.max() == n - 1)
                                for i, (a, n) in enumerate(zip(nz, args.image_shape)))
             bottom_cut = bool(nz[2].size and nz[2].min() == 0)
-            row = {"index": total, "file": Path(str((meta or {}).get("filename_or_obj", ""))).name,
+            row = {"index": scan_pos, "file": Path(str((meta or {}).get("filename_or_obj", ""))).name,
                    "native_shape": "x".join(str(v) for v in native_shape),
                    "scale_native_lo": float(lo), "scale_native_hi": float(hi)}
             for i, ax in enumerate("xyz"):
@@ -198,6 +206,7 @@ def main(args):
 
     scans_csv = out_dir / "tau_pt_scans.csv"
     scans = pd.DataFrame(scan_rows)
+    scans.index = scans["index"].to_numpy()  # warnings below list scan IDs (also in a pilot subset)
     scans.to_csv(scans_csv, index=False)
     if "rigid_total_deg" in scans:
         t = scans["rigid_total_deg"]
@@ -287,6 +296,9 @@ if __name__ == "__main__":
                         help="With --template_grid: shrink the brain mask by this many voxels (keeps edge uptake out).")
     parser.add_argument("--scale_range", nargs=2, type=float, default=[0.85, 1.15],
                         help="With --template_grid: allowed size factor (scan brain vs template).")
+    parser.add_argument("--ids_file", type=str, default="",
+                        help="Pilot: convert only these scan IDs (positions in the pkl batches; whitespace/comma separated). "
+                             "The output is then NOT in ID order (index column of tau_pt_scans.csv = ID): only for checks.")
     parser.add_argument("--rigid_warn_deg", type=float, default=30.0,
                         help="Warn about scans turned by more than this (possible failed registration).")
 
