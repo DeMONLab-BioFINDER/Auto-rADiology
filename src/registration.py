@@ -86,15 +86,18 @@ def head_top_mask(img, frac=0.1, top_mm=140.0):
     return mask
 
 
-def register_rigid(moving, fixed, fixed_mask=None, seed=42, scale=False):
+def register_rigid(moving, fixed, fixed_mask=None, seed=42, scale=False, init_tx=None, moving_mask="top"):
     """Rigid registration of `moving` (a native scan) to `fixed` (the template): 6 parameters
     (3 rotations, 3 shifts), or with scale=True 7 (plus ONE overall scale factor, the same in every
     direction, so the head's shape cannot be distorted - only its size matched to the template).
     Mattes mutual information, 3 resolution levels. Starts from the centres of mass of the top
-    140 mm of each head. Returns (transform mapping template points to scan points, final metric)."""
+    140 mm of each head, or from `init_tx` (an Euler3DTransform, e.g. from multistart_search).
+    moving_mask="top" limits the scan side to the top 140 mm of the head (head_top_mask); None uses
+    the whole scan (no assumption about the neck). Returns (transform mapping template points to scan
+    points, final metric)."""
     sitk = _sitk()
     fixed_s, moving_s = _scaled(fixed), _scaled(moving)
-    moving_mask = head_top_mask(moving_s)
+    moving_mask = head_top_mask(moving_s) if moving_mask == "top" else None
 
     # initial shift: centre of mass of the top of the head in each image (the neck pulls the plain
     # centre of mass down by several cm in tall fields of view)
@@ -107,11 +110,14 @@ def register_rigid(moving, fixed, fixed_mask=None, seed=42, scale=False):
         c = (idx * w).sum(axis=1) / w.sum()  # (k, j, i)
         return np.array(img.TransformContinuousIndexToPhysicalPoint([float(c[2]), float(c[1]), float(c[0])]))
 
-    c_fixed = com(fixed_s, fixed_mask)
-    c_moving = com(moving_s, moving_mask)
-    tx = sitk.Similarity3DTransform() if scale else sitk.Euler3DTransform()
-    tx.SetCenter([float(c) for c in c_fixed])
-    tx.SetTranslation([float(d) for d in (c_moving - c_fixed)])
+    if init_tx is not None:
+        tx = sitk.Euler3DTransform(init_tx)
+    else:
+        c_fixed = com(fixed_s, fixed_mask)
+        c_moving = com(moving_s, moving_mask)
+        tx = sitk.Similarity3DTransform() if scale else sitk.Euler3DTransform()
+        tx.SetCenter([float(c) for c in c_fixed])
+        tx.SetTranslation([float(d) for d in (c_moving - c_fixed)])
 
     reg = sitk.ImageRegistrationMethod()
     reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=32)
@@ -293,20 +299,123 @@ def _refine_pose(tx, fixed_s, moving_s, brain_mask, moving_mask, seed=42):
     return tx
 
 
-def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15), rounds=2, seed=42):
+def _com_physical(img, thresh_frac=0.1):
+    """Intensity-weighted centre of everything brighter than thresh_frac x 99th percentile."""
+    sitk = _sitk()
+    a = sitk.GetArrayFromImage(img)
+    v = a[a > 0]
+    if not v.size:
+        return np.array(img.TransformContinuousIndexToPhysicalPoint([s / 2 for s in img.GetSize()]))
+    w = np.where(a > thresh_frac * np.percentile(v, 99), a, 0)
+    idx = np.array(np.nonzero(w))
+    c = (idx * w[w > 0]).sum(axis=1) / w[w > 0].sum()  # (k, j, i)
+    return np.array(img.TransformContinuousIndexToPhysicalPoint([float(c[2]), float(c[1]), float(c[0])]))
+
+
+def _resample_iso(img, spacing_mm):
+    """Same field of view and axes, cubic voxels of spacing_mm (linear)."""
+    sitk = _sitk()
+    old_sp, old_size = np.array(img.GetSpacing()), np.array(img.GetSize())
+    size = [max(1, int(round(n * o / spacing_mm))) for n, o in zip(old_size, old_sp)]
+    return sitk.Resample(img, size, sitk.Transform(), sitk.sitkLinear, img.GetOrigin(), [float(spacing_mm)] * 3,
+                         img.GetDirection(), 0.0, sitk.sitkFloat32)
+
+
+def multistart_search(moving, fixed, fixed_mask, step_mm=15.0, ap_mm=(-30, -15, 0, 15, 30),
+                      pitch_deg=(-30, -15, 0, 15, 30), keep=3):
+    """Starting positions for the rigid fit that do not depend on the neck, shoulders or field of
+    view: the template head's centre is placed at every height of the scan (bottom to top, every
+    `step_mm`), at several front/back offsets and nod (pitch) angles; each start is scored by mutual
+    information inside the template's head (fixed_mask) on coarse 8 mm copies of both images. Left-
+    right comes from the scan's centre of brightness (heads are centred left-right). Returns the
+    `keep` best starts as Euler3DTransforms (template -> scan), best first."""
+    sitk = _sitk()
+    shrink = 4  # template 2 mm -> 8 mm
+    fixed_c = sitk.Shrink(sitk.SmoothingRecursiveGaussian(_scaled(fixed), 4.0), [shrink] * 3)
+    mask_c = sitk.Resample(fixed_mask, fixed_c, sitk.Transform(), sitk.sitkNearestNeighbor, 0, sitk.sitkUInt8)
+    moving_c = _resample_iso(sitk.SmoothingRecursiveGaussian(_scaled(moving), 4.0), 8.0)
+    reg = sitk.ImageRegistrationMethod()
+    reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=24)
+    reg.SetMetricSamplingStrategy(reg.NONE)
+    reg.SetMetricFixedMask(mask_c)
+    reg.SetInterpolator(sitk.sitkLinear)
+
+    a = sitk.GetArrayFromImage(fixed_c) * sitk.GetArrayFromImage(mask_c)
+    idx = np.array(np.nonzero(a > 0))
+    c = (idx * a[a > 0]).sum(axis=1) / a[a > 0].sum()
+    c_fixed = np.array(fixed_c.TransformContinuousIndexToPhysicalPoint([float(c[2]), float(c[1]), float(c[0])]))
+    c_scan = _com_physical(moving_c)
+    size = moving.GetSize()
+    z = [moving.TransformIndexToPhysicalPoint((i, j, k))[2]
+         for i in (0, size[0] - 1) for j in (0, size[1] - 1) for k in (0, size[2] - 1)]
+    heights = np.arange(min(z), max(z) + 1e-6, step_mm)
+    scored = []
+    for h in heights:
+        for dy in ap_mm:  # LPS y = posterior; sign does not matter, both directions are tried
+            target = np.array([c_scan[0], c_scan[1] + dy, h])
+            for p in pitch_deg:
+                tx = sitk.Euler3DTransform()
+                tx.SetCenter([float(v) for v in c_fixed])
+                tx.SetRotation(float(np.radians(p)), 0.0, 0.0)  # about the left-right axis
+                tx.SetTranslation([float(v) for v in target - c_fixed])
+                reg.SetInitialTransform(tx, inPlace=False)
+                try:
+                    val = float(reg.MetricEvaluate(fixed_c, moving_c))
+                except RuntimeError:  # most of the template head falls outside the scan
+                    continue
+                scored.append((val, tx))
+    if not scored:
+        raise RuntimeError("Multi-start search: no starting position overlaps the scan")
+    scored.sort(key=lambda t: t[0])
+    return [t for _, t in scored[:keep]]
+
+
+def template_correlation(moving, tx, fixed, brain_mask):
+    """Quality score of an alignment: Pearson r between the aligned scan and the template inside the
+    template's brain mask (needs no MRI, so it also works for new scans). Low = look at this scan."""
+    sitk = _sitk()
+    out = sitk.Resample(sitk.Cast(moving, sitk.sitkFloat32), fixed, tx, sitk.sitkLinear, 0.0, sitk.sitkFloat32)
+    m = sitk.GetArrayViewFromImage(brain_mask) > 0
+    a = sitk.GetArrayViewFromImage(out)[m].astype(np.float64)
+    b = sitk.GetArrayViewFromImage(fixed)[m].astype(np.float64)
+    if a.std() == 0 or b.std() == 0:
+        return 0.0
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15), rounds=2, seed=42,
+                      multistart=True):
     """Rotation + shift + one size factor (7 parameters, no warping):
-    1. rigid on the whole top of the head (register_rigid, as for tau_raw_2mm_rigid_pts);
+    1. rigid fit. multistart=True (default): from the best few starts of multistart_search, on the
+       whole scan (no neck / top-of-head assumption), keeping the best by brain-mask match.
+       multistart=False: one start from the top of the head (as for tau_raw_2mm_rigid_pts; failed for
+       ~1 in 4 hard pilot scans, Geneva / AVID / OASIS, Nov 2026);
     2. size factor by search inside the brain mask, limited to scale_range;
     3. rotation + shift re-fitted on the brain with that size; 2-3 repeated `rounds` times.
     Returns (Similarity3D transform template -> scan, info dict)."""
     sitk = _sitk()
     lo, hi = scale_range
-    rigid, _ = register_rigid(moving, fixed, fixed_head_mask, seed=seed, scale=False)
     # light smoothing (2 mm) so the size search sees a smooth metric, not voxel noise
     fixed_s = sitk.SmoothingRecursiveGaussian(_scaled(fixed), 2.0)
     moving_s = sitk.SmoothingRecursiveGaussian(_scaled(moving), 2.0)
     value = _brain_metric(fixed_s, moving_s, brain_mask, seed)
-    moving_mask = head_top_mask(_scaled(moving))
+    if multistart:
+        best = None
+        for start in multistart_search(moving, fixed, fixed_head_mask):
+            try:
+                cand, _ = register_rigid(moving, fixed, fixed_head_mask, seed=seed, init_tx=start, moving_mask=None)
+                v = value(_similarity_from(cand, 1.0))
+            except RuntimeError:
+                continue
+            if best is None or v < best[0]:
+                best = (v, cand)
+        if best is None:
+            raise RuntimeError("Multi-start: every rigid fit failed")
+        rigid = best[1]
+        moving_mask = None
+    else:
+        rigid, _ = register_rigid(moving, fixed, fixed_head_mask, seed=seed, scale=False)
+        moving_mask = head_top_mask(_scaled(moving))
     tx = _similarity_from(rigid, 1.0)
     metric_rigid = value(tx)
     for _ in range(rounds):
@@ -315,15 +424,16 @@ def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0
         tx = _refine_pose(tx, _scaled(fixed), _scaled(moving), brain_mask, moving_mask, seed)
     s = float(tx.GetScale())
     return tx, {"metric_rigid": metric_rigid, "metric": value(tx),
-                "scale_at_limit": bool(min(s - lo, hi - s) < 0.005)}
+                "scale_at_limit": bool(min(s - lo, hi - s) < 0.005),
+                "r_template": template_correlation(moving, tx, fixed, brain_mask)}
 
 
-def align_to_template(arr, affine_ras, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15)):
+def align_to_template(arr, affine_ras, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15), multistart=True):
     """One native scan -> (array on the template grid, template RAS affine, summary dict).
     The output has exactly the template's grid (size, 2 mm voxels, orientation), like the MNI scans."""
     sitk = _sitk()
     moving = to_sitk(arr, affine_ras)
-    tx, info = register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range)
+    tx, info = register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range, multistart=multistart)
     out = sitk.Resample(sitk.Cast(moving, sitk.sitkFloat32), fixed, tx, sitk.sitkLinear, 0.0, sitk.sitkFloat32)
     out_arr, out_aff = from_sitk(out)
     summary = rotation_summary(tx)

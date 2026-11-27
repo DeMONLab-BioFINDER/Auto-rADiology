@@ -28,13 +28,18 @@
 #                      the template's size (same factor in every direction: shape unchanged, no warping);
 #                      rigid_scale in tau_pt_scans.csv = head size vs template, the log warns outside 0.8-1.25
 #                      (FAILED Nov 2026: fitted on the whole head, skull uptake pulled the size, heads shrunk)
-#   template        -> data/tau_template_pts            MRI-free stand-in for tau_T1MNI: rigid as above, then ONE size
+#   template        -> data/tau_template_pts            MRI-free stand-in for tau_T1MNI: rigid fit from a multi-start
+#                      search (template head tried at every height of the scan, front/back offsets, nod angles,
+#                      scored on 8 mm copies; best 3 fitted, best kept - no neck / top-of-head assumption; the
+#                      single top-of-head start failed for ~1 in 4 hard pilot scans), then ONE size
 #                      factor fitted only inside the MNI152 brain mask (shrunk 1 voxel, so skull/meninges uptake is
 #                      left out) and limited to 0.85-1.15, then turn/shift re-fitted on the brain; repeated twice.
 #                      No warping. Output on the template's own grid, 91x109x91 at 2 mm, with the same recipe as
 #                      tau_T1MNI_pts, so it is directly comparable with the MNI model (same model settings).
 #                      tau_pt_scans.csv: rigid_scale (> 1 = brain bigger than template), rigid_scale_at_limit,
-#                      rigid_*_deg. The log warns about scans that stopped at the size limit. Afterwards, compare
+#                      rigid_*_deg, rigid_r_template (match with the template inside the brain = quality score,
+#                      needs no MRI). The log lists the 10 lowest and warns below QC_MIN_R (default 0.5, provisional:
+#                      set it from the pilot) and about scans that stopped at the size limit. ~7 s per scan. Afterwards, compare
 #                      with each person's MNI scan: scripts/check_template_alignment.py (runs at the end of this job).
 #                      Train with --data_type tau_template_pts.
 #   pilot           -> data/tau_template_pilot_pts      the "template" version on a few scans only, to check it
@@ -59,7 +64,7 @@
 #SBATCH -A berzelius-2026-231
 #SBATCH -p berzelius-hopper-cpu
 #SBATCH -c 8
-#SBATCH -t 06:00:00
+#SBATCH -t 12:00:00
 #SBATCH -J convert-tau-raw-2mm-rigid
 #SBATCH -o ../../logs/convert-tau-raw-2mm-rigid-slurm-%j.out
 #SBATCH -e ../../logs/convert-tau-raw-2mm-rigid-slurm-%j.err
@@ -86,7 +91,7 @@ TEMPLATE_ARGS_MAKE=()
 PKL_DIR=$DATA/tau_raw_backup
 MODE="${1:-rigid}"
 RECIPE_2MM=(--spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2)
-TEMPLATE_ARGS=(--template_grid --scale_range 0.85 1.15 --brain_mask_erode 1
+TEMPLATE_ARGS=(--template_grid --multistart --qc_min_r "${QC_MIN_R:-0.5}" --scale_range 0.85 1.15 --brain_mask_erode 1
                --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 91 109 91)
 CHECK_DIR="$(cd .. && pwd)/results/template_alignment"
 case "$MODE" in
