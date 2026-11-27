@@ -111,7 +111,7 @@ def main(args):
 
     df = pd.DataFrame({"ID": ids, "r_brain_vs_mni": np.round(r, 4)})
     if sc is not None:
-        keep = [c for c in ("rigid_r_template", "rigid_scale", "rigid_scale_at_limit", "rigid_total_deg", "rigid_pitch_deg") if c in sc]
+        keep = [c for c in ("align_flag", "rigid_r_template", "rigid_scale", "rigid_scale_at_limit", "rigid_total_deg", "rigid_pitch_deg") if c in sc]
         df = df.join(sc[keep].reset_index(drop=True))
     df.insert(1, "site", df["ID"].map(site).fillna("unknown"))
     df.to_csv(out_dir / "template_vs_mni.csv", index=False)
@@ -121,6 +121,8 @@ def main(args):
            f"n_r_below_{args.low_r}": ("r_brain_vs_mni", lambda x: int((x < args.low_r).sum()))}
     if "rigid_r_template" in df:
         agg.update(r_template_median=("rigid_r_template", "median"))
+    if "align_flag" in df:
+        agg.update(n_flagged=("align_flag", lambda x: int(x.astype(bool).sum())))
     if "rigid_scale" in df:
         agg.update(scale_median=("rigid_scale", "median"), scale_5th_pct=("rigid_scale", lambda x: x.quantile(0.05)),
                    scale_95th_pct=("rigid_scale", lambda x: x.quantile(0.95)),

@@ -4,7 +4,7 @@ Used by scripts/convert_tau_pkl_to_pt.py --rigid_template. Two uses:
 - straighten(): rotation + shift only, the scan keeps its own 2 mm grid and head size
   (tau_raw_2mm_rigid_pts). Then the usual 2 mm recipe runs on it.
 - align_to_template() (--template_grid): rotation + shift + ONE overall size factor, fitted inside
-  an MNI brain mask and limited to a range (default 0.85-1.15), and the result is resampled onto the
+  an MNI brain mask and limited to a range (default 0.85-1.05), and the result is resampled onto the
   template's own grid (91x109x91 at 2 mm, like the MNI scans) - an MRI-free stand-in for tau_T1MNI.
 
 Arrays and affines follow nibabel / MONAI: array axes (i, j, k), affine in RAS mm. SimpleITK works
@@ -383,7 +383,7 @@ def template_correlation(moving, tx, fixed, brain_mask):
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15), rounds=2, seed=42,
+def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.05), rounds=2, seed=42,
                       multistart=True):
     """Rotation + shift + one size factor (7 parameters, no warping):
     1. rigid fit. multistart=True (default): from the best few starts of multistart_search, on the
@@ -428,7 +428,7 @@ def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0
                 "r_template": template_correlation(moving, tx, fixed, brain_mask)}
 
 
-def align_to_template(arr, affine_ras, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15), multistart=True):
+def align_to_template(arr, affine_ras, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.05), multistart=True):
     """One native scan -> (array on the template grid, template RAS affine, summary dict).
     The output has exactly the template's grid (size, 2 mm voxels, orientation), like the MNI scans."""
     sitk = _sitk()

@@ -233,6 +233,11 @@ def main(args):
             if len(bad):
                 print(f"WARNING: {len(bad)} scans match the template with r < {args.qc_min_r} - possibly failed alignment, "
                       f"look at them before training: {list(bad[:40])}{' ...' if len(bad) > 40 else ''}")
+            # one yes/no column for "look at this scan before training": poor brain match or size at the limit
+            scans["align_flag"] = (rt < args.qc_min_r) | scans["rigid_scale_at_limit"].astype(bool)
+            scans.to_csv(scans_csv, index=False)
+            print(f"align_flag: {int(scans['align_flag'].sum())} of {len(scans)} scans flagged "
+                  f"(r_template < {args.qc_min_r} or size at the limit): {list(scans.index[scans['align_flag']][:40])}")
             lim = scans.index[scans["rigid_scale_at_limit"].astype(bool)]
             if len(lim):
                 print(f"WARNING: {len(lim)} scans stopped at the size limit {args.scale_range} - check them "
@@ -302,15 +307,15 @@ if __name__ == "__main__":
                         help="With --template_grid: search many starting positions (all heights of the scan, front/back, "
                              "nod angles) instead of one start from the top of the head; no neck / field-of-view "
                              "assumption. ~7 s per scan instead of ~3.")
-    parser.add_argument("--qc_min_r", type=float, default=0.5,
+    parser.add_argument("--qc_min_r", type=float, default=0.55,
                         help="With --template_grid: warn about scans whose aligned brain correlates with the template "
-                             "below this (rigid_r_template in tau_pt_scans.csv). Provisional - set it from the pilot.")
+                             "below this (rigid_r_template in tau_pt_scans.csv). 0.55 from pilot 2 (Nov 2026).")
     parser.add_argument("--brain_mask", type=str, default="",
                         help="With --template_grid: brain mask NIfTI in MNI space for the size fit (default: nilearn's "
                              "MNI152 brain mask).")
     parser.add_argument("--brain_mask_erode", type=int, default=1,
                         help="With --template_grid: shrink the brain mask by this many voxels (keeps edge uptake out).")
-    parser.add_argument("--scale_range", nargs=2, type=float, default=[0.85, 1.15],
+    parser.add_argument("--scale_range", nargs=2, type=float, default=[0.85, 1.05],
                         help="With --template_grid: allowed size factor (scan brain vs template).")
     parser.add_argument("--ids_file", type=str, default="",
                         help="Pilot: convert only these scan IDs (positions in the pkl batches; whitespace/comma separated). "

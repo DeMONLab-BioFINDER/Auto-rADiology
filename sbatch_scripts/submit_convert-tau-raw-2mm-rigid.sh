@@ -33,13 +33,14 @@
 #                      scored on 8 mm copies; best 3 fitted, best kept - no neck / top-of-head assumption; the
 #                      single top-of-head start failed for ~1 in 4 hard pilot scans), then ONE size
 #                      factor fitted only inside the MNI152 brain mask (shrunk 1 voxel, so skull/meninges uptake is
-#                      left out) and limited to 0.85-1.15, then turn/shift re-fitted on the brain; repeated twice.
+#                      left out) and limited to 0.85-1.05 (pilot 2, Nov 2026: all well-aligned scans 0.88-1.04; the failures were
+#                      stretched to 1.07-1.15 onto the scalp ring), then turn/shift re-fitted on the brain; repeated twice.
 #                      No warping. Output on the template's own grid, 91x109x91 at 2 mm, with the same recipe as
 #                      tau_T1MNI_pts, so it is directly comparable with the MNI model (same model settings).
 #                      tau_pt_scans.csv: rigid_scale (> 1 = brain bigger than template), rigid_scale_at_limit,
 #                      rigid_*_deg, rigid_r_template (match with the template inside the brain = quality score,
-#                      needs no MRI). The log lists the 10 lowest and warns below QC_MIN_R (default 0.5, provisional:
-#                      set it from the pilot) and about scans that stopped at the size limit. ~7 s per scan. Afterwards, compare
+#                      needs no MRI). The log lists the 10 lowest and warns below QC_MIN_R (default 0.55, from pilot 2;
+#                      0.55 from pilot 2) and about scans that stopped at the size limit; align_flag in tau_pt_scans.csv = either one. ~7 s per scan. Afterwards, compare
 #                      with each person's MNI scan: scripts/check_template_alignment.py (runs at the end of this job).
 #                      Train with --data_type tau_template_pts.
 #   pilot           -> data/tau_template_pilot_pts      the "template" version on a few scans only, to check it
@@ -95,7 +96,7 @@ TRAIN_CSV="${TRAIN_CSV:-$FROZEN_RUN/splits/train_subjects.csv}"
 PKL_DIR=$DATA/tau_raw_backup
 MODE="${1:-rigid}"
 RECIPE_2MM=(--spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2)
-TEMPLATE_ARGS=(--template_grid --multistart --qc_min_r "${QC_MIN_R:-0.5}" --scale_range 0.85 1.15 --brain_mask_erode 1
+TEMPLATE_ARGS=(--template_grid --multistart --qc_min_r "${QC_MIN_R:-0.55}" --scale_range 0.85 1.05 --brain_mask_erode 1
                --no-crop_foreground --head_crop --spacing_mm 2 --image_shape 91 109 91)
 CHECK_DIR="$(cd .. && pwd)/results/template_alignment"
 case "$MODE" in
