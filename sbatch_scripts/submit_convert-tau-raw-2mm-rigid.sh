@@ -45,8 +45,13 @@
 #                      sheet_<site>.png = each pilot scan next to its own MNI scan (view on Berzelius /
 #                      ThinLinc, don't download). PILOT_TILTED / PILOT_RANDOM change the counts.
 #
+# Template: rigid / scale use the 11 Nov 2026 template (all 2,497 MNI scans, AVID and test included).
+# template / pilot use tau_pet_template_mni2mm_train = training scans only (no AVID, no held-out test),
+# built on the first run from TRAIN_CSV = any seed-42 80/20 run's splits/train_subjects.csv (the split is
+# the same for every input). Its <name>_ids.txt lists the scans averaged.
+#
 # Usage:
-#   sbatch submit_convert-tau-raw-2mm-rigid.sh pilot      # try the template version on ~55 scans first
+#   TRAIN_CSV=<run>/splits/train_subjects.csv sbatch submit_convert-tau-raw-2mm-rigid.sh pilot      # try the template version on ~55 scans first
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh            # rigid
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh scale      # rigid + size (whole head; failed, kept for the record)
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh template   # rigid + size on the brain, MNI-like grid
@@ -77,6 +82,7 @@ export SITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${SLURM_CPUS_PER_TASK:-8}
 DATA=/proj/berzelius-2024-156/users/x_nadpi/data
 MNI_PKL_DIR=/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI
 TEMPLATE=$DATA/templates/tau_pet_template_mni2mm
+TEMPLATE_ARGS_MAKE=()
 PKL_DIR=$DATA/tau_raw_backup
 MODE="${1:-rigid}"
 RECIPE_2MM=(--spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2)
@@ -93,10 +99,18 @@ case "$MODE" in
   *) echo "Usage: sbatch submit_convert-tau-raw-2mm-rigid.sh [rigid|scale|template|pilot]"; exit 1 ;;
 esac
 
+if [[ "$MODE" == "template" || "$MODE" == "pilot" ]]; then
+  TEMPLATE=${TEMPLATE}_train  # training scans only
+  if [[ ! -f "$TEMPLATE.nii.gz" ]]; then
+    [[ -f "${TRAIN_CSV:-}" ]] || { echo "Set TRAIN_CSV=<seed-42 run>/splits/train_subjects.csv to build $TEMPLATE"; exit 1; }
+    TEMPLATE_ARGS_MAKE=(--ids_csv "$TRAIN_CSV")
+  fi
+fi
 if [[ ! -f "$TEMPLATE.nii.gz" ]]; then
   echo "===== template ====="
-  python scripts/make_pet_template.py --pkl_dir "$MNI_PKL_DIR" --out "$TEMPLATE" || exit 1
+  python scripts/make_pet_template.py --pkl_dir "$MNI_PKL_DIR" --out "$TEMPLATE" "${TEMPLATE_ARGS_MAKE[@]}" || exit 1
 fi
+echo "Template: $TEMPLATE.nii.gz"
 
 if [[ "$MODE" == "pilot" ]]; then
   # a check only: start clean every time, then pick the scans
