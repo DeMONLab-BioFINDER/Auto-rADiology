@@ -1,10 +1,10 @@
 #!/bin/bash
 # SLURM batch job script for Berzelius HOPPER (CPU partition, no GPU) - submit from a login node.
 #
-# Focal tau (results_plotting/focal_tau_followup.py): per scan, over the whole cortex (DK outline), peak tau, share of raised voxels, largest
-# raised spot and whether it lies inside Universal CenTauR (the read regions), plus the model peak occlusion evidence. Do the Model - / Read +
-# scans have a small hot spot that the voxelwise group map or a regional mean would average away? Held-out test, then
-# AVID, separately. Needs the merged occlusion maps.
+# Focal tau (results_plotting/focal_tau_followup.py): per scan, over the whole cortex (DK outline), peak tau, share of
+# raised voxels and how much of it lies inside Universal CenTauR (the read regions). Do the Model - / Read + scans have
+# a small hot spot that the voxelwise group map or a regional mean would average away? Held-out test, then AVID.
+# Reads the model calls from the occlusion summary.csv.
 #
 # Usage (from the Auto-rADiology root):
 #   sbatch sbatch_scripts/submit_focal-tau.sh <final_run_folder>
@@ -41,9 +41,9 @@ COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$MASKS/voi_CerebGry_tau_2mm.nii" --univ
 
 echo "================ held-out test ================"
 python results_plotting/focal_tau_followup.py "$RUN" --set test "${COMMON[@]}" \
-  --occlusion_dir "$VIS/occlusion_all_logit_median_brain_mask4_ov0.5" --demo_csv "$DATA/demo.csv"
+  --summary_csv "$VIS/occlusion_all_logit_median_brain_mask4_ov0.5/summary.csv" --demo_csv "$DATA/demo.csv"
 echo "================ $EXT ================"
 python results_plotting/focal_tau_followup.py "$RUN" --set avid "${COMMON[@]}" \
-  --occlusion_dir "$VIS/occlusion_all_${EXT}_logit_median_brain_mask4_ov0.5" --demo_csv "$DATA/demo_${EXT}.csv" \
+  --summary_csv "$VIS/occlusion_all_${EXT}_logit_median_brain_mask4_ov0.5/summary.csv" --demo_csv "$DATA/demo_${EXT}.csv" \
   --out_dir "$RUN/figures/focal_tau_$ext"
 echo "Done: $RUN/figures/focal_tau_{test,$ext}"
