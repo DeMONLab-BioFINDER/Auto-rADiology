@@ -1,14 +1,14 @@
 #!/bin/bash
 # SLURM batch job script for Berzelius HOPPER (CPU partition, no GPU) - submit from a login node.
 #
-# Focal tau (results_plotting/focal_tau_followup.py): per scan, peak tau, share of clearly raised voxels and the largest
-# raised spot inside the Universal CenTauR region, plus the model's peak occlusion evidence there. Do the Model - / Read +
+# Focal tau (results_plotting/focal_tau_followup.py): per scan, over the whole cortex (DK outline), peak tau, share of raised voxels, largest
+# raised spot and whether it lies inside Universal CenTauR (the read regions), plus the model peak occlusion evidence. Do the Model - / Read +
 # scans have a small hot spot that the voxelwise group map or a regional mean would average away? Held-out test, then
 # AVID, separately. Needs the merged occlusion maps.
 #
 # Usage (from the Auto-rADiology root):
 #   sbatch sbatch_scripts/submit_focal-tau.sh <final_run_folder>
-# Settings: DATA (default <proj>/data, with demo.csv, demo_AVID_unseen.csv, masks/CenTauR.nii.gz), EXT (AVID_unseen).
+# Settings: DATA (default <proj>/data, with demo.csv, demo_AVID_unseen.csv, masks/CenTauR.nii.gz, atlases/lotter2025_mni_freesurfer), EXT (AVID_unseen).
 
 #SBATCH -A berzelius-2026-231
 #SBATCH -p berzelius-hopper-cpu
@@ -37,7 +37,7 @@ MASKS="$DATA/masks"
 PKL_DIR="${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}"
 VIS="$RUN/validation/visualization"
 [[ -f "$MASKS/CenTauR.nii.gz" ]] || { echo "No $MASKS/CenTauR.nii.gz (Universal CenTauR mask)"; exit 1; }
-COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$MASKS/voi_CerebGry_tau_2mm.nii" --region_mask "$MASKS/CenTauR.nii.gz")
+COMMON=(--pkl_dir "$PKL_DIR" --ref_mask "$MASKS/voi_CerebGry_tau_2mm.nii" --universal_mask "$MASKS/CenTauR.nii.gz" --atlas_dir "$DATA/atlases/lotter2025_mni_freesurfer")
 
 echo "================ held-out test ================"
 python results_plotting/focal_tau_followup.py "$RUN" --set test "${COMMON[@]}" \
