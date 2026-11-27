@@ -12,9 +12,9 @@
          colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
   click  the values under the cursor, and (with --regions) which FDA visual-read region it is in.
   third  (with --regions) the FDA read regions on the MNI template, in slices in the same plane as the other two
-         (default) or as a 3D brain you can turn. Each region has its own checkbox: the three that make a read
-         positive (posterolateral temporal, occipital, parietal / precuneus) are ticked on opening; frontal (counts
-         only together with those), anterolateral and mesial temporal (do not count) can be ticked.
+         (default) or as a 3D brain you can turn. Each region has its own checkbox, in the label's two groups:
+         raised uptake here = positive (posterolateral temporal, occipital, parietal / precuneus; ticked on opening)
+         and uptake only here = still negative (frontal, anterolateral temporal, mesial temporal).
 
 Page: header with the read, the model call (P >= 0.5) and whether they agree; axial / coronal / sagittal / all three
 (all brains together, axial first like the readers); a slice slider with a small template picture showing where the
@@ -62,8 +62,11 @@ from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_ed
 from make_niivue_viewer import NIIVUE, REGION_COLOURS, REGION_NAMES
 
 SHOWN_FIRST = (1, 2, 3)  # FDA regions ticked on opening: the ones that make a read positive; the others can be ticked
-REGION_STATUS = {1: "counts towards +", 2: "counts towards +", 3: "counts towards +",
-                 4: "counts only with PLT / occipital / parietal", 5: "does not count", 6: "does not count"}
+# TAUVID label 2.6: positive = raised neocortical uptake in PLT, occipital or parietal / precuneus (with or without
+# frontal); negative = none, or raised uptake isolated to mesial temporal, anterolateral temporal and/or frontal
+REGION_STATUS = {1: "raised uptake here = positive", 2: "raised uptake here = positive",
+                 3: "raised uptake here = positive", 4: "uptake only here = still negative",
+                 5: "uptake only here = still negative", 6: "uptake only here = still negative"}
 REGION_OPACITY = 0.75  # FDA regions over the template: the anatomy still shows through
 
 # "About this scan" section: CenTauR regional SUVRs and the SUVR equal to CTRz = 2 for flortaucipir (Villemagne 2023
@@ -439,8 +442,7 @@ def header_chips(row, set_name: str, vtext: str = "") -> str:
 
 
 def region_toggles() -> str:
-    groups = [("Count towards a positive read", (1, 2, 3)), ("Count only together with those", (4,)),
-              ("Do not count", (5, 6))]
+    groups = [("Raised uptake here = positive", (1, 2, 3)), ("Uptake only here = still negative", (4, 5, 6))]
     out = ""
     for title, ks in groups:
         items = "".join(f"<label><input type='checkbox' data-region='{k}' {'checked' if k in SHOWN_FIRST else ''}>"
@@ -524,8 +526,7 @@ def main():
             left_bar = ("<div class='vbar'><div class='vgrad' style='background:" + reader_gradient_css() + "'></div>"
                         "<div class='vticks'>" + "".join(f"<span style='bottom:{b}%'>{t}</span>" for b, t in ticks)
                         + "</div><div class='vlabel'>SUVR</div></div>")
-            left_note = ("Grey = below 1.65 × cerebellum, the readers' threshold for raised uptake. "
-                         "Colours = above it, rising from purple to red.")
+            left_note = "Grey = below 1.65 × cerebellum, the readers' threshold for raised uptake. Colours = above it."
         else:
             left.append({"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input_heat.nii.gz", "colormap": "inferno",
                          "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0})
@@ -730,7 +731,7 @@ TEMPLATE = r"""<!doctype html>
   <details class="card"><summary>About these views</summary><ul>
     <li><b>Reader view</b> imitates the readers' display: SUVR divided by the scan's whole-cerebellum mean, grey below 1.65 × cerebellum and coloured bands above, scale top 5.89. The readers used a hand-traced cerebellum on their own reoriented images (and white for low values); here it is the Centiloid cerebellum mask in MNI space, so it is close to what they saw, not identical.</li>
     <li><b>Occlusion</b>: each small block of the scan is hidden in turn and the change in the model's output is recorded there. Colours are scaled to this scan's 99th percentile.</li>
-    <li><b>FDA read regions</b>: an atlas version (Desikan-Killiany, temporal lobe split with the label's crosshairs) of the regions named in the TAUVID label. The label itself gives no exact borders. A read is positive with raised uptake in posterolateral temporal, occipital or parietal / precuneus cortex. Frontal counts only with one of those; mesial and anterolateral temporal do not count.</li>
+    <li><b>FDA read regions</b>: an atlas version (Desikan-Killiany, temporal lobe split with the label's crosshairs) of the regions named in the TAUVID label. The label itself gives no exact borders. The temporal lobe is split as the label says: front / back just behind the brainstem nuclei (substantia nigra, red nucleus), inner / outer through the widest part of the temporal pole. A read is positive with raised uptake in posterolateral temporal, occipital or parietal / precuneus cortex, in either hemisphere. Raised uptake only in frontal, anterolateral temporal and / or mesial temporal is still negative; alongside a positive region it does not change the read.</li>
     <li>Only uptake in the cortex counts for the read, not white matter or signal outside the brain.</li></ul></details>
 </div>
 <script type="module">

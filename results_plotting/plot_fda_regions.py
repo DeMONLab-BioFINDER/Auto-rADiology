@@ -12,11 +12,16 @@ The label gives no masks or coordinates, so this is an approximation for figures
 How it is built:
   atlas      Desikan-Killiany (FreeSurfer aparc) + subcortical labels on MNI152NLin2009cAsym, 1 mm, from
              Lotter LD (2025) FreeSurfer parcellations in MNI space, G-Node, doi:10.12751/g-node.2mnxpm
-             (FreeSurfer 8 run on the template itself; desc-smoothed file). The brainstem comes from that dataset's
-             full FreeSurfer aseg. Both files are downloaded on first use into --atlas_dir.
-  crosshairs measured on the atlas (in MNI mm): y = posterior edge of the brainstem at the midbrain/upper pons
-             (z = -20 to -10 mm, median, rounded); x = +/- centre of the temporal pole at its widest axial slice
-             (mean of both sides, rounded). Override with --y_cross / --x_cross.
+             (FreeSurfer 8 run on the template itself; desc-smoothed file). The brainstem nuclei (substantia nigra
+             and red nucleus, where flortaucipir shows off-target uptake) come from the MASSP subcortical atlas on the
+             same template (Alkemade A, Bazin PL et al. 2020, Sci Adv 6:eaaz4734; via TemplateFlow). All files are
+             downloaded on first use into --atlas_dir.
+  crosshairs measured on the atlases (in MNI mm): y = "immediately posterior to the brainstem nuclei" = the back
+             edge of substantia nigra + red nucleus on the axial slice where they are largest (rounded; -25 mm, at
+             z = -12; the label's Figure 2 puts the line about halfway back in the brain, -20 to -27 mm here);
+             x = +/- centre of the temporal pole at its widest axial slice (mean of both sides, rounded).
+             Override with --y_cross / --x_cross. (Until 2026-11-27 y was the back edge of the whole brainstem, -39 mm,
+             which put most of the lateral temporal lobe in ALT.)
   temporal lobe = superior/middle/inferior temporal, banks STS, transverse temporal, temporal pole, fusiform,
              parahippocampal, entorhinal + hippocampus, amygdala; PLT = y < y_cross and |x| >= x_cross,
              ALT = y >= y_cross and |x| >= x_cross, mesial temporal (AMT + PMT) = |x| < x_cross.
@@ -51,7 +56,9 @@ from nilearn import datasets, image, plotting
 GIN = "https://gin.g-node.org/llotter/mni_freesurfer/raw/master/parcellations/MNI152NLin2009cAsym/"
 DK_FILE = "seg-aparc.aseg_space-MNI152NLin2009cAsym_desc-smoothed.nii.gz"
 DK_TSV = "seg-aparc.aseg_space-MNI152NLin2009cAsym.tsv"
-FS_ASEG = "aseg.nii.gz"  # full FreeSurfer aseg (FreeSurfer label numbers; 16 = brainstem)
+TEMPLATEFLOW = "https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009cAsym/"
+MASSP = "tpl-MNI152NLin2009cAsym_res-01_atlas-MASSP20_dseg.nii.gz"
+BRAINSTEM_NUCLEI = (5, 6, 7, 8)  # MASSP: left/right substantia nigra, left/right red nucleus
 AXIAL_CUTS = [-36, -24, -12, 0, 12, 24, 36, 48, 60]  # mm, bottom -> top, as in voxelwise_visual_read.py
 
 TEMPORAL = ["superiortemporal", "middletemporal", "inferiortemporal", "bankssts", "transversetemporal",
@@ -79,10 +86,10 @@ def parse_args():
 
 def fetch(atlas_dir: Path) -> None:
     atlas_dir.mkdir(parents=True, exist_ok=True)
-    for f in (DK_FILE, DK_TSV, FS_ASEG):
+    for base, f in [(GIN, DK_FILE), (GIN, DK_TSV), (TEMPLATEFLOW, MASSP)]:
         if not (atlas_dir / f).exists():
-            print(f"[download] {GIN}{f}")
-            urllib.request.urlretrieve(GIN + f, atlas_dir / f)
+            print(f"[download] {base}{f}")
+            urllib.request.urlretrieve(base + f, atlas_dir / f)
 
 
 def mm_of(mask: np.ndarray, affine: np.ndarray) -> np.ndarray:
@@ -90,10 +97,14 @@ def mm_of(mask: np.ndarray, affine: np.ndarray) -> np.ndarray:
     return nib.affines.apply_affine(affine, np.argwhere(mask))
 
 
-def measure_crosshairs(K, brainstem, temporal_pole_ids, affine):
-    bs = mm_of(brainstem, affine)
-    edges = [bs[np.abs(bs[:, 2] - z) < 0.5, 1].min() for z in range(-20, -9) if (np.abs(bs[:, 2] - z) < 0.5).any()]
-    y_cross = float(np.round(np.median(edges)))
+def measure_crosshairs(K, nuclei, temporal_pole_ids, affine):
+    nu = mm_of(nuclei, affine)
+    z = np.round(nu[:, 2])
+    zs, counts = np.unique(z, return_counts=True)
+    z_big = zs[np.argmax(counts)]  # the slice where the nuclei are largest (most visible)
+    y_cross = float(np.round(nu[z == z_big, 1].min()))
+    print(f"[crosshair] substantia nigra + red nucleus largest at z = {z_big:.0f} mm, back edge y = {y_cross:g} mm "
+          f"(over all slices {nu[:, 1].min():.0f} to {np.median([nu[z == k, 1].min() for k in zs]):.0f} mm)")
     centres = []
     for lab in temporal_pole_ids:  # left and right temporal pole
         tp = mm_of(K == lab, affine)
@@ -103,7 +114,6 @@ def measure_crosshairs(K, brainstem, temporal_pole_ids, affine):
         centres.append(abs((s.max() + s.min()) / 2))
         print(f"[crosshair] temporal pole {lab}: widest at z = {z_wide:.0f} mm, centre |x| = {centres[-1]:.1f} mm")
     x_cross = float(np.round(np.mean(centres)))
-    print(f"[crosshair] brainstem posterior edge at z = -20..-10 mm: y = {min(edges):.0f} to {max(edges):.0f} mm")
     return y_cross, x_cross
 
 
@@ -113,11 +123,11 @@ def build_regions(atlas_dir: Path, y_cross, x_cross):
     names = pd.read_csv(atlas_dir / DK_TSV, sep="\t", header=None, index_col=0)[1]
     ids = lambda regions: [i for i, n in names.items() if n in {f"ctx-{h}-{r}" for h in ("lh", "rh") for r in regions}]
     sub = lambda wanted: [i for i, n in names.items() if n in wanted]
-    fs = image.resample_to_img(nib.load(atlas_dir / FS_ASEG), dk, interpolation="nearest",
-                               force_resample=True, copy_header=True)
-    brainstem = np.asarray(fs.dataobj).astype(int) == 16
+    massp = image.resample_to_img(nib.load(atlas_dir / MASSP), dk, interpolation="nearest",
+                                  force_resample=True, copy_header=True)
+    nuclei = np.isin(np.asarray(massp.dataobj).astype(int), BRAINSTEM_NUCLEI)
     if y_cross is None or x_cross is None:
-        y_m, x_m = measure_crosshairs(K, brainstem, ids(["temporalpole"]), dk.affine)
+        y_m, x_m = measure_crosshairs(K, nuclei, ids(["temporalpole"]), dk.affine)
         y_cross = y_m if y_cross is None else y_cross
         x_cross = x_m if x_cross is None else x_cross
     print(f"[crosshair] using y = {y_cross:g} mm (front/back) and |x| = {x_cross:g} mm (inner/outer)")
