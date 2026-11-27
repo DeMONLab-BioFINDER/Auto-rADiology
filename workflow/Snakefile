@@ -11,22 +11,25 @@
 #   snakemake --profile workflow/profiles/berzelius -n       # dry run: what would run
 #   snakemake --profile workflow/profiles/berzelius          # run it
 # After a failure (e.g. a job hit its time limit), run the same command again: only what's missing reruns.
-# Settings: workflow/config.yaml (or e.g. --config exclude=Geneva).
+# Settings: workflow/config.yaml (or e.g. --config exclude=Geneva). exclude="" = main split, nothing left out
+# (same 80/20 split as the frozen models; external sets = extra_externals only, runs named <data_type>-<pool>-main).
 
 import json
 import os
 
 configfile: "workflow/config.yaml"
 
-EXCLUDE = config["exclude"]
-EXTERNALS = [f"{EXCLUDE}_unseen"] + list(config.get("extra_externals", []))
+EXCLUDE = str(config.get("exclude") or "").strip()   # "" = main split, no cohort left out
+EXTERNALS = ([f"{EXCLUDE}_unseen"] if EXCLUDE else []) + list(config.get("extra_externals", []))
 DATA = os.path.abspath(config["data"])        # absolute paths: every script resolves them the same way
 RESULTS = os.path.abspath(config["results"])
-NAME = f"{config['data_type']}-{config['pool']}-no{EXCLUDE}"   # e.g. tau_T1MNI_pts-attention-noOASIS
+SPLIT_TAG = f"no{EXCLUDE}" if EXCLUDE else "main"
+NAME = f"{config['data_type']}-{config['pool']}-{SPLIT_TAG}"   # e.g. tau_T1MNI_pts-attention-noOASIS, ...-main
 CV_RUN = f"{RESULTS}/{NAME}-cv5"
 RUN = f"{RESULTS}/{NAME}-final"
 FLAGS = f"{RUN}/workflow_flags"          # "done" markers for steps whose own outputs move around
-DEMO_POOL = f"{DATA}/demo_no{EXCLUDE}.csv"  # training pool + test set, without the left-out cohort
+# training pool + test set: without the left-out cohort, or all of demo.csv for the main split
+DEMO_POOL = f"{DATA}/demo_no{EXCLUDE}.csv" if EXCLUDE else f"{DATA}/demo.csv"
 ATLAS = f"{DATA}/atlases/lotter2025_mni_freesurfer"   # Desikan-Killiany on the MNI template (plot_fda_regions.py)
 MODEL_KWARGS = json.dumps({"pool": config["pool"]})  # passed through params: its braces would clash with {placeholders}
 
@@ -57,7 +60,10 @@ shell.executable("/bin/bash")
 shell.prefix("set +eu; module load Miniforge3/25.3.1-0 2>/dev/null || module load Miniforge3/24.7.1-2-hpc1-bdist; "
              "mamba activate ai-pet; set -eo pipefail; ")
 
-localrules: all, split_demographics
+if EXCLUDE:
+    localrules: all, split_demographics
+else:
+    localrules: all
 
 
 rule all:

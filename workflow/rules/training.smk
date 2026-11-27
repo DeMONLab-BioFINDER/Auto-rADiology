@@ -5,27 +5,29 @@
 TRAIN_ARGS = (
     f"--no-tune --dataset Gothenburg --data_type {config['data_type']} --input_path {DATA} "
     f"--targets visual_read --stratifycvby site,visual_read --train_size 0.80 --val_size 0.00 --test_size 0.20 "
-    f"--cls_loss softmax --exclude_sites {EXCLUDE}"
+    f"--cls_loss softmax" + (f" --exclude_sites {EXCLUDE}" if EXCLUDE else "")
 )
 
 
-rule split_demographics:
-    """demo.csv -> the training pool without the left-out cohort, and the cohort on its own (an external set)."""
-    input:
-        f"{DATA}/demo.csv",
-    output:
-        pool=DEMO_POOL,
-        external=f"{DATA}/demo_{EXCLUDE}_unseen.csv",
-    run:
-        import pandas as pd
-        demo = pd.read_csv(input[0])
-        demo = demo.loc[:, ~demo.columns.astype(str).str.startswith("Unnamed")]
-        out = demo["site"].astype(str) == EXCLUDE
-        if not out.any():
-            raise ValueError(f"No scans from site {EXCLUDE!r}; sites: {sorted(demo['site'].astype(str).unique())}")
-        demo[~out].to_csv(output.pool, index=False)
-        demo[out].to_csv(output.external, index=False)
-        print(f"{EXCLUDE}: {out.sum()} scans left out; {(~out).sum()} in the training pool + test set")
+# main split (exclude ""): nothing to split off, demo.csv is used as it is
+if EXCLUDE:
+  rule split_demographics:
+      """demo.csv -> the training pool without the left-out cohort, and the cohort on its own (an external set)."""
+      input:
+          f"{DATA}/demo.csv",
+      output:
+          pool=DEMO_POOL,
+          external=f"{DATA}/demo_{EXCLUDE}_unseen.csv",
+      run:
+          import pandas as pd
+          demo = pd.read_csv(input[0])
+          demo = demo.loc[:, ~demo.columns.astype(str).str.startswith("Unnamed")]
+          out = demo["site"].astype(str) == EXCLUDE
+          if not out.any():
+              raise ValueError(f"No scans from site {EXCLUDE!r}; sites: {sorted(demo['site'].astype(str).unique())}")
+          demo[~out].to_csv(output.pool, index=False)
+          demo[out].to_csv(output.external, index=False)
+          print(f"{EXCLUDE}: {out.sum()} scans left out; {(~out).sum()} in the training pool + test set")
 
 
 rule cv5:

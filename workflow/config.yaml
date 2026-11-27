@@ -1,6 +1,8 @@
 # Settings for one full visual-read experiment (workflow/Snakefile). Change these, not the rules.
 
-# Cohort left out of training entirely and evaluated zero-shot (a value of the 'site' column in demo.csv)
+# Cohort left out of training entirely and evaluated zero-shot (a value of the 'site' column in demo.csv).
+# Empty ("") = no cohort left out: the main 80/20 split of demo.csv, as the frozen models (runs named ...-main);
+# e.g. snakemake ... --config exclude="" data_type=tau_template_pts
 exclude: OASIS
 # Other external sets, evaluated zero-shot as well (each needs data/demo_<name>.csv)
 extra_externals: [AVID_unseen]

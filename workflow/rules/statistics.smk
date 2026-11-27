@@ -5,7 +5,7 @@
 def set_demographics(s):
     if s == "test":
         return DEMO_POOL
-    return rules.split_demographics.output.external if s == f"{EXCLUDE}_unseen" else f"{DATA}/demo_{s}.csv"
+    return rules.split_demographics.output.external if EXCLUDE and s == f"{EXCLUDE}_unseen" else f"{DATA}/demo_{s}.csv"
 
 
 def set_of(lab):

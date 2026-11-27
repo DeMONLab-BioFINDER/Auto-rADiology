@@ -4,7 +4,7 @@
 
 def external_demographics(wildcards):
     """demo_<set>.csv; the left-out cohort's file is made by split_demographics."""
-    if wildcards.ext == f"{EXCLUDE}_unseen":
+    if EXCLUDE and wildcards.ext == f"{EXCLUDE}_unseen":
         return rules.split_demographics.output.external
     return f"{DATA}/demo_{wildcards.ext}.csv"
 
