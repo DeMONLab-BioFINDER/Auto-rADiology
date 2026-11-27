@@ -14,7 +14,7 @@ How it is built:
              Lotter LD (2025) FreeSurfer parcellations in MNI space, G-Node, doi:10.12751/g-node.2mnxpm
              (FreeSurfer 8 run on the template itself; desc-smoothed file). The brainstem nuclei (substantia nigra
              and red nucleus, where flortaucipir shows off-target uptake) come from the MASSP subcortical atlas on the
-             same template (Alkemade A, Bazin PL et al. 2020, Sci Adv 6:eaaz4734; via TemplateFlow). All files are
+             same template (Bazin PL, Alkemade A et al. 2020, eLife 9:e59430; via TemplateFlow). All files are
              downloaded on first use into --atlas_dir.
   crosshairs measured on the atlases (in MNI mm): y = "immediately posterior to the brainstem nuclei" = the back
              edge of substantia nigra + red nucleus on the axial slice where they are largest (rounded; -25 mm, at
