@@ -96,11 +96,21 @@ def main(args):
     batch_size = int(args.batch_size)
     pre, scale, post = _build_transform(args)
     rigid = None
+    if args.template_grid and not args.rigid_template:
+        raise SystemExit("--template_grid needs --rigid_template")
+    if args.template_grid and args.rigid_scale:
+        raise SystemExit("--template_grid already fits the size (on the brain, limited); drop --rigid_scale")
     if args.rigid_template:
-        from src.registration import load_template, straighten
+        from src.registration import align_to_template, load_brain_mask, load_template, straighten
         rigid = load_template(args.rigid_template)
-        print(f"Rigid alignment to {args.rigid_template} before the recipe (rotation + shift"
-              f"{' + one overall scale factor' if args.rigid_scale else ' only'})")
+        if args.template_grid:
+            brain_mask, brain_np = load_brain_mask(args.rigid_template, args.brain_mask or None, args.brain_mask_erode)
+            print(f"Template alignment to {args.rigid_template}: rotation + shift + one size factor "
+                  f"(fitted inside the brain mask, {int(brain_np.sum())} voxels, limited to "
+                  f"{args.scale_range[0]}-{args.scale_range[1]}), output on the template grid")
+        else:
+            print(f"Rigid alignment to {args.rigid_template} before the recipe (rotation + shift"
+                  f"{' + one overall scale factor' if args.rigid_scale else ' only'})")
     buffer, scan_rows = [], []
     batch_id = 0
     total = 0
@@ -122,8 +132,12 @@ def main(args):
                 # turn the native scan to the template's head pose, on a 2 mm grid lined up with the
                 # template that keeps the whole field of view; the recipe below then runs as usual
                 fixed, fixed_mask = rigid
-                arr, aff, pose = straighten(np.squeeze(img), np.asarray(meta["affine"], dtype=float), fixed, fixed_mask,
-                                            spacing_mm=args.spacing_mm or 2.0, scale=args.rigid_scale)
+                if args.template_grid:  # pose + size matched, resampled onto the template (MNI-like) grid
+                    arr, aff, pose = align_to_template(np.squeeze(img), np.asarray(meta["affine"], dtype=float), fixed,
+                                                       fixed_mask, brain_mask, tuple(args.scale_range))
+                else:
+                    arr, aff, pose = straighten(np.squeeze(img), np.asarray(meta["affine"], dtype=float), fixed,
+                                                fixed_mask, spacing_mm=args.spacing_mm or 2.0, scale=args.rigid_scale)
                 img = np.clip(arr, 0, None)
                 meta = dict(meta)
                 meta["affine"] = torch.as_tensor(aff, dtype=torch.float64)
@@ -197,6 +211,14 @@ def main(args):
             if len(odd):
                 print(f"WARNING: {len(odd)} scans scaled by less than 0.8 or more than 1.25 - check them: "
                       f"{list(odd[:30])}{' ...' if len(odd) > 30 else ''}")
+        if args.template_grid:
+            sc = scans["rigid_scale"]
+            print(f"Brain size vs template (scale, > 1 = bigger): median {sc.median():.3f}, 5th-95th percentile "
+                  f"{sc.quantile(0.05):.3f}-{sc.quantile(0.95):.3f}, range {sc.min():.3f}-{sc.max():.3f}")
+            lim = scans.index[scans["rigid_scale_at_limit"].astype(bool)]
+            if len(lim):
+                print(f"WARNING: {len(lim)} scans stopped at the size limit {args.scale_range} - check them "
+                      f"(index = scan ID): {list(lim[:30])}{' ...' if len(lim) > 30 else ''}")
         big = scans.index[t > args.rigid_warn_deg]
         if len(big):
             print(f"WARNING: {len(big)} scans turned by more than {args.rigid_warn_deg} deg - possibly a failed registration, "
@@ -252,6 +274,19 @@ if __name__ == "__main__":
                         help="With --rigid_template: also match head size with ONE overall scale factor (same in every "
                              "direction, so no change of shape; 7 parameters). rigid_scale in tau_pt_scans.csv = head size "
                              "vs template.")
+    parser.add_argument("--template_grid", action=argparse.BooleanOptionalAction, default=False,
+                        help="With --rigid_template: rotation + shift + ONE size factor fitted inside a brain mask "
+                             "(no warping, no MRI), and the scan resampled onto the template's grid (91x109x91 at 2 mm, "
+                             "like tau_T1MNI). Use the MNI recipe after it (--no-crop_foreground --head_crop "
+                             "--spacing_mm 2 --image_shape 91 109 91). rigid_scale / rigid_scale_at_limit / "
+                             "rigid_metric(_rigid) go to tau_pt_scans.csv.")
+    parser.add_argument("--brain_mask", type=str, default="",
+                        help="With --template_grid: brain mask NIfTI in MNI space for the size fit (default: nilearn's "
+                             "MNI152 brain mask).")
+    parser.add_argument("--brain_mask_erode", type=int, default=1,
+                        help="With --template_grid: shrink the brain mask by this many voxels (keeps edge uptake out).")
+    parser.add_argument("--scale_range", nargs=2, type=float, default=[0.85, 1.15],
+                        help="With --template_grid: allowed size factor (scan brain vs template).")
     parser.add_argument("--rigid_warn_deg", type=float, default=30.0,
                         help="Warn about scans turned by more than this (possible failed registration).")
 

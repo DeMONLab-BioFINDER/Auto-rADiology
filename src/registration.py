@@ -1,10 +1,11 @@
-"""MRI-free rigid alignment of a tau-PET scan to a PET template (rotation + shift only, no scaling,
-no warping), with SimpleITK.
+"""MRI-free alignment of a tau-PET scan to a PET template (no warping), with SimpleITK.
 
-Used by scripts/convert_tau_pkl_to_pt.py --rigid_template to make a "straightened" version of the
-2 mm input: each native scan is turned so its head pose matches the template, then the usual 2 mm
-recipe runs on it. Only the head pose changes; voxel size, head size and brightness scaling are as
-in tau_raw_2mm_pts.
+Used by scripts/convert_tau_pkl_to_pt.py --rigid_template. Two uses:
+- straighten(): rotation + shift only, the scan keeps its own 2 mm grid and head size
+  (tau_raw_2mm_rigid_pts). Then the usual 2 mm recipe runs on it.
+- align_to_template() (--template_grid): rotation + shift + ONE overall size factor, fitted inside
+  an MNI brain mask and limited to a range (default 0.85-1.15), and the result is resampled onto the
+  template's own grid (91x109x91 at 2 mm, like the MNI scans) - an MRI-free stand-in for tau_T1MNI.
 
 Arrays and affines follow nibabel / MONAI: array axes (i, j, k), affine in RAS mm. SimpleITK works
 in LPS, so affines are flipped on the way in and out.
@@ -195,3 +196,136 @@ def load_template(path):
     mask = to_sitk(m, nii.affine)
     mask = sitk.Cast(mask > 0.5, sitk.sitkUInt8)
     return fixed, mask
+
+
+# ---------------------------------------------------------------------------------------------
+# Template-grid alignment: rotation + shift + one size factor, fitted on the brain only
+# ---------------------------------------------------------------------------------------------
+
+def load_brain_mask(template_path, mask_path=None, erode_vox=1):
+    """Brain mask on the template grid, as a SimpleITK image. Default: nilearn's MNI152 brain mask
+    resampled onto the template (the template is on the SPM MNI grid, same world coordinates);
+    or `mask_path` (any NIfTI in MNI space). Shrunk by `erode_vox` voxels so the bright skull /
+    meninges uptake at the brain edge stays out of the size fit (that uptake is what shrank the heads
+    in the first rigid+scale try)."""
+    import nibabel as nib
+    from scipy.ndimage import binary_erosion
+    sitk = _sitk()
+    tmpl = nib.load(str(template_path))
+    target = nib.Nifti1Image(np.zeros(tmpl.shape[:3], np.int8), tmpl.affine)
+    from nilearn import image
+    if mask_path:
+        src = nib.load(str(mask_path))
+    else:
+        from nilearn import datasets
+        src = datasets.load_mni152_brain_mask(resolution=2)
+    m = image.resample_to_img(src, target, interpolation="nearest", force_resample=True,
+                              copy_header=True).get_fdata() > 0.5
+    if erode_vox:
+        m = binary_erosion(m, iterations=int(erode_vox))
+    if m.sum() < 1000:
+        raise ValueError(f"Brain mask on the template grid has only {int(m.sum())} voxels - wrong space?")
+    mask = to_sitk(m.astype(np.uint8), tmpl.affine)
+    return sitk.Cast(mask > 0.5, sitk.sitkUInt8), m
+
+
+def _similarity_from(tx, scale):
+    """Euler3D or Similarity3D transform -> Similarity3D with the same pose and the given size factor."""
+    sitk = _sitk()
+    m = np.array(tx.GetMatrix(), dtype=float).reshape(3, 3)
+    r = m / np.cbrt(np.linalg.det(m))
+    out = sitk.Similarity3DTransform()
+    out.SetCenter(tx.GetCenter())
+    out.SetMatrix([float(v) for v in r.flatten()])
+    out.SetTranslation(tx.GetTranslation())
+    out.SetScale(float(scale))
+    return out
+
+
+def _brain_metric(fixed_s, moving_s, brain_mask, seed=42):
+    """Mattes mutual information over the template's brain voxels (all of them, so the value is
+    deterministic), for evaluating fixed transforms."""
+    sitk = _sitk()
+    reg = sitk.ImageRegistrationMethod()
+    reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=32)
+    reg.SetMetricSamplingStrategy(reg.NONE)
+    reg.SetMetricFixedMask(brain_mask)
+    reg.SetInterpolator(sitk.sitkLinear)
+
+    def value(tx):
+        reg.SetInitialTransform(tx, inPlace=False)
+        return float(reg.MetricEvaluate(fixed_s, moving_s))
+    return value
+
+
+def _fit_scale(tx, value, lo, hi):
+    """Best size factor in [lo, hi] for a fixed pose: grid in steps of 0.01, then 0.002 around the
+    best one. A plain search instead of the optimizer, so the size can never leave the range."""
+    def best(grid):
+        vals = [value(_similarity_from(tx, s)) for s in grid]
+        i = int(np.argmin(vals))  # mutual information: lower = better match
+        return float(grid[i]), float(vals[i])
+    s, _ = best(np.round(np.arange(lo, hi + 1e-9, 0.01), 4))
+    fine = np.round(np.arange(max(lo, s - 0.01), min(hi, s + 0.01) + 1e-9, 0.002), 4)
+    return best(fine)
+
+
+def _refine_pose(tx, fixed_s, moving_s, brain_mask, moving_mask, seed=42):
+    """Re-fit rotation + shift with the size factor frozen (optimizer weight 0), on the brain mask."""
+    sitk = _sitk()
+    reg = sitk.ImageRegistrationMethod()
+    reg.SetMetricAsMattesMutualInformation(numberOfHistogramBins=32)
+    reg.SetMetricSamplingStrategy(reg.RANDOM)
+    reg.SetMetricSamplingPercentage(0.25, seed)
+    reg.SetMetricFixedMask(brain_mask)
+    if moving_mask is not None:
+        reg.SetMetricMovingMask(moving_mask)
+    reg.SetInterpolator(sitk.sitkLinear)
+    reg.SetOptimizerAsRegularStepGradientDescent(learningRate=1.0, minStep=1e-4, numberOfIterations=200,
+                                                 relaxationFactor=0.5, gradientMagnitudeTolerance=1e-6)
+    reg.SetOptimizerScalesFromPhysicalShift()
+    reg.SetOptimizerWeights([1.0] * 6 + [0.0])  # Similarity3D: versor (3), shift (3), scale (frozen)
+    reg.SetShrinkFactorsPerLevel([2, 1])
+    reg.SetSmoothingSigmasPerLevel([2.0, 1.0])
+    reg.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
+    reg.SetInitialTransform(tx, inPlace=True)
+    reg.Execute(fixed_s, moving_s)
+    return tx
+
+
+def register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15), rounds=2, seed=42):
+    """Rotation + shift + one size factor (7 parameters, no warping):
+    1. rigid on the whole top of the head (register_rigid, as for tau_raw_2mm_rigid_pts);
+    2. size factor by search inside the brain mask, limited to scale_range;
+    3. rotation + shift re-fitted on the brain with that size; 2-3 repeated `rounds` times.
+    Returns (Similarity3D transform template -> scan, info dict)."""
+    sitk = _sitk()
+    lo, hi = scale_range
+    rigid, _ = register_rigid(moving, fixed, fixed_head_mask, seed=seed, scale=False)
+    # light smoothing (2 mm) so the size search sees a smooth metric, not voxel noise
+    fixed_s = sitk.SmoothingRecursiveGaussian(_scaled(fixed), 2.0)
+    moving_s = sitk.SmoothingRecursiveGaussian(_scaled(moving), 2.0)
+    value = _brain_metric(fixed_s, moving_s, brain_mask, seed)
+    moving_mask = head_top_mask(_scaled(moving))
+    tx = _similarity_from(rigid, 1.0)
+    metric_rigid = value(tx)
+    for _ in range(rounds):
+        s, _ = _fit_scale(tx, value, lo, hi)
+        tx = _similarity_from(tx, s)
+        tx = _refine_pose(tx, _scaled(fixed), _scaled(moving), brain_mask, moving_mask, seed)
+    s = float(tx.GetScale())
+    return tx, {"metric_rigid": metric_rigid, "metric": value(tx),
+                "scale_at_limit": bool(min(s - lo, hi - s) < 0.005)}
+
+
+def align_to_template(arr, affine_ras, fixed, fixed_head_mask, brain_mask, scale_range=(0.85, 1.15)):
+    """One native scan -> (array on the template grid, template RAS affine, summary dict).
+    The output has exactly the template's grid (size, 2 mm voxels, orientation), like the MNI scans."""
+    sitk = _sitk()
+    moving = to_sitk(arr, affine_ras)
+    tx, info = register_template(moving, fixed, fixed_head_mask, brain_mask, scale_range)
+    out = sitk.Resample(sitk.Cast(moving, sitk.sitkFloat32), fixed, tx, sitk.sitkLinear, 0.0, sitk.sitkFloat32)
+    out_arr, out_aff = from_sitk(out)
+    summary = rotation_summary(tx)
+    summary.update(info)
+    return out_arr, out_aff, summary
