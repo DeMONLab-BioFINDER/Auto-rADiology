@@ -11,16 +11,20 @@
          'class' dark red -> yellow; opacity follows strength (0 = see-through, solid 0.9 at the top and above);
          colour top = the map's 99th percentile or --color_max; vertical colour bar faded the same way on grey.
   click  the values under the cursor, and (with --regions) which FDA visual-read region it is in.
-  third  (with --regions) the FDA regions that make a read positive (posterolateral temporal, occipital, parietal /
-         precuneus) in colour on the MNI template; mesial and anterolateral temporal (tau there alone does not count) and
-         frontal (counts only together with the others) are left out. A 3D brain you can turn, with
-         the crosshair of the other two brains on it (so you see which region a spot is in); "Slices" shows it in the
-         same plane as the other two instead.
+  third  (with --regions) the FDA read regions on the MNI template, in slices in the same plane as the other two
+         (default) or as a 3D brain you can turn. Each region has its own checkbox: the three that make a read
+         positive (posterolateral temporal, occipital, parietal / precuneus) are ticked on opening; frontal (counts
+         only together with those), anterolateral and mesial temporal (do not count) can be ticked.
 
-A "Whole scan" checkbox shows the image without the brain mask (the readers saw the whole head: off-target signal
-in meninges / skull / sinuses is then visible as such). Axial view by default; buttons switch both brains to coronal, sagittal or all three planes (readers look at more
-than the axial plane); the two brains move together. Voxels are drawn as they are (nearest
-neighbour, no smoothing between voxels), so the page is as sharp as the occlusion PNGs. Open the .html by double-clicking; NiiVue is loaded from the web, the images are inside the page.
+Page: header with the read, the model call (P >= 0.5) and whether they agree; axial / coronal / sagittal / all three
+(all brains together, axial first like the readers); a slice slider with a small template picture showing where the
+slice is (also <- -> buttons, scrolling still works); occlusion map choice (+ / -, class, off); "Whole head" shows the
+image without the brain mask (the readers saw the whole head: off-target signal in meninges / skull / sinuses then
+shows as such); "Go to" buttons jump to the strongest occlusion evidence each way; right-drag pans (NiiVue's default
+right-drag changes the contrast, which would change the colour scales), Reset view undoes zoom / pan. The layout
+follows the window size (three brains side by side, fewer per row in a narrow window). Voxels are drawn as they are
+(nearest neighbour), so the page is as sharp as the occlusion PNGs. NiiVue is loaded from the web, the images are
+inside the page.
 
 MNI model only: the FDA regions are in MNI space, and only MNI-model inputs (91 x 109 x 91, 2 mm) sit on that grid.
 run_vis.py saves the maps without a position (identity affine); the MNI grid is put back here.
@@ -55,11 +59,12 @@ from nilearn import image
 from matplotlib import colors as mcolors
 from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
 
-from make_niivue_viewer import NIIVUE, REGION_COLOURS, REGION_NAMES, region_colormap
+from make_niivue_viewer import NIIVUE, REGION_COLOURS, REGION_NAMES
 
-NOT_SHOWN = (4, 5, 6)  # frontal (counts only together with the others), anterolateral + mesial temporal (do not count)
-READOUT_NOTE = {4: " (counts only together with the others)", 5: " (does not count for the read)",
-                6: " (does not count for the read)"}
+SHOWN_FIRST = (1, 2, 3)  # FDA regions ticked on opening: the ones that make a read positive; the others can be ticked
+REGION_STATUS = {1: "counts towards +", 2: "counts towards +", 3: "counts towards +",
+                 4: "counts only with PLT / occipital / parietal", 5: "does not count", 6: "does not count"}
+REGION_OPACITY = 0.75  # FDA regions over the template: the anatomy still shows through
 
 # MNI model input grid (tau_T1MNI_pts, RAS), the same as voxelwise_visual_read.py
 MNI_2MM_RAS = np.array([[2.0, 0, 0, -90], [0, 2.0, 0, -126], [0, 0, 2.0, -72], [0, 0, 0, 1]])
@@ -267,6 +272,81 @@ def region_zones(path: Path):
     return zones, img.affine
 
 
+def template_on_grid() -> np.ndarray:
+    """nilearn's MNI152 template on the model's 2 mm MNI grid (for the slice locator pictures)."""
+    from nilearn import datasets
+    t = image.resample_to_img(datasets.load_mni152_template(resolution=2),
+                              nib.Nifti1Image(np.zeros(MNI_SHAPE, np.int8), MNI_2MM_RAS),
+                              interpolation="continuous", force_resample=True, copy_header=True)
+    return np.asarray(t.dataobj, dtype=np.float32)
+
+
+def png_b64(a: np.ndarray) -> str:
+    from matplotlib import image as mpimg
+    buf = io.BytesIO()
+    mpimg.imsave(buf, a, cmap="gray", vmin=0, vmax=float(np.percentile(a[a > 0], 99.5)), format="png")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def locator(in_brain: np.ndarray):
+    """Brain extent in mm (slider ranges) and two small template pictures cropped to it: a sagittal one (back on the
+    left, like NiiVue) for the axial / coronal slider and an axial one (front at the top, left on the left) for the
+    sagittal slider."""
+    idx = np.argwhere(in_brain)
+    lo, hi = idx.min(0), idx.max(0)
+    ext = {a: [float(MNI_2MM_RAS[k, 3] + 2 * lo[k]), float(MNI_2MM_RAS[k, 3] + 2 * hi[k])] for k, a in enumerate("xyz")}
+    t = template_on_grid()
+    t = t[lo[0]:hi[0] + 1, lo[1]:hi[1] + 1, lo[2]:hi[2] + 1]
+    sag = t[t.shape[0] // 2].T[::-1]                             # rows top -> bottom, columns back -> front
+    ax = t[:, :, int(round((10 - ext["z"][0]) / 2))].T[::-1]      # z = +10 mm; rows front -> back, columns left -> right
+    return ext, {"sag": png_b64(sag), "ax": png_b64(ax)}
+
+
+def jump_targets(maps: dict, in_brain: np.ndarray) -> list:
+    """'Go to' buttons: the strongest occlusion evidence each way, in MNI mm."""
+    mm = lambda flat: [float(v) for v in nib.affines.apply_affine(MNI_2MM_RAS, np.unravel_index(flat, MNI_SHAPE))]
+    out = []
+    if "pos_vs_neg" in maps:
+        m = np.where(in_brain, maps["pos_vs_neg"], 0)
+        if m.max() > 0:
+            out.append({"label": "Strongest pull to +", "mm": mm(np.argmax(m)), "cls": "pos"})
+        if m.min() < 0:
+            out.append({"label": "Strongest pull to −", "mm": mm(np.argmin(m)), "cls": "neg"})
+    elif "class" in maps:
+        m = np.where(in_brain, maps["class"], 0)
+        if m.max() > 0:
+            out.append({"label": "Strongest evidence", "mm": mm(np.argmax(m)), "cls": "pos"})
+    return out
+
+
+def header_chips(row, set_name: str) -> str:
+    chips = [f"<span class='chip'>{set_name}</span>"] if set_name else []
+    if row is None:
+        return "".join(chips)
+    vr, p = row.get("visual_read", np.nan), row.get("P_positive", np.nan)
+    read = None if pd.isna(vr) else int(vr == 1)
+    model = None if pd.isna(p) else int(p >= 0.5)
+    if read is not None:
+        chips.append(f"<span class='chip'>Visual read {'+' if read else '−'}</span>")
+    if model is not None:
+        chips.append(f"<span class='chip'>Model {'+' if model else '−'} <span class='dim'>P(+) = {p:.2f}</span></span>")
+    if read is not None and model is not None:
+        chips.append("<span class='chip agree'>Model and read agree</span>" if read == model else
+                     f"<span class='chip disagree'>Model {'+' if model else '−'} / Read {'+' if read else '−'}</span>")
+    return "".join(chips)
+
+
+def region_toggles() -> str:
+    groups = [("Count towards a positive read", (1, 2, 3)), ("Count only together with those", (4,)),
+              ("Do not count", (5, 6))]
+    out = ""
+    for title, ks in groups:
+        items = "".join(f"<label><input type='checkbox' data-region='{k}' {'checked' if k in SHOWN_FIRST else ''}>"
+                        f"<i style='background:{REGION_COLOURS[k - 1]}'></i>{REGION_NAMES[k - 1]}</label>" for k in ks)
+        out += f"<div class='rgroup'><div class='rtitle'>{title}</div>{items}</div>"
+    return out
+
+
 def main():
     args = parse_args()
     vis_dir = Path(args.vis_dir)
@@ -277,6 +357,7 @@ def main():
     out_dir = Path(args.out_dir) if args.out_dir else vis_dir / "viewers"
     out_dir.mkdir(parents=True, exist_ok=True)
     logit = "logit" in vis_dir.name
+    set_name = "AVID (external)" if "AVID" in f"{vis_dir.name}/{out_dir.name}" else ""
     summary = pd.read_csv(vis_dir / "summary.csv").set_index("ID") if (vis_dir / "summary.csv").exists() else None
     suvr = suvr_scans(Path(args.pkl_dir), set(ids), Path(args.cbl_mask), args.mask_erode) if args.pkl_dir else {}
     zones_layer = []  # invisible, only for the click readout
@@ -287,27 +368,28 @@ def main():
                                                  nib.Nifti1Image(np.zeros(MNI_SHAPE, np.int8), MNI_2MM_RAS),
                                                  interpolation="nearest", force_resample=True, copy_header=True).dataobj
                            ).astype(np.int8)
-        z_aff = MNI_2MM_RAS
-        zones_layer = [{"b64": nifti_b64(zones, z_aff), "name": "zones.nii.gz", "colormap": "gray",
+        zones_layer = [{"b64": nifti_b64(zones, MNI_2MM_RAS), "name": "zones.nii.gz", "colormap": "gray",
                         "cal_min": 0.0, "cal_max": 6.0, "opacity": 0.0}]
     in_brain = brain_mask(MNI_SHAPE, MNI_2MM_RAS, 2)
-    fda_layers, fda_legend = [], ""
+    ext, thumbs = locator(in_brain)
+    fda_layers = []
     if args.regions:
         from nilearn import datasets
         tpl = datasets.load_mni152_template(resolution=2)  # 2 mm: 8x fewer voxels, fast 3D even in software rendering
         t = np.asarray(tpl.dataobj, dtype=np.float32)
         t8 = np.clip(255 * t / np.percentile(t[t > 0], 99.5), 0, 255).astype(np.uint8)  # uint8: keeps the page small
         reg = nib.load(args.regions)
-        reg = image.resample_to_img(nib.Nifti1Image(np.asarray(reg.dataobj).astype(np.int16), reg.affine), tpl,
-                                    interpolation="nearest", force_resample=True, copy_header=True)
+        reg = np.asarray(image.resample_to_img(nib.Nifti1Image(np.asarray(reg.dataobj).astype(np.int16), reg.affine),
+                                               tpl, interpolation="nearest", force_resample=True,
+                                               copy_header=True).dataobj).astype(np.uint8)
         fda_layers = [{"b64": nifti_b64(t8, tpl.affine), "name": "template.nii.gz", "colormap": "gray",
-                       "cal_min": 0.0, "cal_max": 255.0, "opacity": 1.0},
-                      {"b64": nifti_b64(np.where(np.isin(np.asarray(reg.dataobj).astype(np.uint8), NOT_SHOWN), 0,
-                                                 np.asarray(reg.dataobj).astype(np.uint8)).astype(np.uint8), reg.affine),
-                       "name": "fda.nii.gz",
-                       "colormap": "fda_regions", "cal_min": 0.0, "cal_max": 6.0, "opacity": 1.0}]
-        fda_legend = "".join(f"<span><i style='background:{c}'></i>{n.split(' (')[0]}</span>"  # short names: the pane is narrow
-                             for k, (c, n) in enumerate(zip(REGION_COLOURS, REGION_NAMES), 1) if k not in NOT_SHOWN)
+                       "cal_min": 0.0, "cal_max": 255.0, "opacity": 1.0}]
+        # one layer per region, so each can be switched on and off
+        fda_layers += [{"b64": nifti_b64((reg == k).astype(np.uint8), tpl.affine), "name": f"fda{k}.nii.gz",
+                        "colormap": f"fda{k}", "cal_min": 0.0, "cal_max": 1.0, "opacity": REGION_OPACITY,
+                        "region": k, "start_hidden": k not in SHOWN_FIRST} for k in range(1, 7)]
+    cmaps = {"reader": reader_colormap(),
+             **{f"fda{k}": colormap([(0, c), (255, c)], overlay=True) for k, c in enumerate(REGION_COLOURS, 1)}}
 
     for scan_id in ids:
         x_full = on_mni_grid(vis_dir / f"{scan_id}_input.nii.gz")  # whole scan, for the "whole scan" checkbox
@@ -334,19 +416,20 @@ def main():
                          "cal_min": 0.0, "cal_max": SUVR_TOP, "opacity": 1.0})
             left.append({"b64": nifti_b64(s_full.astype(np.float32), s_aff), "name": "suvr_full.nii.gz", "colormap": "reader",
                          "cal_min": 0.0, "cal_max": SUVR_TOP, "opacity": 1.0, "toggle": "whole", "start_hidden": True})
-            left_title = "What the reader saw: SUVR (÷ whole cerebellum), readers' colour scale"
+            left_title, left_sub = "Reader view", "SUVR (÷ whole cerebellum) in the readers' colour scale"
             ticks = [(0, "0")] + [(round(e * 100, 1), f"{e * SUVR_TOP:.2f}") for e in BAND_EDGES]
             left_bar = ("<div class='vbar'><div class='vgrad' style='background:" + reader_gradient_css() + "'></div>"
                         "<div class='vticks'>" + "".join(f"<span style='bottom:{b}%'>{t}</span>" for b, t in ticks)
-                        + "</div><div class='vlabel'>SUVR (× whole cerebellum)</div></div>")
-            left_note = ("<div class='note'>Black→grey = below 1.65 × cerebellum (the readers' transition; their display "
-                         f"showed this part inverted, white = low) · colour bands above · top {SUVR_TOP:.2f}</div>")
+                        + "</div><div class='vlabel'>SUVR</div></div>")
+            left_note = ("Grey = below 1.65 × cerebellum, the readers' threshold for raised uptake. "
+                         "Colours = above it, rising from purple to red.")
         else:
             left.append({"b64": nifti_b64(x, MNI_2MM_RAS), "name": "input_heat.nii.gz", "colormap": "inferno",
                          "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0})
             left.append({"b64": nifti_b64(x_full, MNI_2MM_RAS), "name": "input_heat_full.nii.gz", "colormap": "inferno",
                          "cal_min": 0.0, "cal_max": grey_top / PET_DIM, "opacity": 1.0, "toggle": "whole", "start_hidden": True})
-            left_title = "Tau (model input, 0–1 per scan; not SUVR — no reader scale without --pkl_dir)"
+            left_title, left_sub = "Tau", "Model input (scaled 0–1 per scan, not SUVR)"
+            left_note = "No readers' colour scale: run with --pkl_dir and --cbl_mask for the SUVR view."
         left += zones_layer
 
         # right brain
@@ -364,189 +447,306 @@ def main():
             values = {"b64": nifti_b64(m, MNI_2MM_RAS), "name": f"{vt}.nii.gz", "colormap": "gray",  # never shown,
                       "cal_min": 0.0, "cal_max": 1.0, "opacity": 0.0}                              # click readout only
             if signed:
-                what = ("drop in log-odds of positive when hidden" if logit
-                        else "drop in P(positive) minus drop in P(negative)")
+                unit = "log-odds" if logit else "probability"
                 bars += vbar(faded_css(NEG, 50, 0) + faded_css(POS, 50, 100),
-                             [(100, f"+{top:.3g}"), (50, "0"), (0, f"−{top:.3g}")], what, vt)
-                legend_right += (f"<div class='note occ' data-for='{vt}'>pos vs neg: {what} · above 0 (red→yellow) "
-                                 "supports positive · below 0 (blue→light cyan) supports negative · fainter = weaker</div>")
+                             [(100, f"+{top:.3g}"), (50, "0"), (0, f"−{top:.3g}")], f"pull to + / − ({unit})", vt)
+                legend_right += (f"<div class='occ' data-for='{vt}'>Occlusion: hide a small block, see how the model "
+                                 "changes. <b class='pos'>Red→yellow</b>: this area pushes it towards positive. "
+                                 "<b class='neg'>Blue→cyan</b>: towards negative. Fainter = weaker.</div>")
             else:
-                what = "drop in log-odds of the predicted class" if logit else "drop in P(predicted class)"
-                bars += vbar(faded_css(WARM, 0, 100), [(100, f"{top:.3g}"), (0, "0")], what + " when hidden", vt)
-                legend_right += f"<div class='note occ' data-for='{vt}'>class: {what} when hidden · fainter = weaker</div>"
+                unit = "log-odds" if logit else "probability"
+                bars += vbar(faded_css(WARM, 0, 100), [(100, f"{top:.3g}"), (0, "0")],
+                             f"support for its call ({unit})", vt)
+                legend_right += (f"<div class='occ' data-for='{vt}'>Class map: <b class='pos'>red→yellow</b> = this "
+                                 "area supports the model's own call (+ or −). Fainter = weaker.</div>")
             right += [lay, values]
 
-        title = f"Scan {scan_id}"
-        if summary is not None and scan_id in summary.index:
-            row = summary.loc[scan_id]
-            vr = row.get("visual_read", np.nan)
-            title += f" · visual read: {'n/a' if pd.isna(vr) else ('positive' if vr == 1 else 'negative')}"
-            if "P_positive" in row and not pd.isna(row["P_positive"]):
-                title += f" · model P(positive) = {row['P_positive']:.2f}"
-        toggles = "".join(
-            f"<label><input type='checkbox' data-toggle='{vt}' {'' if (vt == 'class' and 'pos_vs_neg' in maps) else 'checked'}>"
-            f" Occlusion: {'pos vs neg' if vt == 'pos_vs_neg' else 'class'}</label>" for vt in maps) + \
-            "<label><input type='checkbox' data-toggle='whole'> Whole scan (no brain mask)</label>"
-
-        page = (TEMPLATE.replace("__NIIVUE__", NIIVUE).replace("__TITLE__", title)
-                .replace("__LEFT_TITLE__", left_title).replace("__LEFT_LEGEND__", left_note)
-                .replace("__RIGHT_LEGEND__", legend_right).replace("__TOGGLES__", toggles)
-                .replace("__REGION_NAMES__", json.dumps([n + READOUT_NOTE.get(k, "") for k, n in enumerate(REGION_NAMES, 1)])).replace("__LEFT__", json.dumps(left)).replace("__RIGHT__", json.dumps(right))
-                .replace("__FDA__", json.dumps(fda_layers)).replace("__FDA_LEGEND__", fda_legend)
-                .replace("__FDA_DISPLAY__", "flex" if fda_layers else "none")
-                .replace("__WRAP_W__", "1364" if fda_layers else "1004")
-                .replace("__CMAPS__", json.dumps({
-                    "reader": reader_colormap(), "fda_regions": region_colormap()}))
-                .replace("__RIGHT_BARS__", bars).replace("__LEFT_BARS__", left_bar))
+        row = summary.loc[scan_id] if summary is not None and scan_id in summary.index else None
+        first = "pos_vs_neg" if "pos_vs_neg" in maps else "class"
+        toggles = ("<div class='group'><span class='glabel'>Occlusion</span><span class='seg' id='maps'>"
+                   + "".join(f"<button data-map='{vt}' class='{'on' if vt == first else ''}'>"
+                             f"{'+ / −' if vt == 'pos_vs_neg' else 'Class map'}</button>" for vt in maps)
+                   + "<button data-map='off'>Off</button></span></div>") if maps else ""
+        toggles += ("<div class='group'><label title='The readers saw the whole head, so off-target signal outside the "
+                    "brain shows as such'><input type='checkbox' data-toggle='whole'> Whole head</label></div>")
+        data = {"cmaps": cmaps, "L": left, "R": right, "F": fda_layers, "ext": ext, "thumbs": thumbs,
+                "jumps": jump_targets(maps, in_brain),
+                "regionNames": REGION_NAMES, "regionStatus": REGION_STATUS}
+        page = TEMPLATE
+        for k, v in {"__TITLE__": f"Scan {scan_id}", "__CHIPS__": header_chips(row, set_name),
+                     "__TOGGLES__": toggles, "__LEFT_TITLE__": left_title, "__LEFT_SUB__": left_sub,
+                     "__LEFT_BARS__": left_bar, "__LEFT_LEGEND__": left_note, "__RIGHT_BARS__": bars,
+                     "__RIGHT_LEGEND__": legend_right or "No occlusion map for this scan.",
+                     "__FDA_DISPLAY__": "" if fda_layers else "hidden", "__REGION_TOGGLES__": region_toggles(),
+                     "__NIIVUE__": NIIVUE, "__DATA__": json.dumps(data)}.items():
+            page = page.replace(k, v)
         out = out_dir / f"{scan_id}_viewer.html"
         out.write_text(page, encoding="utf-8")
         print(f"[save] {out} ({out.stat().st_size / 1e6:.1f} MB)")
 
 
-TEMPLATE = """<!doctype html>
+TEMPLATE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__</title>
+<title>__TITLE__ · case viewer</title>
 <style>
-  html, body { margin: 0; background: #000; color: #ddd; font: 14px system-ui, sans-serif; }
-  /* Fixed sizes everywhere: both brains are exactly the same size and stay put when a map is switched off
-     (its colour bar is hidden, the column keeps its width) or a legend has more text. */
-  #wrap { display: flex; flex-direction: column; width: __WRAP_W__px; }
-  #bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; background: #111; }
-  #bar label { white-space: nowrap; }
-  #panes { display: flex; gap: 4px; }
-  .pane { width: 500px; flex: none; display: flex; flex-direction: column; background: #000; }
-  .head { padding: 5px 10px; background: #181818; font-weight: 600; height: 38px; box-sizing: border-box;
-          overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .box { display: flex; height: 440px; }
-  canvas { width: 350px !important; height: 440px !important; flex: none; display: block; outline: none; }
-  .side { width: 150px; flex: none; display: flex; justify-content: flex-start; }
-  .vbar { position: relative; width: 80px; flex: none; margin: 30px 0 30px 10px; }
-  .vgrad { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; }
-  .vticks span { position: absolute; left: 18px; transform: translateY(50%); font-size: 11px; color: #bbb; }
-  .vlabel { position: absolute; left: 58px; top: 50%; transform: translate(-50%, -50%) rotate(-90deg); white-space: nowrap;
-            font-size: 11px; color: #999; }
-  .legend { padding: 6px 12px 10px; background: #111; height: 64px; box-sizing: border-box; overflow-y: auto; }
-  .note { color: #999; font-size: 12px; }
-  #status { color: #999; }
-  .views button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 9px; cursor: pointer; font: inherit; }
-  .views button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
-  #fdapane { width: 352px; }
-  #fdapane .head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-  #fdapane .head button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 1px 7px;
-                          cursor: pointer; font: 12px system-ui, sans-serif; }
-  #fdapane .head button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
-  #fdapane .legend { padding: 4px 8px; overflow: hidden; line-height: 17px; display: grid; grid-template-columns: 1fr;
-                     column-gap: 6px; align-content: start; }
-  .regions span { white-space: nowrap; font-size: 11px; color: #bbb; overflow: hidden; text-overflow: ellipsis; }
-  .regions i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; }
-  #here { padding: 4px 12px; background: #0b0b0b; color: #ccc; font-size: 13px; min-height: 18px; }
+  :root { --bg: #0d1117; --panel: #161b22; --raised: #1f2631; --line: #2d3644; --text: #e6edf3; --muted: #9aa5b1;
+          --accent: #4c8dff; --cross: #46e05a;
+          /* brains: as tall as 1.2 x their width, but the page should fit the window (never below 260 px) */
+          --brain-max: max(260px, calc(100vh - 390px)); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+               font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { padding: 12px 16px 20px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 10px; }
+  h1 { font-size: 19px; font-weight: 650; margin: 0 6px 0 0; }
+  .chip { padding: 2px 10px; border-radius: 999px; font-size: 13px; background: var(--raised);
+          border: 1px solid var(--line); white-space: nowrap; }
+  .chip .dim { color: var(--muted); margin-left: 4px; }
+  .chip.agree { border-color: #2c6e3d; color: #86e3a4; }
+  .chip.disagree { border-color: #8a5a12; color: #ffc56e; }
+  #status { color: var(--muted); font-size: 13px; margin-left: auto; }
+  #status.err { color: #ff8a80; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  #toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; padding: 8px 12px; }
+  .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .glabel { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--text); border: 0; border-right: 1px solid var(--line);
+                padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { background: var(--raised); }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .btn { background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+         padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: #46546a; }
+  .btn.pos { border-color: #7a2b18; } .btn.neg { border-color: #1d3f7a; }
+  label { cursor: pointer; white-space: nowrap; font-size: 13px; }
+  input[type=checkbox] { accent-color: var(--accent); vertical-align: -2px; }
+  #slicegroup { flex: 1 1 380px; flex-wrap: nowrap; }
+  #slicegroup .end { color: var(--muted); font-size: 12px; width: 38px; text-align: center; flex: none; }
+  input[type=range] { flex: 1; min-width: 90px; accent-color: var(--accent); }
+  #slicetext { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 86px; flex: none; }
+  #locator { position: relative; height: 54px; flex: none; }
+  #locator img { height: 54px; display: block; border-radius: 3px; image-rendering: auto; }
+  #locator .line { position: absolute; background: var(--cross); box-shadow: 0 0 2px #000; }
+  #readout { display: flex; flex-wrap: wrap; gap: 4px 26px; padding: 7px 12px; margin: 8px 0; min-height: 36px;
+             font-size: 13px; font-variant-numeric: tabular-nums; }
+  #readout .k { color: var(--muted); margin-right: 6px; }
+  #readout .hint { color: var(--muted); }
+  #panes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 10px;
+           align-items: start; }
+  .pane { overflow: hidden; display: flex; flex-direction: column; }
+  .pane[hidden] { display: none; }
+  .phead { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 8px 12px;
+           border-bottom: 1px solid var(--line); min-height: 58px; }
+  .phead h2 { font-size: 14.5px; font-weight: 600; margin: 0; }
+  .phead .sub { color: var(--muted); font-size: 12.5px; }
+  .body { display: flex; aspect-ratio: 5 / 6; max-height: var(--brain-max); min-height: 260px; background: #000; }
+  .cv { flex: 1; min-width: 0; position: relative; }
+  .cv canvas { display: block; outline: none; }
+  .side { width: 86px; flex: none; position: relative; }
+  .vbar { position: absolute; top: 26px; bottom: 26px; left: 8px; right: 0; }
+  .vgrad { position: absolute; left: 0; top: 0; bottom: 0; width: 13px; border-radius: 2px; }
+  .vticks span { position: absolute; left: 18px; transform: translateY(50%); font-size: 11px; color: #c3cad3;
+                 font-variant-numeric: tabular-nums; }
+  .vlabel { position: absolute; left: 62px; top: 50%; transform: translate(-50%, -50%) rotate(-90deg);
+            white-space: nowrap; font-size: 11px; color: var(--muted); }
+  .legend { padding: 8px 12px 10px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+  .legend b.pos { color: #ffb347; font-weight: 600; } .legend b.neg { color: #6fb6ff; font-weight: 600; }
+  .regions { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 6px 14px; }
+  .rtitle { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+  .regions label { display: block; color: var(--text); white-space: normal; padding: 1px 0; }
+  .regions i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin: 0 6px 0 4px;
+               vertical-align: -1px; }
+  details { margin-top: 10px; padding: 8px 12px; font-size: 13px; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--text); font-weight: 600; }
+  details ul { margin: 6px 0 2px; padding-left: 18px; } details li { margin: 3px 0; }
+  details + details { margin-top: 6px; }
 </style></head>
-<body><div id="wrap">
-  <div id="bar">
-    <b>__TITLE__</b>
+<body><div id="app">
+  <header><h1>__TITLE__</h1>__CHIPS__<span id="status">Loading…</span></header>
+
+  <div id="toolbar" class="card">
+    <div class="group"><span class="glabel">Plane</span>
+      <span class="seg" id="views"><button data-view="0" class="on">Axial</button><button data-view="1">Coronal</button><button data-view="2">Sagittal</button><button data-view="3">All three</button></span></div>
+    <div class="group" id="slicegroup"><span class="glabel">Slice</span>
+      <div id="locator" title="Where the slice is"><img alt=""><div class="line"></div></div>
+      <button class="btn" id="prev" title="One slice back (2 mm)">‹</button>
+      <span class="end" id="end0"></span><input type="range" id="slider" step="2" aria-label="Slice position"><span class="end" id="end1"></span>
+      <button class="btn" id="next" title="One slice on (2 mm)">›</button>
+      <span id="slicetext"></span></div>
     __TOGGLES__
-    <span class="views">View: <button data-view="0" class="on">Axial</button> <button data-view="1">Coronal</button>
-      <button data-view="2">Sagittal</button> <button data-view="3">All three</button></span>
-    <span id="status">loading…</span>
+    <div class="group" id="jumps"><span class="glabel">Go to</span></div>
+    <div class="group"><button class="btn" id="reset" title="Undo zoom and panning">Reset view</button></div>
   </div>
-  <div id="here">click a spot to see its values</div>
+
+  <div id="readout" class="card"><span class="hint">Click a spot on any brain to see its values here.</span></div>
+
   <div id="panes">
-    <div class="pane"><div class="head">__LEFT_TITLE__</div><div class="box"><canvas id="glL" tabindex="0" width="350" height="440"></canvas><div class="side">__LEFT_BARS__</div></div>
-      <div class="legend">__LEFT_LEGEND__</div></div>
-    <div class="pane"><div class="head">What the model saw + occlusion map</div>
-      <div class="box"><canvas id="glR" tabindex="0" width="350" height="440"></canvas><div class="side">__RIGHT_BARS__</div></div><div class="legend">__RIGHT_LEGEND__</div></div>
-    <div class="pane" id="fdapane" style="display:__FDA_DISPLAY__"><div class="head"><span>FDA regions that count</span>
-      <span><button data-fda="4" class="on">3D</button> <button data-fda="slices">Slices</button></span></div>
-      <div class="box"><canvas id="glF" tabindex="0" width="350" height="440"></canvas></div>
-      <div class="legend regions">__FDA_LEGEND__</div></div>
+    <section class="pane card"><div class="phead"><div><h2>__LEFT_TITLE__</h2><div class="sub">__LEFT_SUB__</div></div></div>
+      <div class="body"><div class="cv"><canvas id="glL" tabindex="0"></canvas></div><div class="side">__LEFT_BARS__</div></div>
+      <div class="legend">__LEFT_LEGEND__</div></section>
+    <section class="pane card"><div class="phead"><div><h2>Model view</h2><div class="sub">Model input with its occlusion map</div></div></div>
+      <div class="body"><div class="cv"><canvas id="glR" tabindex="0"></canvas></div><div class="side">__RIGHT_BARS__</div></div>
+      <div class="legend">__RIGHT_LEGEND__</div></section>
+    <section class="pane card" id="fdapane" __FDA_DISPLAY__><div class="phead"><div><h2>FDA read regions</h2><div class="sub">On the MNI template · tick to show</div></div>
+      <span class="seg" id="fdamode"><button data-fda="slices" class="on">Slices</button><button data-fda="3d">3D</button></span></div>
+      <div class="body"><div class="cv"><canvas id="glF" tabindex="0"></canvas></div><div class="side"></div></div>
+      <div class="legend regions">__REGION_TOGGLES__</div></section>
   </div>
-  <div class="note" style="padding:4px 12px;background:#111">View buttons = axial / coronal / sagittal / all three · scroll = move through slices · click = see the values there · the brains move together · FDA brain: drag to turn, the green cross = the spot you clicked</div>
+
+  <details class="card"><summary>How to use</summary><ul>
+    <li><b>Move through the brain</b> with the slider, the ‹ › buttons, or by scrolling on a brain. The little picture next to the slider shows where the slice is.</li>
+    <li><b>Click</b> a spot to see its values above the brains. All brains follow the same spot (green cross).</li>
+    <li><b>Zoom</b> with ctrl + scroll (pinch on a trackpad), <b>pan</b> by right-dragging; <i>Reset view</i> undoes both.</li>
+    <li><b>Go to</b> jumps to the spot where hiding the scan changed the model's output most.</li>
+    <li>In the <b>3D</b> FDA view, drag to turn the brain.</li></ul></details>
+  <details class="card"><summary>About these views</summary><ul>
+    <li><b>Reader view</b> imitates the readers' display: SUVR divided by the scan's whole-cerebellum mean, grey below 1.65 × cerebellum and coloured bands above, scale top 5.89. The readers used a hand-traced cerebellum on their own reoriented images (and white for low values); here it is the Centiloid cerebellum mask in MNI space, so it is close to what they saw, not identical.</li>
+    <li><b>Occlusion</b>: each small block of the scan is hidden in turn and the change in the model's output is recorded there. Colours are scaled to this scan's 99th percentile.</li>
+    <li><b>FDA read regions</b>: an atlas version (Desikan-Killiany, temporal lobe split with the label's crosshairs) of the regions named in the TAUVID label. The label itself gives no exact borders. A read is positive with raised uptake in posterolateral temporal, occipital or parietal / precuneus cortex. Frontal counts only with one of those; mesial and anterolateral temporal do not count.</li>
+    <li>Only uptake in the cortex counts for the read, not white matter or signal outside the brain.</li></ul></details>
 </div>
 <script type="module">
-import { Niivue } from "__NIIVUE__";
-const cmaps = __CMAPS__;
-const sides = { L: __LEFT__, R: __RIGHT__ };
+const D = __DATA__;
+const statusEl = document.getElementById("status");
+let Niivue;
+try { ({ Niivue } = await import("__NIIVUE__")); }
+catch (e) { statusEl.textContent = "Could not load the viewer library (this page needs internet once)."; statusEl.className = "err"; throw e; }
+
 const toUrl = (b64) => URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))]));
-const nvs = {};
-for (const [k, layers] of Object.entries(sides)) {
-  // isNearestInterpolation: each 2 mm voxel drawn as one flat block, like the PNGs (NiiVue's default blends
-  // neighbouring voxels, which looks blurry when a 91 x 109 slice is blown up)
-  const nv = new Niivue({ backColor: [0, 0, 0, 1], isColorbar: false, isOrientCube: false,
-                          crosshairColor: [0.2, 0.9, 0.2, 1], dragAndDropEnabled: false, isNearestInterpolation: true });
-  await nv.attachTo("gl" + k);
-  for (const [name, cm] of Object.entries(cmaps)) nv.addColormap(name, cm);
+const makeViewer = async (id, layers, opts) => {
+  // isNearestInterpolation: each 2 mm voxel one flat block, like the occlusion PNGs (no blur between voxels)
+  const nv = new Niivue({ backColor: [0, 0, 0, 1], isColorbar: false, isOrientCube: false, crosshairColor: [0.27, 0.88, 0.35, 1],
+                          dragAndDropEnabled: false, isNearestInterpolation: true, multiplanarShowRender: 0, ...opts });
+  await nv.attachTo(id);
+  nv.opts.dragMode = nv.dragModes.pan;  // right-drag pans (NiiVue's default changes the contrast = the colour scale)
+  for (const [name, cm] of Object.entries(D.cmaps)) nv.addColormap(name, cm);
   await nv.loadVolumes(layers.map(l => {
     const v = { url: toUrl(l.b64), name: l.name, opacity: l.start_hidden ? 0 : l.opacity };
     if (l.colormap) v.colormap = l.colormap;  // colour volumes (occlusion) bring their own colours
-    if (l.colormapNegative) v.colormapNegative = l.colormapNegative;
     return v;
   }));
-  layers.forEach((l, i) => {  // keep the colour ranges exactly as given
-    if (l.cal_min === undefined) return;
-    nv.volumes[i].cal_min = l.cal_min; nv.volumes[i].cal_max = l.cal_max;
-    if (l.cal_minNeg !== undefined) { nv.volumes[i].cal_minNeg = l.cal_minNeg; nv.volumes[i].cal_maxNeg = l.cal_maxNeg; }
-  });
+  layers.forEach((l, i) => { if (l.cal_min !== undefined) { nv.volumes[i].cal_min = l.cal_min; nv.volumes[i].cal_max = l.cal_max; } });
   nv.updateGLVolume();
   nv.setSliceType(0);  // axial, like the readers
-  nvs[k] = nv;
-}
-nvs.L.syncWith(nvs.R, { "2d": true }); nvs.R.syncWith(nvs.L, { "2d": true });
-document.getElementById("status").textContent = "";
-const both = (fn) => { fn(nvs.L); fn(nvs.R); };
-document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {  // same plane in both brains
-  view = +b.dataset.view; both(nv => nv.setSliceType(view));
-  if (nvF && fdaMode !== "4") nvF.setSliceType(view);
-  document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("on", x === b));
-});
-const regionNames = __REGION_NAMES__;
-const fmt = (v) => (Math.abs(v) >= 0.1 ? v.toFixed(2) : v.toPrecision(2));
-const readout = () => {  // values at the crosshair, from both brains
-  const parts = [];
-  const val = (nv, name) => { const i = nv.volumes.findIndex(v => v.name === name); if (i < 0) return null;
-    const v = nv.volumes[i], vox = v.mm2vox(nv.frac2mm(nv.scene.crosshairPos)); return v.getValue(...vox, v.frame4D); };
-  const s = val(nvs.L, "suvr_full.nii.gz") ?? val(nvs.L, "suvr.nii.gz"); if (s !== null) parts.push(`SUVR ${s.toFixed(2)} × cerebellum`);
-  const pn = val(nvs.R, "pos_vs_neg.nii.gz"); if (pn !== null) parts.push(`occlusion pos vs neg ${fmt(pn)}`);
-  const c = val(nvs.R, "class.nii.gz"); if (c !== null) parts.push(`occlusion class ${fmt(c)}`);
-  const z = val(nvs.L, "zones.nii.gz");
-  if (z !== null) parts.push(z > 0.5 ? `FDA region: ${regionNames[Math.round(z) - 1]}` : "outside the FDA regions");
-  document.getElementById("here").textContent = parts.join("  ·  ");
+  return nv;
 };
-// third brain: FDA regions on the template (own 1 mm grid, so the crosshair is passed on in mm, not synced directly)
-const fdaLayers = __FDA__;
-let nvF = null, fdaMode = "4", view = 0, pushing = false;
-const moveTo = (src, dst) => { const mm = src.frac2mm(src.scene.crosshairPos);
-  dst.scene.crosshairPos = dst.mm2frac(mm); dst.drawScene(); };
-if (fdaLayers.length) {
-  nvF = new Niivue({ backColor: [0, 0, 0, 1], isColorbar: false, isOrientCube: true, show3Dcrosshair: true,
-                     crosshairColor: [0.2, 0.9, 0.2, 1], dragAndDropEnabled: false });
-  await nvF.attachTo("glF");
-  nvF.addColormap("fda_regions", cmaps.fda_regions);
-  await nvF.loadVolumes(fdaLayers.map(l => ({ url: toUrl(l.b64), name: l.name, colormap: l.colormap, opacity: l.opacity })));
-  fdaLayers.forEach((l, i) => { nvF.volumes[i].cal_min = l.cal_min; nvF.volumes[i].cal_max = l.cal_max; });
-  nvF.updateGLVolume();
-  nvF.setSliceType(4); nvF.setRenderAzimuthElevation(120, 15);
-  moveTo(nvs.L, nvF);
-  nvF.onLocationChange = () => { if (pushing) return; pushing = true; moveTo(nvF, nvs.L); moveTo(nvF, nvs.R); readout(); pushing = false; };
-  document.querySelectorAll("[data-fda]").forEach(b => b.onclick = () => {
-    fdaMode = b.dataset.fda; nvF.setSliceType(fdaMode === "4" ? 4 : view);
-    document.querySelectorAll("[data-fda]").forEach(x => x.classList.toggle("on", x === b));
-  });
-}
-const onMove = (src) => () => { readout(); if (nvF && !pushing) { pushing = true; moveTo(src, nvF); pushing = false; } };
-nvs.L.onLocationChange = onMove(nvs.L); nvs.R.onLocationChange = onMove(nvs.R);
+const L = await makeViewer("glL", D.L), R = await makeViewer("glR", D.R);
+L.syncWith(R, { "2d": true }); R.syncWith(L, { "2d": true });  // zoom and pan together
+const F = D.F.length ? await makeViewer("glF", D.F, { isNearestInterpolation: false, multiplanarShowRender: 2, show3Dcrosshair: true }) : null;
+const all = [L, R, F].filter(Boolean);
+statusEl.textContent = "";
 
-const checked = (t) => { const c = document.querySelector(`[data-toggle="${t}"]`); return !c || c.checked; };
-const applyLayers = () => {  // a layer shows if its checkbox is ticked
-  for (const k of ["L", "R"]) sides[k].forEach((l, i) => { if (l.toggle) nvs[k].setOpacity(i, checked(l.toggle) ? l.opacity : 0); });
-  document.querySelectorAll(".occ").forEach(d => d.style.display = checked(d.dataset.for) ? "" : "none");
+// ---- position: one spot (in MNI mm) shared by all brains ----
+let view = 0, fdaMode = "slices", busy = false;
+const mmOf = (nv) => Array.from(nv.frac2mm(nv.scene.crosshairPos)).slice(0, 3);
+const goTo = (mm, from = null) => {
+  if (busy) return; busy = true;
+  for (const nv of all) if (nv !== from) { nv.scene.crosshairPos = nv.mm2frac(mm); nv.drawScene(); }
+  busy = false; update();
+};
+for (const nv of all) nv.onLocationChange = () => { if (!busy) goTo(mmOf(nv), nv); };
+
+// ---- slice slider ----
+const AX = { 0: 2, 1: 1, 2: 0, 3: 2 };  // view -> axis it moves through (All three: the axial slider)
+const AXINFO = [{ name: "x", ends: ["Left", "Right"], thumb: "ax" }, { name: "y", ends: ["Back", "Front"], thumb: "sag" },
+                { name: "z", ends: ["Bottom", "Top"], thumb: "sag" }];
+const slider = document.getElementById("slider"), line = document.querySelector("#locator .line"),
+      thumb = document.querySelector("#locator img");
+const sgn = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(0);
+const setupSlider = () => {
+  const a = AX[view], info = AXINFO[a], [lo, hi] = D.ext[info.name];
+  slider.min = lo; slider.max = hi;
+  document.getElementById("end0").textContent = info.ends[0];
+  document.getElementById("end1").textContent = info.ends[1];
+  thumb.src = "data:image/png;base64," + D.thumbs[info.thumb];
+  update();
+};
+const placeLine = (a, v) => {
+  const [lo, hi] = D.ext[AXINFO[a].name], f = Math.min(Math.max((v - lo) / (hi - lo), 0), 1) * 100;
+  // sagittal picture: back on the left, top at the top (like NiiVue); axial picture: left on the left
+  const s = line.style;
+  if (a === 2) Object.assign(s, { top: `calc(${100 - f}% - 1px)`, left: 0, width: "100%", height: "2px" });
+  else Object.assign(s, { left: `calc(${f}% - 1px)`, top: 0, width: "2px", height: "100%" });
+};
+slider.oninput = () => { const mm = mmOf(L); mm[AX[view]] = +slider.value; goTo(mm); };
+const step = (d) => { slider.value = +slider.value + 2 * d; slider.oninput(); };
+document.getElementById("prev").onclick = () => step(-1);
+document.getElementById("next").onclick = () => step(1);
+
+// ---- values at the cursor ----
+const fmt = (v) => (Math.abs(v) >= 0.1 ? v.toFixed(2) : v.toPrecision(2));
+const val = (nv, name) => { const v = nv.volumes.find(v => v.name === name); if (!v) return null;
+  return v.getValue(...v.mm2vox(mmOf(nv)), v.frame4D); };
+const item = (k, v) => `<span><span class="k">${k}</span>${v}</span>`;
+let clicked = false;
+for (const id of ["glL", "glR", "glF"]) document.getElementById(id).addEventListener("pointerdown", () => { clicked = true; });
+const update = () => {
+  const mm = mmOf(L), a = AX[view];
+  slider.value = mm[a]; placeLine(a, mm[a]);
+  document.getElementById("slicetext").textContent = `${AXINFO[a].name} = ${sgn(mm[a])} mm`;
+  if (!clicked) return;
+  const side = mm[0] < -1 ? "left" : mm[0] > 1 ? "right" : "midline";
+  const parts = [item("Position", `${side} · x ${sgn(mm[0])}, y ${sgn(mm[1])}, z ${sgn(mm[2])} mm`)];
+  const s = val(L, "suvr_full.nii.gz");
+  if (s !== null) parts.push(item("SUVR", `${s.toFixed(2)} × cerebellum` + (s >= 1.65 ? " (above 1.65)" : "")));
+  const pn = val(R, "pos_vs_neg.nii.gz");
+  if (pn !== null) parts.push(item("Occlusion", `${pn > 0 ? "+" : ""}${fmt(pn)}` + (pn > 0 ? " → towards +" : pn < 0 ? " → towards −" : "")));
+  const c = val(R, "class.nii.gz"); if (c !== null) parts.push(item("Class map", fmt(c)));
+  const z = val(L, "zones.nii.gz");
+  if (z !== null) { const k = Math.round(z);
+    parts.push(item("FDA region", k > 0 ? `${D.regionNames[k - 1]} <span class="k">(${D.regionStatus[k]})</span>` : "none here")); }
+  document.getElementById("readout").innerHTML = parts.join("");
+};
+
+// ---- buttons ----
+const views = document.querySelectorAll("[data-view]");
+views.forEach(b => b.onclick = () => {
+  view = +b.dataset.view; L.setSliceType(view); R.setSliceType(view);
+  if (F && fdaMode === "slices") F.setSliceType(view);
+  views.forEach(x => x.classList.toggle("on", x === b)); setupSlider();
+});
+const fdaButtons = document.querySelectorAll("[data-fda]");
+fdaButtons.forEach(b => b.onclick = () => {
+  fdaMode = b.dataset.fda;
+  if (fdaMode === "3d") { F.setSliceType(4); F.setRenderAzimuthElevation(120, 15); } else F.setSliceType(view);
+  fdaButtons.forEach(x => x.classList.toggle("on", x === b));
+});
+document.querySelectorAll("[data-region]").forEach(c => c.onchange = () => {
+  const i = D.F.findIndex(l => l.region === +c.dataset.region);
+  F.setOpacity(i, c.checked ? D.F[i].opacity : 0);
+});
+document.getElementById("reset").onclick = () => { for (const nv of all) nv.setPan2Dxyzmm([0, 0, 0, 1]); };
+const jumps = document.getElementById("jumps");
+if (!D.jumps.length) jumps.remove();
+for (const j of D.jumps) { const b = document.createElement("button"); b.className = `btn ${j.cls}`; b.textContent = j.label;
+  b.onclick = () => { clicked = true; goTo(j.mm); }; jumps.appendChild(b); }
+
+let mapOn = document.querySelector("#maps .on")?.dataset.map ?? "off";
+const shown = (t) => { if (t !== "whole") return t === mapOn;
+  const c = document.querySelector(`[data-toggle="${t}"]`); return !c || c.checked; };
+const mapButtons = document.querySelectorAll("[data-map]");
+mapButtons.forEach(b => b.onclick = () => { mapOn = b.dataset.map;
+  mapButtons.forEach(x => x.classList.toggle("on", x === b)); applyLayers(); });
+const applyLayers = () => {  // a layer shows if its checkbox is ticked; a hidden map's colour bar is hidden too
+  for (const [nv, layers] of [[L, D.L], [R, D.R]])
+    layers.forEach((l, i) => { if (l.toggle) nv.setOpacity(i, shown(l.toggle) ? l.opacity : 0); });
+  document.querySelectorAll(".occ").forEach(d => d.style.visibility = shown(d.dataset.for) ? "" : "hidden");
+  document.querySelectorAll(".legend .occ").forEach(d => d.style.display = shown(d.dataset.for) ? "" : "none");
 };
 document.querySelectorAll("[data-toggle]").forEach(c => c.onchange = applyLayers);
 applyLayers();
-// open at a given slice from the address (for testing), e.g. viewer.html#z10
-const z = location.hash.match(/z(-?\\d+)/);
-if (z) { both(nv => { nv.scene.crosshairPos = nv.mm2frac([-50, -55, +z[1]]); nv.drawScene(); }); readout(); if (nvF) moveTo(nvs.L, nvF); }
-if (location.hash.includes("fdaslices")) document.querySelector('[data-fda="slices"]').click();
+goTo(mmOf(L));
+setupSlider();
+
+// for testing: open at a given spot / view from the address, e.g. viewer.html#z10, #coronal, #fda3d
+const zh = location.hash.match(/z(-?\d+)/);
+if (zh) { clicked = true; goTo([-50, -55, +zh[1]]); }
 if (location.hash.includes("coronal")) document.querySelector('[data-view="1"]').click();
+if (location.hash.includes("sagittal")) document.querySelector('[data-view="2"]').click();
+if (location.hash.includes("all3")) document.querySelector('[data-view="3"]').click();
+if (location.hash.includes("fda3d") && F) document.querySelector('[data-fda="3d"]').click();
 </script></body></html>
 """
 
