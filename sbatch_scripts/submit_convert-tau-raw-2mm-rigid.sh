@@ -52,11 +52,11 @@
 #
 # Template: rigid / scale use the 11 Nov 2026 template (all 2,497 MNI scans, AVID and test included).
 # template / pilot use tau_pet_template_mni2mm_train = training scans only (no AVID, no held-out test),
-# built on the first run from TRAIN_CSV = any seed-42 80/20 run's splits/train_subjects.csv (the split is
-# the same for every input). Its <name>_ids.txt lists the scans averaged.
+# built on the first run from TRAIN_CSV = a seed-42 80/20 run's splits/train_subjects.csv (default: the
+# frozen MNI attention run, FROZEN_RUN below; the split is the same for every input). Its <name>_ids.txt lists the scans averaged.
 #
 # Usage:
-#   TRAIN_CSV=<run>/splits/train_subjects.csv sbatch submit_convert-tau-raw-2mm-rigid.sh pilot      # try the template version on ~55 scans first
+#   sbatch submit_convert-tau-raw-2mm-rigid.sh pilot      # (TRAIN_CSV defaults to the frozen MNI attention run's)      # try the template version on ~55 scans first
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh            # rigid
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh scale      # rigid + size (whole head; failed, kept for the record)
 #   sbatch submit_convert-tau-raw-2mm-rigid.sh template   # rigid + size on the brain, MNI-like grid
@@ -88,6 +88,10 @@ DATA=/proj/berzelius-2024-156/users/x_nadpi/data
 MNI_PKL_DIR=/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI
 TEMPLATE=$DATA/templates/tau_pet_template_mni2mm
 TEMPLATE_ARGS_MAKE=()
+# training scans for the training-only template: the frozen MNI attention model's 80% pool (seed 42; the
+# split is the same for every input). Override with TRAIN_CSV=... if needed.
+FROZEN_RUN=/proj/berzelius-2024-156/users/x_nadpi/results/tau_T1MNI_pts_Gothenburg_CNN3D_visual_read_2split80-20_stratify-site,visual_read_visual-read-final-17-attention_20261104_160037
+TRAIN_CSV="${TRAIN_CSV:-$FROZEN_RUN/splits/train_subjects.csv}"
 PKL_DIR=$DATA/tau_raw_backup
 MODE="${1:-rigid}"
 RECIPE_2MM=(--spacing_mm 2 --image_shape 112 128 96 --head_crop --crop_margin 2)
@@ -107,7 +111,7 @@ esac
 if [[ "$MODE" == "template" || "$MODE" == "pilot" ]]; then
   TEMPLATE=${TEMPLATE}_train  # training scans only
   if [[ ! -f "$TEMPLATE.nii.gz" ]]; then
-    [[ -f "${TRAIN_CSV:-}" ]] || { echo "Set TRAIN_CSV=<seed-42 run>/splits/train_subjects.csv to build $TEMPLATE"; exit 1; }
+    [[ -f "$TRAIN_CSV" ]] || { echo "Missing $TRAIN_CSV - set TRAIN_CSV=<seed-42 run>/splits/train_subjects.csv to build $TEMPLATE"; exit 1; }
     TEMPLATE_ARGS_MAKE=(--ids_csv "$TRAIN_CSV")
   fi
 fi
