@@ -41,6 +41,9 @@ CT="$RUN/figures/discordant_by_confidence/cases.csv"
 CA="$RUN/validation/figures/discordant_by_confidence/cases.csv"
 COMMON=(--pkl_dir "${PKL_DIR:-/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI}" --cbl_mask "$DATA/masks/voi_WhlCbl_2mm.nii"
         --regions "$DATA/masks/fda_regions_MNI152NLin2009cAsym.nii.gz")
+# "About this scan" section of each viewer: demographics + per-reader votes for that set
+INFO_T=(--demo_csv "$DATA/demo.csv" --votes "$DATA/IDs_reads.csv")
+INFO_A=(--demo_csv "$DATA/demo_AVID_unseen.csv" --votes "$DATA/AVIDIDs_reads.csv")
 ids() { python -c "import pandas as pd; print(','.join(pd.read_csv('$1')['ID'].astype(str)))"; }
 
 if [[ -n "$SPLIT" ]]; then
@@ -54,8 +57,8 @@ if [[ -n "$SPLIT" ]]; then
   CT="$VOTES_OUT/${RUN_NAME}_Gothenburg/7_split_vote_cases.csv"
   CA="$VOTES_OUT/${RUN_NAME}_AVID_unseen/7_split_vote_cases.csv"
   echo "================ split viewers ================"
-  [[ -n "$(ids "$CT")" ]] && python results_plotting/make_case_viewer.py --vis_dir "$T" --ids "$(ids "$CT")" "${COMMON[@]}" --out_dir "$V/viewers_split_test"
-  [[ -n "$(ids "$CA")" ]] && python results_plotting/make_case_viewer.py --vis_dir "$A" --ids "$(ids "$CA")" "${COMMON[@]}" --out_dir "$V/viewers_split_avid"
+  [[ -n "$(ids "$CT")" ]] && python results_plotting/make_case_viewer.py --vis_dir "$T" --ids "$(ids "$CT")" "${COMMON[@]}" "${INFO_T[@]}" --out_dir "$V/viewers_split_test"
+  [[ -n "$(ids "$CA")" ]] && python results_plotting/make_case_viewer.py --vis_dir "$A" --ids "$(ids "$CA")" "${COMMON[@]}" "${INFO_A[@]}" --out_dir "$V/viewers_split_avid"
   python results_plotting/make_case_review.py --cases "test=$CT" "AVID=$CA" \
     --viewers "test=$V/viewers_split_test" "AVID=$V/viewers_split_avid" \
     ${ANSWERS:+--answers "$ANSWERS"} --out "$V/split_review.html"
@@ -63,9 +66,9 @@ if [[ -n "$SPLIT" ]]; then
 fi
 
 echo "================ test viewers ================"
-python results_plotting/make_case_viewer.py --vis_dir "$T" --ids "$(ids "$CT")" "${COMMON[@]}" --out_dir "$V/viewers_discordant_test"
+python results_plotting/make_case_viewer.py --vis_dir "$T" --ids "$(ids "$CT")" "${COMMON[@]}" "${INFO_T[@]}" --out_dir "$V/viewers_discordant_test"
 echo "================ AVID viewers ================"
-python results_plotting/make_case_viewer.py --vis_dir "$A" --ids "$(ids "$CA")" "${COMMON[@]}" --out_dir "$V/viewers_discordant_avid"
+python results_plotting/make_case_viewer.py --vis_dir "$A" --ids "$(ids "$CA")" "${COMMON[@]}" "${INFO_A[@]}" --out_dir "$V/viewers_discordant_avid"
 echo "================ review page ================"
 python results_plotting/make_case_review.py --cases "test=$CT" "AVID=$CA" \
   --viewers "test=$V/viewers_discordant_test" "AVID=$V/viewers_discordant_avid" \

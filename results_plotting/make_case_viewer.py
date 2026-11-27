@@ -66,6 +66,15 @@ REGION_STATUS = {1: "counts towards +", 2: "counts towards +", 3: "counts toward
                  4: "counts only with PLT / occipital / parietal", 5: "does not count", 6: "does not count"}
 REGION_OPACITY = 0.75  # FDA regions over the template: the anatomy still shows through
 
+# "About this scan" section: CenTauR regional SUVRs and the SUVR equal to CTRz = 2 for flortaucipir (Villemagne 2023
+# equations; the CTRz > 2 positivity cut-off used by Karagianni 2026)
+CENTAUR = [("Universal", "Universal", 1.31), ("MetaTemporal", "Meta-temporal", 1.34),
+           ("MesialTemporal", "Mesial temporal", 1.35), ("TemporoParietal", "Temporo-parietal", 1.30),
+           ("Frontal", "Frontal", 1.29)]
+DX_NAMES = {"cu": "Cognitively unimpaired (CU)", "mci": "MCI", "alzcs dem": "AD dementia"}
+GRADE = {0: "negative", 1: "positive, moderate", 2: "positive, frequent"}  # read_1..3 / visual_read_3_cat (Stam)
+READ_COLS = ["read_1", "read_2", "read_3"]
+
 # MNI model input grid (tau_T1MNI_pts, RAS), the same as voxelwise_visual_read.py
 MNI_2MM_RAS = np.array([[2.0, 0, 0, -90], [0, 2.0, 0, -126], [0, 0, 2.0, -72], [0, 0, 0, 1]])
 MNI_SHAPE = (91, 109, 91)
@@ -102,6 +111,11 @@ def parse_args():
     p.add_argument("--regions", default=None, help="FDA region map (plot_fda_regions.py): click readout names the region; third brain shows the regions in 3D.")
     p.add_argument("--color_max", type=float, default=None,
                    help="Top of the occlusion colour scale (default: each map's 99th percentile, like the PNGs).")
+    p.add_argument("--demo_csv", default=None,
+                   help="Demographics csv (ID, site, age, gender, dx, CDR, CDR_SB, apoe, amyloid_status, CL, CenTauR "
+                        "SUVRs) for the 'About this scan' section. Has clinical data: the pages stay on Berzelius.")
+    p.add_argument("--votes", default=None, help="Per-reader votes csv (ID, read_1..3, visual_read_3_cat).")
+    p.add_argument("--female_code", type=float, default=2, help="Value of `gender` meaning female (as describe_dataset.py).")
     p.add_argument("--out_dir", default=None, help="Default <vis_dir>/viewers.")
     args = p.parse_args()
     if bool(args.pkl_dir) != bool(args.cbl_mask):
@@ -319,7 +333,93 @@ def jump_targets(maps: dict, in_brain: np.ndarray) -> list:
     return out
 
 
-def header_chips(row, set_name: str) -> str:
+def by_id(path):
+    if not path:
+        return None
+    d = pd.read_csv(path)
+    d = d.loc[:, ~d.columns.astype(str).str.startswith("Unnamed")]
+    d = d[pd.to_numeric(d["ID"], errors="coerce").notna()]
+    return d.assign(ID=d["ID"].astype(int)).drop_duplicates("ID").set_index("ID")
+
+
+def row_of(table, scan_id):
+    return table.loc[scan_id] if table is not None and scan_id in table.index else None
+
+
+def num(row, col):
+    v = pd.to_numeric(row.get(col, np.nan), errors="coerce") if row is not None else np.nan
+    return None if pd.isna(v) else float(v)
+
+
+def vote_summary(v) -> tuple[list, str]:
+    """[(grade 0/1/2), ...] for each reader who read the scan, and e.g. '2 of 3 readers positive'."""
+    reads = [int(num(v, c)) for c in READ_COLS if v is not None and num(v, c) is not None]
+    if not reads:
+        return [], ""
+    pos = sum(r > 0 for r in reads)
+    text = ("single reader" if len(reads) == 1 else
+            f"{pos} of {len(reads)} readers said positive" + (" · unanimous" if pos in (0, len(reads)) else " · split vote"))
+    return reads, text
+
+
+def info_section(demo, votes, summ, female_code: float) -> str:
+    """'About this scan': person, amyloid, reads + model, CenTauR regional SUVRs. Empty if nothing is known."""
+    esc = lambda t: str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    dl = lambda items: "<dl>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in items if v is not None) + "</dl>"
+    cards = []
+
+    if demo is not None:
+        age, sex, cdr, cdrsb, apoe = (num(demo, c) for c in ("age", "gender", "CDR", "CDR_SB", "apoe"))
+        dx = demo.get("dx", np.nan)
+        cards.append(("Person", dl([
+            ("Age", f"{age:.0f}" if age is not None else None),
+            ("Sex", None if sex is None else ("Female" if sex == female_code else "Male")),
+            ("Diagnosis", None if pd.isna(dx) else esc(DX_NAMES.get(str(dx).strip().lower(), dx))),
+            ("CDR", f"{cdr:g}" + (f" <span class='muted'>(sum of boxes {cdrsb:g})</span>" if cdrsb is not None else "")
+             if cdr is not None else (f"sum of boxes {cdrsb:g}" if cdrsb is not None else None)),
+            ("Cohort", None if pd.isna(demo.get("site", np.nan)) else esc(demo["site"]))])))
+        amy, cl = num(demo, "amyloid_status"), num(demo, "CL")
+        cards.append(("Amyloid and APOE", dl([
+            ("Status", None if amy is None else ("<b class='hi'>Aβ+</b>" if amy == 1 else "Aβ−")),
+            ("Centiloid", None if cl is None else f"{cl:.0f}" + (" <span class='muted'>(Aβ+ cut-off 24.4)</span>")),
+            ("APOE ε4", None if apoe is None else ("carrier" if apoe == 1 else "non-carrier")),
+        ])))
+
+    reads, vtext = vote_summary(votes)
+    vr = num(summ, "visual_read") if summ is not None else num(demo, "visual_read")
+    p = num(summ, "P_positive")
+    grade = num(votes, "visual_read_3_cat")
+    if reads or vr is not None or p is not None:
+        pills = "".join(f"<span class='pill {'pos' if r else 'neg'}' title='Reader {i}: {GRADE[r]}'>"
+                        f"Reader {i} <b>{'+' if r else '−'}</b>{' ' + GRADE[r].split(', ')[1] if r else ''}</span>"
+                        for i, r in enumerate(reads, 1))
+        items = [("Visual read", None if vr is None else ("<b class='hi'>positive</b>" if vr == 1 else "negative")
+                  + (f" <span class='muted'>({vtext})</span>" if vtext else "")),
+                 ("Tau grade", None if not grade else GRADE.get(int(grade), f"{grade:g}").split(", ")[-1]),
+                 ("Model", None if p is None else f"{'positive' if p >= 0.5 else 'negative'} "
+                                                  f"<span class='muted'>(P(+) = {p:.2f}, cut-off 0.5)</span>")]
+        cards.append(("Visual read and model", (f"<div class='pills'>{pills}</div>" if pills else "") + dl(items)))
+
+    if demo is not None:
+        vals = [(lab, num(demo, col), cut) for col, lab, cut in CENTAUR if num(demo, col) is not None]
+        if vals:
+            lo, hi = 0.8, max(2.2, max(v for _, v, _ in vals) * 1.05)
+            pct = lambda v: 100 * (min(max(v, lo), hi) - lo) / (hi - lo)
+            bars = "".join(
+                f"<div class='sbar'><span class='slab'>{lab}</span><span class='strack'>"
+                f"<span class='sfill {'above' if v >= cut else ''}' style='width:{pct(v):.1f}%'></span>"
+                f"<span class='scut' style='left:{pct(cut):.1f}%' title='CTRz 2 = SUVR {cut:.2f}'></span></span>"
+                f"<span class='sval'>{v:.2f}</span></div>" for lab, v, cut in vals)
+            cards.append(("Regional tau SUVR (CenTauR)", bars + "<div class='muted small'>White tick = CTRz 2 "
+                          "cut-off for that region (SUVR 1.29–1.35); orange bar = above it. Whole-scan region averages, "
+                          "so a focal spot can be missed.</div>"))
+    if not cards:
+        return ""
+    return ("<section id='info'><h2 class='sech'>About this scan</h2><div class='cards'>"
+            + "".join(f"<div class='card ic'><h3>{t}</h3>{body}</div>" for t, body in cards) + "</div></section>")
+
+
+def header_chips(row, set_name: str, vtext: str = "") -> str:
     chips = [f"<span class='chip'>{set_name}</span>"] if set_name else []
     if row is None:
         return "".join(chips)
@@ -327,7 +427,9 @@ def header_chips(row, set_name: str) -> str:
     read = None if pd.isna(vr) else int(vr == 1)
     model = None if pd.isna(p) else int(p >= 0.5)
     if read is not None:
-        chips.append(f"<span class='chip'>Visual read {'+' if read else '−'}</span>")
+        chips.append(f"<span class='chip'>Visual read {'+' if read else '−'}"
+                     + (f" <span class='dim'>{vtext.split(' ·')[0].replace(' readers said positive', '')}</span>" if vtext else "")
+                     + "</span>")
     if model is not None:
         chips.append(f"<span class='chip'>Model {'+' if model else '−'} <span class='dim'>P(+) = {p:.2f}</span></span>")
     if read is not None and model is not None:
@@ -359,6 +461,7 @@ def main():
     logit = "logit" in vis_dir.name
     set_name = "AVID (external)" if "AVID" in f"{vis_dir.name}/{out_dir.name}" else ""
     summary = pd.read_csv(vis_dir / "summary.csv").set_index("ID") if (vis_dir / "summary.csv").exists() else None
+    demo_t, votes_t = by_id(args.demo_csv), by_id(args.votes)
     suvr = suvr_scans(Path(args.pkl_dir), set(ids), Path(args.cbl_mask), args.mask_erode) if args.pkl_dir else {}
     zones_layer = []  # invisible, only for the click readout
     if args.regions:
@@ -462,6 +565,8 @@ def main():
             right += [lay, values]
 
         row = summary.loc[scan_id] if summary is not None and scan_id in summary.index else None
+        vtext = vote_summary(row_of(votes_t, scan_id))[1]
+        info = info_section(row_of(demo_t, scan_id), row_of(votes_t, scan_id), row, args.female_code)
         first = "pos_vs_neg" if "pos_vs_neg" in maps else "class"
         toggles = ("<div class='group'><span class='glabel'>Occlusion</span><span class='seg' id='maps'>"
                    + "".join(f"<button data-map='{vt}' class='{'on' if vt == first else ''}'>"
@@ -473,7 +578,7 @@ def main():
                 "jumps": jump_targets(maps, in_brain),
                 "regionNames": REGION_NAMES, "regionStatus": REGION_STATUS}
         page = TEMPLATE
-        for k, v in {"__TITLE__": f"Scan {scan_id}", "__CHIPS__": header_chips(row, set_name),
+        for k, v in {"__TITLE__": f"Scan {scan_id}", "__CHIPS__": header_chips(row, set_name, vtext), "__INFO__": info,
                      "__TOGGLES__": toggles, "__LEFT_TITLE__": left_title, "__LEFT_SUB__": left_sub,
                      "__LEFT_BARS__": left_bar, "__LEFT_LEGEND__": left_note, "__RIGHT_BARS__": bars,
                      "__RIGHT_LEGEND__": legend_right or "No occlusion map for this scan.",
@@ -553,11 +658,31 @@ TEMPLATE = r"""<!doctype html>
             white-space: nowrap; font-size: 11px; color: var(--muted); }
   .legend { padding: 8px 12px 10px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
   .legend b.pos { color: #ffb347; font-weight: 600; } .legend b.neg { color: #6fb6ff; font-weight: 600; }
-  .regions { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 6px 14px; }
+  .regions { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 6px 14px; }
   .rtitle { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
   .regions label { display: block; color: var(--text); white-space: normal; padding: 1px 0; }
   .regions i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin: 0 6px 0 4px;
                vertical-align: -1px; }
+  #info { margin-top: 14px; }
+  .sech { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; }
+  .ic { padding: 10px 14px 12px; }
+  .ic h3 { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+           margin: 0 0 8px; }
+  .ic dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 13.5px; }
+  .ic dt { color: var(--muted); } .ic dd { margin: 0; }
+  .muted { color: var(--muted); } .small { font-size: 12px; margin-top: 8px; }
+  b.hi { color: #ffc56e; font-weight: 600; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+  .pill { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+  .pill.pos { border-color: #8a5a12; background: #2a2112; } .pill.neg { background: var(--raised); }
+  .sbar { display: grid; grid-template-columns: 118px 1fr 40px; align-items: center; gap: 8px; margin: 5px 0;
+          font-size: 13px; }
+  .slab { color: var(--muted); } .sval { text-align: right; font-variant-numeric: tabular-nums; }
+  .strack { position: relative; height: 10px; background: var(--raised); border-radius: 5px; }
+  .sfill { position: absolute; left: 0; top: 0; bottom: 0; background: #5f7896; border-radius: 5px; }
+  .sfill.above { background: #e8963a; }
+  .scut { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #fff; }
   details { margin-top: 10px; padding: 8px 12px; font-size: 13px; color: var(--muted); }
   details summary { cursor: pointer; color: var(--text); font-weight: 600; }
   details ul { margin: 6px 0 2px; padding-left: 18px; } details li { margin: 3px 0; }
@@ -595,6 +720,7 @@ TEMPLATE = r"""<!doctype html>
       <div class="legend regions">__REGION_TOGGLES__</div></section>
   </div>
 
+  __INFO__
   <details class="card"><summary>How to use</summary><ul>
     <li><b>Move through the brain</b> with the slider, the ‹ › buttons, or by scrolling on a brain. The little picture next to the slider shows where the slice is.</li>
     <li><b>Click</b> a spot to see its values above the brains. All brains follow the same spot (green cross).</li>
