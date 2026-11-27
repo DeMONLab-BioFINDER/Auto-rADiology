@@ -20,7 +20,7 @@
 #
 # Needs SimpleITK in ai-pet (once: mamba activate ai-pet && pip install SimpleITK).
 # Refuses to overwrite an output folder that already has .pt batches; the template is made once.
-# Time: ~1.5-3 s per scan -> ~2 h for ~2,500 scans.
+# Time: rigid ~1.5-3 s per scan per core; template ~20 s per scan per core. 32 cores, one scan each (--workers).
 #
 # Three versions (argument 1):
 #   rigid (default) -> data/tau_raw_2mm_rigid_pts       head turned/moved to the template's pose; true head size kept
@@ -40,7 +40,7 @@
 #                      tau_pt_scans.csv: rigid_scale (> 1 = brain bigger than template), rigid_scale_at_limit,
 #                      rigid_*_deg, rigid_r_template (match with the template inside the brain = quality score,
 #                      needs no MRI). The log lists the 10 lowest and warns below QC_MIN_R (default 0.55, from pilot 2;
-#                      0.55 from pilot 2) and about scans that stopped at the size limit; align_flag in tau_pt_scans.csv = either one. ~7 s per scan. Afterwards, compare
+#                      0.55 from pilot 2) and about scans that stopped at the size limit; align_flag in tau_pt_scans.csv = either one. ~20 s per scan per core, 32 at a time: full run ~30-60 min (est.). Afterwards, compare
 #                      with each person's MNI scan: scripts/check_template_alignment.py (runs at the end of this job).
 #                      Train with --data_type tau_template_pts.
 #   pilot           -> data/tau_template_pilot_pts      the "template" version on a few scans only, to check it
@@ -64,8 +64,8 @@
 
 #SBATCH -A berzelius-2026-231
 #SBATCH -p berzelius-hopper-cpu
-#SBATCH -c 8
-#SBATCH -t 12:00:00
+#SBATCH -c 32
+#SBATCH -t 04:00:00
 #SBATCH -J convert-tau-raw-2mm-rigid
 #SBATCH -o ../../logs/convert-tau-raw-2mm-rigid-slurm-%j.out
 #SBATCH -e ../../logs/convert-tau-raw-2mm-rigid-slurm-%j.err
@@ -84,6 +84,10 @@ fi
 
 python -c "import SimpleITK" 2>/dev/null || { echo "SimpleITK missing: mamba activate ai-pet && pip install SimpleITK"; exit 1; }
 export SITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${SLURM_CPUS_PER_TASK:-8}
+# align one scan per core (--workers): SimpleITK uses many threads poorly (12 threads ~3x faster than 1),
+# so 32 scans side by side are ~8x faster than one scan on 32 threads; output identical up to float
+# rounding (1e-7). Hopper CPU nodes: 2x AMD EPYC 9534, 1.1 TB RAM (~7.8 GB per core).
+WORKERS=${SLURM_CPUS_PER_TASK:-8}
 
 DATA=/proj/berzelius-2024-156/users/x_nadpi/data
 MNI_PKL_DIR=/proj/berzelius-2024-156/dataset/tau-PET/tau_T1MNI
@@ -156,7 +160,7 @@ elif compgen -G "$OUT_DIR/tau_batch_*.pt" > /dev/null; then
 fi
 echo "===== $OUT_DIR ====="
 python scripts/convert_tau_pkl_to_pt.py --pkl_dir "$PKL_DIR" --out_dir "$OUT_DIR" --batch_size 50 \
-  --rigid_template "$TEMPLATE.nii.gz" "${SCALE_ARGS[@]}" || exit 1
+  --rigid_template "$TEMPLATE.nii.gz" --workers "$WORKERS" "${SCALE_ARGS[@]}" || exit 1
 
 if [[ "$MODE" == "template" || "$MODE" == "pilot" ]]; then
   echo "===== check against the MRI-based MNI scans ====="
